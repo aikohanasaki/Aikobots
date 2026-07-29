@@ -1,6 +1,6 @@
 import { localforage } from '../lib.js';
 import { chat, event_types, eventSource, getCurrentChatId, reloadCurrentChat } from '../script.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { selected_group } from './group-chats.js';
 import { fetchPromptInspectionSnapshot, oai_settings } from './openai.js';
 import { Popup, POPUP_TYPE } from './popup.js';
@@ -742,7 +742,7 @@ function getPromptInspectorMessageId(button) {
 export function initItemizedPrompts() {
     registerDebugFunction('clearPrompts', 'Delete itemized prompts', 'Deletes all itemized prompts from the local storage.', async () => {
         await clearItemizedPrompts();
-        toastr.info('Itemized prompts deleted.');
+        toastr.info(translate('Itemized prompts deleted.'));
         if (getCurrentChatId()) {
             await reloadCurrentChat();
         }

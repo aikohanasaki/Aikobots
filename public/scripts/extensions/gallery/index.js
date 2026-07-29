@@ -296,7 +296,7 @@ async function showCharGallery(deleteModeState = false) {
             'js',
         );
         firstTime = false;
-        toastr.info('Images can also be found in the folder `user/images`', 'Drag and drop images onto the gallery to upload them', { timeOut: 6000 });
+        toastr.info(translate('Images can also be found in the folder `user/images`'), translate('Drag and drop images onto the gallery to upload them'), { timeOut: 6000 });
     }
 
     try {
@@ -393,8 +393,8 @@ async function makeMovable(url) {
     // Create the "Add Image" button
     const addImageButton = document.createElement('div');
     addImageButton.classList.add('menu_button', 'menu_button_icon', 'interactable');
-    addImageButton.title = 'Add Image';
-    addImageButton.innerHTML = '<i class="fa-solid fa-plus fa-fw"></i><div>Add Image</div>';
+    addImageButton.title = translate('Add Image');
+    addImageButton.innerHTML = '<i class="fa-solid fa-plus fa-fw"></i><div data-i18n="Add Image">Add Image</div>';
 
     // Create a hidden file input
     const fileInput = document.createElement('input');

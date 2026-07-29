@@ -7,7 +7,7 @@ import { renderTemplate, renderTemplateAsync } from './templates.js';
 import { appendErrorCode, delay, isSubsetOf, sanitizeSelector, setValueByPath, versionCompare } from './utils.js';
 import { getContext } from './st-context.js';
 import { isAdmin } from './user.js';
-import { addLocaleData, getCurrentLocale, t } from './i18n.js';
+import { addLocaleData, getCurrentLocale, t, translate } from './i18n.js';
 import { debounce_timeout } from './constants.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { SimpleMutex } from './util/SimpleMutex.js';
@@ -737,7 +737,7 @@ function generateExtensionHtml(name, manifest, isActive, isDisabled, isExternal,
             case 'system':
                 return '<i class="fa-sm fa-fw fa-solid fa-cog" data-i18n="[title]ext_type_system" title="This is a built-in extension. It cannot be deleted and updates with the app."></i>';
             default:
-                return '<i class="fa-sm fa-fw fa-solid fa-question" title="Unknown extension type."></i>';
+                return '<i class="fa-sm fa-fw fa-solid fa-question" title="Unknown extension type." data-i18n="[title]Unknown extension type."></i>';
         }
     }
 
@@ -753,10 +753,10 @@ function generateExtensionHtml(name, manifest, isActive, isDisabled, isExternal,
 
     let toggleElement = isActive || isDisabled ?
         '<input type="checkbox" title="' + t`Click to toggle` + `" data-name="${name}" class="${isActive ? 'toggle_disable' : 'toggle_enable'} ${checkboxClass}" ${isActive ? 'checked' : ''}>` :
-        `<input type="checkbox" title="Cannot enable extension" data-name="${name}" class="extension_missing ${checkboxClass}" disabled>`;
+        `<input type="checkbox" title="Cannot enable extension" data-name="${name}" class="extension_missing ${checkboxClass}" disabled data-i18n="[title]Cannot enable extension">`;
 
     let deleteButton = isExternal ? `<button class="btn_delete menu_button" data-name="${externalId}" data-i18n="[title]Delete" title="Delete"><i class="fa-fw fa-solid fa-trash-can"></i></button>` : '';
-    let updateButton = isExternal ? `<button class="btn_update menu_button displayNone" data-name="${externalId}" title="Update available"><i class="fa-solid fa-download fa-fw"></i></button>` : '';
+    let updateButton = isExternal ? `<button class="btn_update menu_button displayNone" data-name="${externalId}" title="Update available" data-i18n="[title]Update available"><i class="fa-solid fa-download fa-fw"></i></button>` : '';
     let moveButton = isExternal && isUserAdmin ? `<button class="btn_move menu_button" data-name="${externalId}" data-i18n="[title]Move" title="Move"><i class="fa-solid fa-folder-tree fa-fw"></i></button>` : '';
     let branchButton = isExternal && isUserAdmin ? `<button class="btn_branch menu_button" data-name="${externalId}" data-i18n="[title]Switch branch" title="Switch branch"><i class="fa-solid fa-code-branch fa-fw"></i></button>` : '';
     let modulesInfo = '';
@@ -1037,7 +1037,7 @@ async function updateExtension(extensionName, quiet, timeout = null) {
 
         if (data.isUpToDate) {
             if (!quiet) {
-                toastr.success('Extension is already up to date');
+                toastr.success(translate('Extension is already up to date'));
             }
         } else {
             toastr.success(t`Extension ${extensionName} updated to ${data.shortCommitHash}`, t`Reload the page to apply updates`);
@@ -1503,7 +1503,7 @@ async function checkForExtensionUpdates(force) {
     await Promise.allSettled(promises);
 
     if (updatesAvailable.length > 0) {
-        toastr.info(`${updatesAvailable.map(x => `• ${x}`).join('\n')}`, t`Extension updates available`);
+        toastr.info(t`${updatesAvailable.map(x => `• ${x}`).join('\n')}`, t`Extension updates available`);
     }
 }
 

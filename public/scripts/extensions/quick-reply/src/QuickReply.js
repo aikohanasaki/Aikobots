@@ -1,3 +1,4 @@
+import { t, translate } from '../../../i18n.js';
 import { hljs, morphdom } from '../../../../lib.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../../popup.js';
 import { setSlashCommandAutoComplete } from '../../../slash-commands.js';
@@ -154,7 +155,7 @@ export class QuickReply {
                 const expander = document.createElement('div'); {
                     expander.classList.add('qr--button-expander');
                     expander.textContent = '⋮';
-                    expander.title = 'Open context menu';
+                    expander.title = translate('Open context menu');
                     expander.addEventListener('click', (evt) => {
                         evt.stopPropagation();
                         evt.preventDefault();
@@ -189,7 +190,7 @@ export class QuickReply {
                             addNew.classList.add('menu_button_icon');
                             addNew.classList.add('fa-solid');
                             addNew.classList.add('fa-plus');
-                            addNew.title = 'Add quick reply';
+                            addNew.title = translate('Add quick reply');
                             addNew.addEventListener('click', ()=>this.onInsertBefore());
                             actions.append(addNew);
                         }
@@ -200,7 +201,7 @@ export class QuickReply {
                             paste.classList.add('menu_button_icon');
                             paste.classList.add('fa-solid');
                             paste.classList.add('fa-paste');
-                            paste.title = 'Add quick reply from clipboard';
+                            paste.title = translate('Add quick reply from clipboard');
                             paste.addEventListener('click', async()=>{
                                 const text = await navigator.clipboard.readText();
                                 this.onInsertBefore(text);
@@ -214,7 +215,7 @@ export class QuickReply {
                             importFile.classList.add('menu_button_icon');
                             importFile.classList.add('fa-solid');
                             importFile.classList.add('fa-file-import');
-                            importFile.title = 'Add quick reply from JSON file';
+                            importFile.title = translate('Add quick reply from JSON file');
                             importFile.addEventListener('click', async()=>{
                                 const inp = document.createElement('input'); {
                                     inp.type = 'file';
@@ -248,7 +249,7 @@ export class QuickReply {
                         lblContainer.classList.add('qr--set-itemLabelContainer');
                         const icon = document.createElement('div'); {
                             this.settingsDomIcon = icon;
-                            icon.title = 'Click to change icon';
+                            icon.title = translate('Click to change icon');
                             icon.classList.add('qr--set-itemIcon');
                             icon.classList.add('menu_button');
                             icon.classList.add('fa-fw');
@@ -282,7 +283,7 @@ export class QuickReply {
                         opt.classList.add('fa-fw');
                         opt.classList.add('fa-solid');
                         opt.textContent = '⁝';
-                        opt.title = 'Additional options:\n - large editor\n - context menu\n - auto-execution\n - tooltip';
+                        opt.title = translate('Additional options:\n - large editor\n - context menu\n - auto-execution\n - tooltip');
                         opt.addEventListener('click', ()=>this.showEditor());
                         optContainer.append(opt);
                     }
@@ -305,7 +306,7 @@ export class QuickReply {
                         move.classList.add('fa-fw');
                         move.classList.add('fa-solid');
                         move.classList.add('fa-truck-arrow-right');
-                        move.title = 'Move quick reply to other set';
+                        move.title = translate('Move quick reply to other set');
                         move.addEventListener('click', ()=>this.onTransfer(this));
                         actions.append(move);
                     }
@@ -315,7 +316,7 @@ export class QuickReply {
                         copy.classList.add('fa-fw');
                         copy.classList.add('fa-solid');
                         copy.classList.add('fa-copy');
-                        copy.title = 'Copy quick reply to clipboard';
+                        copy.title = translate('Copy quick reply to clipboard');
                         copy.addEventListener('click', async()=>{
                             await navigator.clipboard.writeText(JSON.stringify(this));
                             copy.classList.add('qr--success');
@@ -330,7 +331,7 @@ export class QuickReply {
                         cut.classList.add('fa-fw');
                         cut.classList.add('fa-solid');
                         cut.classList.add('fa-cut');
-                        cut.title = 'Cut quick reply to clipboard (copy and remove)';
+                        cut.title = translate('Cut quick reply to clipboard (copy and remove)');
                         cut.addEventListener('click', async()=>{
                             await navigator.clipboard.writeText(JSON.stringify(this));
                             this.delete();
@@ -343,7 +344,7 @@ export class QuickReply {
                         exp.classList.add('fa-fw');
                         exp.classList.add('fa-solid');
                         exp.classList.add('fa-file-export');
-                        exp.title = 'Export quick reply as file';
+                        exp.title = translate('Export quick reply as file');
                         exp.addEventListener('click', ()=>{
                             const blob = new Blob([JSON.stringify(this)], { type:'text' });
                             const url = URL.createObjectURL(blob);
@@ -362,12 +363,12 @@ export class QuickReply {
                         del.classList.add('fa-solid');
                         del.classList.add('fa-trash-can');
                         del.classList.add('redWarningBG');
-                        del.title = 'Remove Quick Reply\n---\nShift+Click to skip confirmation';
+                        del.title = translate('Remove Quick Reply\n---\nShift+Click to skip confirmation');
                         del.addEventListener('click', async(evt)=>{
                             if (!evt.shiftKey) {
                                 const result = await Popup.show.confirm(
-                                    'Remove Quick Reply',
-                                    'Are you sure you want to remove this Quick Reply?',
+                                    translate('Remove Quick Reply'),
+                                    t`Are you sure you want to remove this Quick Reply?`,
                                 );
                                 if (result != POPUP_RESULT.AFFIRMATIVE) {
                                     return;
@@ -395,7 +396,7 @@ export class QuickReply {
             // @ts-ignore
             const dom = this.template.cloneNode(true);
             this.editorDom = dom;
-            this.editorPopup = new Popup(dom, POPUP_TYPE.TEXT, undefined, { okButton: 'OK', wide: true, large: true, rows: 1 });
+            this.editorPopup = new Popup(dom, POPUP_TYPE.TEXT, undefined, { okButton: translate('OK'), wide: true, large: true, rows: 1 });
             const popupResult = this.editorPopup.show();
 
             // basics
@@ -475,7 +476,7 @@ export class QuickReply {
                                     lbl.append(icon);
                                 }
                                 const text = document.createElement('span'); {
-                                    text.textContent = 'Switch QR Sets...';
+                                    text.textContent = translate('Switch QR Sets...');
                                     lbl.append(text);
                                 }
                                 setItem.append(lbl);
@@ -498,7 +499,7 @@ export class QuickReply {
                                     lbl.append(icon);
                                 }
                                 const text = document.createElement('span'); {
-                                    text.textContent = 'Add QR';
+                                    text.textContent = translate('Add QR');
                                     lbl.append(text);
                                 }
                                 addItem.append(lbl);
@@ -1352,7 +1353,7 @@ export class QuickReply {
                             { // named args
                                 const namedTitle = document.createElement('div'); {
                                     namedTitle.classList.add('qr--title');
-                                    namedTitle.textContent = `Named Args - /${executor.name}`;
+                                    namedTitle.textContent = t`Named Args - /${executor.name}`;
                                     if (executor.command.name == 'run') {
                                         namedTitle.textContent += `${(executor.name == ':' ? '' : ' ')}${executor.unnamedArgumentList[0]?.value}`;
                                     }
@@ -1425,7 +1426,7 @@ export class QuickReply {
                             { // unnamed args
                                 const unnamedTitle = document.createElement('div'); {
                                     unnamedTitle.classList.add('qr--title');
-                                    unnamedTitle.textContent = `Unnamed Args - /${executor.name}`;
+                                    unnamedTitle.textContent = t`Unnamed Args - /${executor.name}`;
                                     if (executor.command.name == 'run') {
                                         unnamedTitle.textContent += `${(executor.name == ':' ? '' : ' ')}${executor.unnamedArgumentList[0]?.value}`;
                                     }
@@ -1640,7 +1641,7 @@ export class QuickReply {
                         wrap.classList.add('qr--stack');
                         const title = document.createElement('div'); {
                             title.classList.add('qr--title');
-                            title.textContent = 'Call Stack';
+                            title.textContent = translate('Call Stack');
                             wrap.append(title);
                         }
                         let ei = -1;
@@ -1666,7 +1667,7 @@ export class QuickReply {
                                 }
                                 const cmd = document.createElement('div'); {
                                     cmd.classList.add('qr--cmd');
-                                    cmd.textContent = `/${executor.name}`;
+                                    cmd.textContent = t`/${executor.name}`;
                                     if (executor.command.name == 'run') {
                                         cmd.textContent += `${(executor.name == ':' ? '' : ' ')}${executor.unnamedArgumentList[0]?.value}`;
                                     }
@@ -1691,7 +1692,7 @@ export class QuickReply {
                                             p3.textContent = `${executor.source.slice(-5)}:${line}`;
                                             src.append(p3);
                                         }
-                                        src.title = `anonymous: ${executor.source}`;
+                                        src.title = t`anonymous: ${executor.source}`;
                                     } else {
                                         src.textContent = `${executor.source}:${line}`;
                                     }
@@ -1741,7 +1742,7 @@ export class QuickReply {
             if (ex instanceof SlashCommandParserError) {
                 this.editorExecuteErrors.innerHTML = `
                     <div>${ex.message}</div>
-                    <div>Line: ${ex.line} Column: ${ex.column}</div>
+                    <div><span data-i18n="Line:">Line:</span> ${ex.line} <span data-i18n="Column:">Column:</span> ${ex.column}</div>
                     <pre style="text-align:left;">${ex.hint}</pre>
                 `;
             } else {
@@ -1754,7 +1755,7 @@ export class QuickReply {
             this.editorDom.querySelector('#qr--modal-messageHolder').classList.add('qr--noSyntax');
         }
         this.editorMessageLabel.innerHTML = '';
-        this.editorMessageLabel.textContent = 'Message / Command: ';
+        this.editorMessageLabel.textContent = translate('Message / Command: ');
         this.editorMessage.value = oText;
         this.editorMessage.dispatchEvent(new Event('input', { bubbles:true }));
         this.editorExecutePromise = null;

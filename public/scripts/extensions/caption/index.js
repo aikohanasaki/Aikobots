@@ -1,3 +1,4 @@
+import { t, translate } from '../../i18n.js';
 import { ensureImageFormatSupported, getBase64Async, getFileExtension, getStringHash, isTrueBoolean, saveBase64AsFile } from '../../utils.js';
 import { getContext, getApiUrl, doExtrasFetch, extension_settings, modules, renderExtensionTemplateAsync } from '../../extensions.js';
 import { appendMediaToMessage, chat_metadata, eventSource, event_types, getRequestHeaders, saveChatConditional, saveSettingsDebounced, substituteParamsExtended } from '../../../script.js';
@@ -105,10 +106,10 @@ async function wrapCaptionTemplate(caption) {
 
     if (extension_settings.caption.refine_mode) {
         messageText = await Popup.show.input(
-            'Review and edit the generated caption:',
-            'Press "Cancel" to abort the caption sending.',
+            translate('Review and edit the generated caption:'),
+            t`Press "Cancel" to abort the caption sending.`,
             messageText,
-            { rows: 5, okButton: 'Send' });
+            { rows: 5, okButton: translate('Send') });
 
         if (!messageText) {
             throw new Error('User aborted the caption sending.');
@@ -343,7 +344,7 @@ async function captionMultimodal(base64Img, externalPrompt) {
     let prompt = externalPrompt || extension_settings.caption.prompt || PROMPT_DEFAULT;
 
     if (!externalPrompt && extension_settings.caption.prompt_ask) {
-        const customPrompt = await callGenericPopup('Enter a comment or question:', POPUP_TYPE.INPUT, prompt, { rows: 4 });
+        const customPrompt = await callGenericPopup(translate('Enter a comment or question:'), POPUP_TYPE.INPUT, prompt, { rows: 4 });
         if (!customPrompt) {
             throw new Error('User aborted the caption sending.');
         }
@@ -404,7 +405,7 @@ async function getCaptionForFile(file, prompt, quiet) {
     }
     catch (error) {
         const errorMessage = error.message || 'Unknown error';
-        toastr.error(errorMessage, 'Failed to caption');
+        toastr.error(errorMessage, translate('Failed to caption'));
         console.error(error);
         return '';
     }
@@ -435,15 +436,15 @@ async function captionCommandCallback(args, prompt) {
             try {
                 const mediaAttachment = message.extra.media[index] || message.extra.media[0];
                 if (!mediaAttachment || !mediaAttachment.url) {
-                    toastr.error('The specified message does not contain an image.');
+                    toastr.error(translate('The specified message does not contain an image.'));
                     return '';
                 }
                 if (mediaAttachment.type === MEDIA_TYPE.AUDIO) {
-                    toastr.error('The specified media is an audio file. Captioning audio files is not supported.');
+                    toastr.error(translate('The specified media is an audio file. Captioning audio files is not supported.'));
                     return '';
                 }
                 if (mediaAttachment.type === MEDIA_TYPE.VIDEO && !isVideoCaptioningAvailable()) {
-                    toastr.error('The specified media is a video. Captioning videos is not supported for the current source.');
+                    toastr.error(translate('The specified media is a video. Captioning videos is not supported for the current source.'));
                     return '';
                 }
                 const fetchResult = await fetch(mediaAttachment.url);
@@ -452,7 +453,7 @@ async function captionCommandCallback(args, prompt) {
                 const file = new File([blob], fileName, { type: blob.type });
                 return await getCaptionForFile(file, prompt, quiet);
             } catch (error) {
-                toastr.error('Failed to get image from the message. Make sure the image is accessible.');
+                toastr.error(translate('Failed to get image from the message. Make sure the image is accessible.'));
                 return '';
             }
         }
@@ -545,7 +546,7 @@ jQuery(async function () {
             })();
 
             if (!hasCaptionModule) {
-                toastr.error('Choose other captioning source in the extension settings.', 'Captioning is not available');
+                toastr.error(translate('Choose other captioning source in the extension settings.'), translate('Captioning is not available'));
                 return;
             }
 
@@ -738,7 +739,7 @@ jQuery(async function () {
             await saveChatConditional();
         } catch (e) {
             console.error('Message image recaption failed', e);
-            toastr.error(e.message || 'Unknown error', 'Failed to caption');
+            toastr.error(e.message || 'Unknown error', translate('Failed to caption'));
         } finally {
             messageMedia.removeClass(animationClass);
         }
@@ -771,16 +772,16 @@ jQuery(async function () {
             ),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Caption an image with an optional prompt and passes the caption down the pipe.">
                 Caption an image with an optional prompt and passes the caption down the pipe.
             </div>
-            <div>
+            <div data-i18n="Only multimodal sources support custom prompts.">
                 Only multimodal sources support custom prompts.
             </div>
-            <div>
+            <div data-i18n="Provide a message ID to get an image from a message instead of uploading one.">
                 Provide a message ID to get an image from a message instead of uploading one.
             </div>
-            <div>
+            <div data-i18n="Set the &quot;quiet&quot; argument to true to suppress sending a captioned message, default: false.">
                 Set the "quiet" argument to true to suppress sending a captioned message, default: false.
             </div>
         `,

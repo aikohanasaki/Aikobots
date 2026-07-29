@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { event_types, eventSource, saveSettingsDebounced } from '../../../script.js';
 import { deleteAttachment, getDataBankAttachments, getDataBankAttachmentsForSource, getFileAttachment, uploadFileAttachmentToServer } from '../../chats.js';
 import { extension_settings, renderExtensionTemplateAsync } from '../../extensions.js';
@@ -78,7 +79,7 @@ function listDataBankAttachments(args) {
  */
 async function getDataBankText(args, value) {
     if (!value) {
-        toastr.warning('No attachment name or URL provided.');
+        toastr.warning(translate('No attachment name or URL provided.'));
         return;
     }
 
@@ -86,7 +87,7 @@ async function getDataBankText(args, value) {
     const attachment = getAttachmentByField(attachments, value);
 
     if (!attachment) {
-        toastr.warning('Attachment not found.');
+        toastr.warning(translate('Attachment not found.'));
         return;
     }
 
@@ -120,7 +121,7 @@ async function updateDataBankAttachment(args, value) {
     const attachment = getAttachmentByFields(attachments, [args?.url, args?.name]);
 
     if (!attachment) {
-        toastr.warning('Attachment not found.');
+        toastr.warning(translate('Attachment not found.'));
         return '';
     }
 
@@ -142,7 +143,7 @@ async function deleteDataBankAttachment(args, value) {
     const attachment = getAttachmentByField(attachments, value);
 
     if (!attachment) {
-        toastr.warning('Attachment not found.');
+        toastr.warning(translate('Attachment not found.'));
         return '';
     }
 
@@ -161,7 +162,7 @@ async function disableDataBankAttachment(args, value) {
     const attachment = getAttachmentByField(attachments, value);
 
     if (!attachment) {
-        toastr.warning('Attachment not found.');
+        toastr.warning(translate('Attachment not found.'));
         return '';
     }
 
@@ -184,7 +185,7 @@ async function enableDataBankAttachment(args, value) {
     const attachment = getAttachmentByField(attachments, value);
 
     if (!attachment) {
-        toastr.warning('Attachment not found.');
+        toastr.warning(translate('Attachment not found.'));
         return '';
     }
 

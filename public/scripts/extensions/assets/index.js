@@ -174,7 +174,7 @@ async function downloadAssetsList(url) {
 
                         const assetDelete = async function () {
                             if (assetType === 'character') {
-                                toastr.error('Go to the characters menu to delete a character.', 'Character deletion not supported');
+                                toastr.error(translate('Go to the characters menu to delete a character.'), translate('Character deletion not supported'));
                                 await executeSlashCommandsWithOptions(`/go ${asset['id']}`);
                                 return;
                             }
@@ -274,11 +274,11 @@ async function downloadAssetsList(url) {
                 // Info hint if the user maybe... likely accidently was trying to install an extension and we wanna help guide them? uwu :3
                 const installButton = $('#third_party_extension_button');
                 flashHighlight(installButton, 10_000);
-                toastr.info('Click the flashing button at the top right corner of the menu.', 'Trying to install a custom extension?', { timeOut: 10_000 });
+                toastr.info(translate('Click the flashing button at the top right corner of the menu.'), translate('Trying to install a custom extension?'), { timeOut: 10_000 });
 
                 // Error logged after, to appear on top
                 console.error(error);
-                toastr.error('Problem with assets URL', DEBUG_PREFIX + 'Cannot get assets list');
+                toastr.error(translate('Problem with assets URL'), DEBUG_PREFIX + 'Cannot get assets list');
                 $('#assets-connect-button').addClass('fa-plug-circle-exclamation');
                 $('#assets-connect-button').addClass('redOverlayGlow');
             });
@@ -397,7 +397,7 @@ async function openCharacterBrowser(forceDefault) {
     const characters = json.filter(x => x.type === 'character');
 
     if (!characters.length) {
-        toastr.error('No characters found in the assets list', 'Character browser');
+        toastr.error(translate('No characters found in the assets list'), translate('Character browser'));
         return;
     }
 
@@ -422,7 +422,7 @@ async function openCharacterBrowser(forceDefault) {
         listElement.append(characterElement);
     }
 
-    callGenericPopup(template, POPUP_TYPE.TEXT, '', { okButton: 'Close', wide: true, large: true, allowVerticalScrolling: true, allowHorizontalScrolling: false });
+    callGenericPopup(template, POPUP_TYPE.TEXT, '', { okButton: translate('Close'), wide: true, large: true, allowVerticalScrolling: true, allowHorizontalScrolling: false });
 }
 
 //#############################//
@@ -498,7 +498,7 @@ jQuery(async () => {
                 connectButton.addClass('fa-plug-circle-check');
             } catch (error) {
                 console.error('Error:', error);
-                toastr.error(`Cannot get assets list from ${url}`);
+                toastr.error(t`Cannot get assets list from ${url}`);
                 connectButton.removeClass('fa-plug-circle-check');
                 connectButton.addClass('fa-plug-circle-exclamation');
                 connectButton.removeClass('redOverlayGlow');

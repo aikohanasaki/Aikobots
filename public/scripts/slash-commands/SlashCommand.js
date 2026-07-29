@@ -206,7 +206,7 @@ export class SlashCommand {
                         for (const aliasName of this.aliases) {
                             const alias = document.createElement('span'); {
                                 alias.classList.add('monospace');
-                                alias.textContent = `/${aliasName}`;
+                                alias.textContent = t`/${aliasName}`;
                                 aliases.append(alias);
                             }
                         }
@@ -238,7 +238,7 @@ export class SlashCommand {
                         name.classList.add('name');
                         name.classList.add('monospace');
                         name.title = t`Command name`;
-                        name.textContent = `/${key}`;
+                        name.textContent = t`/${key}`;
                         head.append(name);
                     }
                     const src = document.createElement('div'); {
@@ -424,7 +424,7 @@ export class SlashCommand {
                     for (const aliasName of aliasList) {
                         const alias = document.createElement('span'); {
                             alias.classList.add('alias');
-                            alias.textContent = `/${aliasName}`;
+                            alias.textContent = t`/${aliasName}`;
                             aliases.append(alias);
                         }
                     }

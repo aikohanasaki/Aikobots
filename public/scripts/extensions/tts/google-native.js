@@ -1,3 +1,4 @@
+import { t } from '../../i18n.js';
 import { getRequestHeaders } from '../../../script.js';
 import { oai_settings } from '../../openai.js';
 import { isValidUrl } from '../../utils.js';
@@ -18,17 +19,17 @@ export class GoogleNativeTtsProvider {
 
     get settingsHtml() {
         return `
-        <small>Hint: Save an API key in the Google AI Studio/Vertex AI connection settings</small>
+        <small data-i18n="Hint: Save an API key in the Google AI Studio/Vertex AI connection settings">Hint: Save an API key in the Google AI Studio/Vertex AI connection settings</small>
         <div id="google-native-tts-settings">
             <div>
-                <label for="google-tts-api-type">API Type:</label>
+                <label for="google-tts-api-type" data-i18n="API Type:">API Type:</label>
                 <select id="google-tts-api-type">
-                    <option value="makersuite">Google AI Studio (MakerSuite)</option>
-                    <option value="vertexai" disabled>Google Vertex AI (unsupported)</option>
+                    <option value="makersuite" data-i18n="Google AI Studio (MakerSuite)">Google AI Studio (MakerSuite)</option>
+                    <option value="vertexai" disabled data-i18n="Google Vertex AI (unsupported)">Google Vertex AI (unsupported)</option>
                 </select>
             </div>
             <div>
-                <label for="google-tts-model">Model:</label>
+                <label for="google-tts-model" data-i18n="Model:">Model:</label>
                 <select id="google-tts-model">
                     <option value="gemini-2.5-flash-preview-tts">Gemini 2.5 Flash Preview TTS</option>
                     <option value="gemini-2.5-pro-preview-tts">Gemini 2.5 Pro Preview TTS</option>
@@ -154,7 +155,7 @@ export class GoogleNativeTtsProvider {
 
         } catch (error) {
             console.error('TTS Preview Error:', error);
-            toastr.error(`Could not generate preview: ${error.message}`);
+            toastr.error(t`Could not generate preview: ${error.message}`);
         }
     }
 

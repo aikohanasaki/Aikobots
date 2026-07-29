@@ -1,7 +1,5 @@
-import { registerDebugFunction } from './power-user.js';
-import { updateSecretDisplay } from './secrets.js';
-
 const storageKey = 'language';
+const attributeDirective = /^\[([^\]\s]+)\]([\s\S]+)$/;
 const overrideLanguage = localStorage.getItem(storageKey);
 const localeFile = String(overrideLanguage || navigator.language || navigator.userLanguage || 'en').toLowerCase();
 var langs;
@@ -152,7 +150,7 @@ function findLang(language) {
 function translateElement(element) {
     const keys = element.getAttribute('data-i18n').split(';'); // Multi-key entries are ; delimited
     for (const key of keys) {
-        const attributeMatch = key.match(/\[(\S+)\](.+)/); // [attribute]key
+        const attributeMatch = key.match(attributeDirective); // [attribute]key
         if (attributeMatch) { // attribute-tagged key
             const localizedValue = localeData?.[attributeMatch[2]];
             if (localizedValue || localizedValue === '') {
@@ -193,7 +191,7 @@ async function getMissingTranslations() {
         $(document).find('[data-i18n]').each(function () {
             const keys = $(this).data('i18n').split(';'); // Multi-key entries are ; delimited
             for (const key of keys) {
-                const attributeMatch = key.match(/\[(\S+)\](.+)/); // [attribute]key
+                const attributeMatch = key.match(attributeDirective); // [attribute]key
                 if (attributeMatch) { // attribute-tagged key
                     const localizedValue = localeData?.[attributeMatch[2]];
                     if (!localizedValue) {
@@ -234,7 +232,7 @@ async function getMissingTranslations() {
         console.log(trackMissingDynamicTranslateMap);
     }
 
-    toastr.success(`Found ${uniqueMissingData.length} missing translations. See browser console for details.`);
+    toastr.success(t`Found ${uniqueMissingData.length} missing translations. See browser console for details.`);
 }
 
 export function applyLocale(root = document) {
@@ -269,12 +267,16 @@ function addLanguagesToDropdown() {
     }
 }
 
-export async function initLocales() {
+/**
+ * Initializes localization for the current page.
+ * @param {{registerDebugFunction?: Function, onLocaleApplied?: Function}} [options] Optional app-only hooks
+ */
+export async function initLocales({ registerDebugFunction = null, onLocaleApplied = null } = {}) {
     langs = await fetch('/locales/lang.json').then(response => response.json());
     localeData = await getLocaleData(localeFile);
     applyLocale();
     addLanguagesToDropdown();
-    updateSecretDisplay();
+    onLocaleApplied?.();
 
     $('#ui_language_select, #onboarding_ui_language_select').on('change', async function () {
         const language = String($(this).val());
@@ -299,27 +301,29 @@ export async function initLocales() {
         trackMissingDynamicTranslate = new Set();
     }
 
-    registerDebugFunction('getMissingTranslations', 'Get missing translations',
-        'Detects missing localization data in the current locale and dumps the data into the browser console. ' +
-        'If the current locale is English, searches all other locales.',
-        getMissingTranslations);
-    registerDebugFunction('trackDynamicTranslate', 'Track dynamic translation',
-        'Toggles tracking of dynamic translations, which will be dumped into the missing translations translations too. ' +
-        'This includes things translated via the t`...` function and translate(). It will only track strings translated <b>after</b> this is toggled on, '
-        + 'and when they actually pop up, so refreshing the page and opening popups, etc, is needed. Will only track if the current locale is not English.',
-        () => {
-            const isTracking = localStorage.getItem('trackDynamicTranslate') !== 'true';
-            localStorage.setItem('trackDynamicTranslate', isTracking ? 'true' : 'false');
-            if (isTracking && isSupportedNonEnglish()) {
-                trackMissingDynamicTranslate = new Set();
-                toastr.success('Dynamic translation tracking enabled.');
-            } else if (isTracking) {
-                trackMissingDynamicTranslate = null;
-                toastr.warning('Dynamic translation tracking enabled, but will not be tracked with locale English.');
-            } else {
-                trackMissingDynamicTranslate = null;
-                toastr.info('Dynamic translation tracking disabled.');
-            }
-        });
-    registerDebugFunction('applyLocale', 'Apply locale', 'Reapplies the currently selected locale to the page.', applyLocale);
+    if (registerDebugFunction) {
+        registerDebugFunction('getMissingTranslations', 'Get missing translations',
+            'Detects missing localization data in the current locale and dumps the data into the browser console. ' +
+            'If the current locale is English, searches all other locales.',
+            getMissingTranslations);
+        registerDebugFunction('trackDynamicTranslate', 'Track dynamic translation',
+            'Toggles tracking of dynamic translations, which will be dumped into the missing translations translations too. ' +
+            'This includes things translated via the t`...` function and translate(). It will only track strings translated <b data-i18n="after">after</b> this is toggled on, '
+            + 'and when they actually pop up, so refreshing the page and opening popups, etc, is needed. Will only track if the current locale is not English.',
+            () => {
+                const isTracking = localStorage.getItem('trackDynamicTranslate') !== 'true';
+                localStorage.setItem('trackDynamicTranslate', isTracking ? 'true' : 'false');
+                if (isTracking && isSupportedNonEnglish()) {
+                    trackMissingDynamicTranslate = new Set();
+                    toastr.success(translate('Dynamic translation tracking enabled.'));
+                } else if (isTracking) {
+                    trackMissingDynamicTranslate = null;
+                    toastr.warning(translate('Dynamic translation tracking enabled, but will not be tracked with locale English.'));
+                } else {
+                    trackMissingDynamicTranslate = null;
+                    toastr.info(translate('Dynamic translation tracking disabled.'));
+                }
+            });
+        registerDebugFunction('applyLocale', 'Apply locale', 'Reapplies the currently selected locale to the page.', applyLocale);
+    }
 }

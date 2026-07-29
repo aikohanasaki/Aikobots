@@ -18,7 +18,7 @@ import { SlashCommandClosure } from './slash-commands/SlashCommandClosure.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { StructuredCloneMap } from './util/StructuredCloneMap.js';
 import { renderTemplateAsync } from './templates.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { fetchPromptInspectionSnapshot } from './openai.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription } from './personas.js';
@@ -351,10 +351,10 @@ function getWorldInfoReadOnlyMessage(item) {
     }
 
     if (item.checkoutState === 'other' && item.checkedOutBy) {
-        return `Checked out by ${item.checkedOutBy}. Check out is required before editing.`;
+        return t`Checked out by ${item.checkedOutBy}. Check out is required before editing.`;
     }
 
-    return 'Check out is required before editing this shared lorebook.';
+    return translate('Check out is required before editing this shared lorebook.');
 }
 
 export function getSecureWorldNames() {
@@ -678,8 +678,8 @@ async function toggleWorldInfoCheckout(name) {
     const force = canForceCheckout && !isCheckingIn;
     if (force) {
         const confirmed = await Popup.show.confirm(
-            `Force take checkout from "${lorebook.checkedOutBy || 'another owner'}"?`,
-            'This will transfer the shared lorebook checkout to you.',
+            t`Force take checkout from "${lorebook.checkedOutBy || 'another owner'}"?`,
+            t`This will transfer the shared lorebook checkout to you.`,
         );
         if (!confirmed) {
             return false;
@@ -715,8 +715,8 @@ async function manageSharedLorebook(name) {
         }
 
         const ownerInput = await Popup.show.input(
-            'Manage shared lorebook owners',
-            'Enter comma-separated owner handles. Your handle will stay selected automatically. Shared lorebooks must keep at least two owners.',
+            translate('Manage shared lorebook owners'),
+            t`Enter comma-separated owner handles. Your handle will stay selected automatically. Shared lorebooks must keep at least two owners.`,
             lorebook.ownerHandles.join(', '),
         );
         if (!ownerInput) {
@@ -741,8 +741,8 @@ async function manageSharedLorebook(name) {
     }
 
     const sharedName = await Popup.show.input(
-        'Promote to shared secure lorebook',
-        'Enter the shared secure lorebook name. It must start with "Y-".',
+        translate('Promote to shared secure lorebook'),
+        t`Enter the shared secure lorebook name. It must start with "Y-".`,
         await getDefaultSharedLorebookName(name),
     );
     if (!sharedName) {
@@ -751,8 +751,8 @@ async function manageSharedLorebook(name) {
 
     const ownerDefaults = [getCurrentUserHandle()].filter(Boolean).join(', ');
     const ownerInput = await Popup.show.input(
-        'Shared owners',
-        'Enter comma-separated owner handles. Your handle will be included automatically.',
+        translate('Shared owners'),
+        t`Enter comma-separated owner handles. Your handle will be included automatically.`,
         ownerDefaults,
     );
     if (!ownerInput) {
@@ -777,21 +777,21 @@ async function manageSharedLorebook(name) {
             const checkedOutBy = String(error?.error?.details?.checkedOutBy || '').trim();
             const canOverwrite = Boolean(error?.error?.details?.canOverwrite);
             if (!canOverwrite) {
-                toastr.error(`Shared lorebook "${sharedName}" already exists and is owned by ${ownerLabel}.`, t`World Info`);
+                toastr.error(t`Shared lorebook "${sharedName}" already exists and is owned by ${ownerLabel}.`, t`World Info`);
                 return false;
             }
 
             const confirmed = await Popup.show.confirm(
-                `Shared lorebook "${sharedName}" already exists`,
-                `It is already shared by ${ownerLabel}.${checkedOutBy ? ` It is currently checked out by ${checkedOutBy}.` : ''} Continuing will overwrite its contents and owner list.`,
+                t`Shared lorebook "${sharedName}" already exists`,
+                t`It is already shared by ${ownerLabel}.${checkedOutBy ? ` It is currently checked out by ${checkedOutBy}.` : ''} Continuing will overwrite its contents and owner list.`,
             );
             if (!confirmed) {
                 return false;
             }
 
             const confirmedAgain = await Popup.show.confirm(
-                `Overwrite "${sharedName}"?`,
-                'This is the final confirmation. The existing shared lorebook will be replaced with the lorebook you are sharing now.',
+                t`Overwrite "${sharedName}"?`,
+                t`This is the final confirmation. The existing shared lorebook will be replaced with the lorebook you are sharing now.`,
             );
             if (!confirmedAgain) {
                 return false;
@@ -830,19 +830,19 @@ async function confirmSecureLorebookDeletion(name, lorebook) {
         : (lorebook?.ownerHandle || 'the owner');
     const sharedLabel = lorebook?.sharingMode === 'shared' ? 'shared secure' : 'secure';
     const warningConfirmed = await Popup.show.confirm(
-        `Delete ${sharedLabel} lorebook "${name}"?`,
-        `ALL copies of "${name}" will be deleted for every user. It is currently owned by ${ownerLabel}. Export a copy first if that is not what you want.`,
-        { okButton: 'Delete All Copies', cancelButton: 'Cancel' },
+        t`Delete ${sharedLabel} lorebook "${name}"?`,
+        t`ALL copies of "${name}" will be deleted for every user. It is currently owned by ${ownerLabel}. Export a copy first if that is not what you want.`,
+        { okButton: translate('Delete All Copies'), cancelButton: translate('Cancel') },
     );
     if (!warningConfirmed) {
         return false;
     }
 
     const typedName = await Popup.show.input(
-        `Type "${name}" to confirm`,
-        'This permanently deletes every copy of this secure lorebook. This cannot be undone.',
+        t`Type "${name}" to confirm`,
+        t`This permanently deletes every copy of this secure lorebook. This cannot be undone.`,
         '',
-        { okButton: 'Delete All Copies', cancelButton: 'Cancel' },
+        { okButton: translate('Delete All Copies'), cancelButton: translate('Cancel') },
     );
     return typedName === name;
 }
@@ -2274,8 +2274,8 @@ function createWorldInfoFloatingBookController() {
     const trigger = document.createElement('button');
     trigger.type = 'button';
     trigger.className = 'wi-floating-book-trigger fa-solid fa-book-atlas';
-    trigger.title = 'Active World Info';
-    trigger.setAttribute('aria-label', 'Active World Info');
+    trigger.title = translate('Active World Info');
+    trigger.setAttribute('aria-label', translate('Active World Info'));
 
     const panel = document.createElement('div');
     panel.className = 'wi-floating-book-panel';
@@ -2492,12 +2492,12 @@ function createWorldInfoFloatingBookController() {
 
             const title = document.createElement('div');
             title.className = 'wi-floating-book-chat-title';
-            title.textContent = `Messages ${row.from + 1}-${row.to + 1}`;
+            title.textContent = t`Messages ${row.from + 1}-${row.to + 1}`;
             element.append(title);
 
             const meta = document.createElement('div');
             meta.className = 'wi-floating-book-chat-meta';
-            meta.textContent = `${row.count} message${row.count === 1 ? '' : 's'}`;
+            meta.textContent = t`${row.count} message${row.count === 1 ? '' : 's'}`;
             element.append(meta);
 
             if (row.summary) {
@@ -2527,7 +2527,7 @@ function createWorldInfoFloatingBookController() {
             if (!model.totalCount) {
                 const empty = document.createElement('div');
                 empty.className = 'wi-floating-book-empty';
-                empty.textContent = 'No active entries';
+                empty.textContent = translate('No active entries');
                 panel.append(empty);
                 return;
             }
@@ -2550,8 +2550,8 @@ function createWorldInfoFloatingBookController() {
                     if (group.tokens > 0) {
                         const tokens = document.createElement('small');
                         tokens.className = 'wi-floating-book-group-tokens';
-                        tokens.title = `${group.tokens} tokens`;
-                        tokens.textContent = `${group.tokens}t`;
+                        tokens.title = t`${group.tokens} tokens`;
+                        tokens.textContent = t`${group.tokens}t`;
                         label.append(tokens);
                     }
                     title.append(label);
@@ -2612,7 +2612,7 @@ function createWorldInfoFloatingBookController() {
             const reset = document.createElement('button');
             reset.type = 'button';
             reset.className = 'wi-floating-book-reset menu_button';
-            reset.textContent = 'Reset position';
+            reset.textContent = translate('Reset position');
             reset.addEventListener('click', () => controller.resetPosition());
             configPanel.append(reset);
         },
@@ -2798,7 +2798,7 @@ async function showWorldInfoReportPopup(messageId = null) {
 
     const title = document.createElement('div');
     title.classList.add('wi-report-keyword-title');
-    title.textContent = 'World Info Keyword Report';
+    title.textContent = translate('World Info Keyword Report');
     container.append(title);
 
     const summaryLine = document.createElement('div');
@@ -2820,7 +2820,7 @@ async function showWorldInfoReportPopup(messageId = null) {
     for (const round of rounds) {
         const subtitle = document.createElement('div');
         subtitle.classList.add('wi-report-keyword-subtitle');
-        subtitle.textContent = `Loop ${round.loopNumber}`;
+        subtitle.textContent = t`Loop ${round.loopNumber}`;
         container.append(subtitle);
 
         const list = document.createElement('ul');
@@ -2849,7 +2849,7 @@ async function showWorldInfoReportPopup(messageId = null) {
 
     const popup = new Popup(container, POPUP_TYPE.TEXT, '', {
         allowVerticalScrolling: true,
-        okButton: 'Close',
+        okButton: translate('Close'),
         wide: true,
         large: true,
         leftAlign: true,
@@ -3081,12 +3081,12 @@ function registerWorldInfoSlashCommands() {
         const entry = entries.find(x => String(x.uid) === String(uid));
 
         if (!entry) {
-            toastr.warning('Valid UID is required');
+            toastr.warning(translate('Valid UID is required'));
             return '';
         }
 
         if (!Object.hasOwn(newWorldInfoEntryDefinition, field)) {
-            toastr.warning('Valid field name is required');
+            toastr.warning(translate('Valid field name is required'));
             return '';
         }
 
@@ -3178,7 +3178,7 @@ function registerWorldInfoSlashCommands() {
         };
 
         if (value === undefined) {
-            toastr.warning('Value is required');
+            toastr.warning(translate('Value is required'));
             return '';
         }
 
@@ -3193,12 +3193,12 @@ function registerWorldInfoSlashCommands() {
         const entry = data.entries[uid];
 
         if (!entry) {
-            toastr.warning('Valid UID is required');
+            toastr.warning(translate('Valid UID is required'));
             return '';
         }
 
         if (!Object.hasOwn(newWorldInfoEntryDefinition, field)) {
-            toastr.warning('Valid field name is required');
+            toastr.warning(translate('Valid field name is required'));
             return '';
         }
 
@@ -3275,7 +3275,7 @@ function registerWorldInfoSlashCommands() {
         const entry = structuredClone(entries.find(x => String(x.uid) === String(uid)));
 
         if (!entry) {
-            toastr.warning('Valid UID is required');
+            toastr.warning(translate('Valid UID is required'));
             return '';
         }
 
@@ -3284,7 +3284,7 @@ function registerWorldInfoSlashCommands() {
         const timedEffects = new WorldInfoTimedEffects(chat, [entry]);
 
         if (!timedEffects.isValidEffectType(effect)) {
-            toastr.warning('Valid effect type is required');
+            toastr.warning(translate('Valid effect type is required'));
             return '';
         }
 
@@ -3307,7 +3307,7 @@ function registerWorldInfoSlashCommands() {
         const effect = args.effect;
 
         if (value === undefined) {
-            toastr.warning('New state is required');
+            toastr.warning(translate('New state is required'));
             return '';
         }
 
@@ -3321,7 +3321,7 @@ function registerWorldInfoSlashCommands() {
         const entry = structuredClone(entries.find(x => String(x.uid) === String(uid)));
 
         if (!entry) {
-            toastr.warning('Valid UID is required');
+            toastr.warning(translate('Valid UID is required'));
             return '';
         }
 
@@ -3330,12 +3330,12 @@ function registerWorldInfoSlashCommands() {
         const timedEffects = new WorldInfoTimedEffects(chat, [entry]);
 
         if (!timedEffects.isValidEffectType(effect)) {
-            toastr.warning('Valid effect type is required');
+            toastr.warning(translate('Valid effect type is required'));
             return '';
         }
 
         if (!entry[effect]) {
-            toastr.warning('This entry does not have the selected effect. Configure it in the editor first.');
+            toastr.warning(translate('This entry does not have the selected effect. Configure it in the editor first.'));
             return '';
         }
 
@@ -3361,7 +3361,7 @@ function registerWorldInfoSlashCommands() {
         timedEffects.setTimedEffect(effect, entry, newEffectState);
 
         await saveMetadata();
-        toastr.success(`Timed effect "${effect}" for entry ${entry.uid} is now ${newEffectState ? 'active' : 'inactive'}`);
+        toastr.success(t`Timed effect "${effect}" for entry ${entry.uid} is now ${newEffectState ? 'active' : 'inactive'}`);
 
         return '';
     }
@@ -3429,11 +3429,11 @@ function registerWorldInfoSlashCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Open the structured World Info report popup for the current chat. If a message ID is provided, uses the report stored on that message.">
                 Open the structured World Info report popup for the current chat. If a message ID is provided, uses the report stored on that message.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <code>/wi-report 42</code>
             </div>
         `,
@@ -3443,7 +3443,7 @@ function registerWorldInfoSlashCommands() {
         name: 'wi-book-center',
         callback: centerFloatingBookCallback,
         helpString: `
-            <div>
+            <div data-i18n="Move the active World Info floating book icon to the center of the current screen.">
                 Move the active World Info floating book icon to the center of the current screen.
             </div>
         `,
@@ -3600,11 +3600,11 @@ function registerWorldInfoSlashCommands() {
             ),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Find a UID of the record from the specified book using the fuzzy match of a field value (default: key) and pass it down the pipe.">
                 Find a UID of the record from the specified book using the fuzzy match of a field value (default: key) and pass it down the pipe.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code>/findentry file=chatLore field=key Shadowfang</code></pre>
@@ -3643,11 +3643,11 @@ function registerWorldInfoSlashCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Get a field value (default: content) of the record with the UID from the specified book and pass it down the pipe.">
                 Get a field value (default: content) of the record with the UID from the specified book and pass it down the pipe.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code>/getentryfield file=chatLore field=content 123</code></pre>
@@ -3668,11 +3668,11 @@ function registerWorldInfoSlashCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Open native lorebook ordering settings for a specific lorebook.">
                 Open native lorebook ordering settings for a specific lorebook.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <code>/stlo My Lorebook</code>
             </div>
         `,
@@ -3700,11 +3700,11 @@ function registerWorldInfoSlashCommands() {
             ),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Create a new record in the specified book with the key and content (both are optional) and pass the UID down the pipe.">
                 Create a new record in the specified book with the key and content (both are optional) and pass the UID down the pipe.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code>/createentry file=chatLore key=Shadowfang The sword of the king</code></pre>
@@ -3746,11 +3746,11 @@ function registerWorldInfoSlashCommands() {
             ),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Set a field value (default: content) of the record with the UID from the specified book. To set multiple values for key fields, use comma-delimited list as a value.">
                 Set a field value (default: content) of the record with the UID from the specified book. To set multiple values for key fields, use comma-delimited list as a value.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code>/setentryfield file=chatLore uid=123 field=key Shadowfang,sword,weapon</code></pre>
@@ -3795,13 +3795,13 @@ function registerWorldInfoSlashCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Set a timed effect for the record with the UID from the specified book. The duration must be set in the entry itself. Will only be applied for the current chat. Enabling an effect that was already active refreshes the duration. If the last chat message is swiped or deleted, the effect will be removed.">
                 Set a timed effect for the record with the UID from the specified book. The duration must be set in the entry itself.
                 Will only be applied for the current chat. Enabling an effect that was already active refreshes the duration.
                 If the last chat message is swiped or deleted, the effect will be removed.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code>/wi-set-timed-effect file=chatLore uid=123 effect=sticky on</code></pre>
@@ -3814,11 +3814,11 @@ function registerWorldInfoSlashCommands() {
         name: 'wi-get-timed-effect',
         callback: getTimedEffectCallback,
         helpString: `
-            <div>
+            <div data-i18n="Get the current state of the timed effect for the record with the UID from the specified book.">
                 Get the current state of the timed effect for the record with the UID from the specified book.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <code>/wi-get-timed-effect file=chatLore format=bool effect=sticky 123</code> - returns true or false if the effect is active or not
@@ -4106,7 +4106,7 @@ export function sortWorldInfoEntries(data, { customSort = null } = {}) {
 }
 
 function nullWorldInfo() {
-    toastr.info('Create or import a new World Info file first.', 'World Info is not set', { timeOut: 10000, preventDuplicates: true });
+    toastr.info(translate('Create or import a new World Info file first.'), translate('World Info is not set'), { timeOut: 10000, preventDuplicates: true });
 }
 
 /** @type {Select2Option[]} Cache all keys as selectable dropdown option */
@@ -4264,7 +4264,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     $('#world_popup_delete').off('click').on('click', async () => {
         const currentLorebook = getResolvedWorldInfoItem(name, data);
         if (currentLorebook?.reservedTemplate) {
-            toastr.info('Select another Blank Lorebook Template or None before deleting this lorebook.', 'Recommended Chat Setup');
+            toastr.info(translate('Select another Blank Lorebook Template or None before deleting this lorebook.'), translate('Recommended Chat Setup'));
             return;
         }
         if (currentLorebook?.storage === 'secure' && !currentLorebook?.canDelete) {
@@ -4273,10 +4273,10 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         }
         const confirmation = currentLorebook?.storage === 'secure'
             ? await confirmSecureLorebookDeletion(name, currentLorebook)
-            : await Popup.show.confirm(`Delete the World/Lorebook: "${name}"?`, 'This action is irreversible!');
+            : await Popup.show.confirm(t`Delete the World/Lorebook: "${name}"?`, t`This action is irreversible!`);
         if (!confirmation) {
             if (currentLorebook?.storage === 'secure') {
-                toastr.info(`Deletion cancelled. Type "${name}" exactly to delete all copies.`, t`World Info`);
+                toastr.info(t`Deletion cancelled. Type "${name}" exactly to delete all copies.`, t`World Info`);
             }
             return;
         }
@@ -4479,7 +4479,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             return;
         }
         if (currentLorebook?.reservedTemplate) {
-            toastr.info('Select another Blank Lorebook Template or None before renaming this lorebook.', 'Recommended Chat Setup');
+            toastr.info(translate('Select another Blank Lorebook Template or None before renaming this lorebook.'), translate('Recommended Chat Setup'));
             return;
         }
         await renameWorldInfo(name, data);
@@ -4537,7 +4537,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         }
 
         if (counter > 0) {
-            toastr.info(`Backfilled ${counter} titles`);
+            toastr.info(t`Backfilled ${counter} titles`);
             await saveWorldInfo(name, data);
             updateEditor(navigation_option.previous);
         }
@@ -4556,7 +4556,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             content += '<div class="m-t-1"><i class="fa-solid fa-triangle-exclamation" style="color: #FFD43B;"></i> ' + t`More than 100 entries in this world. If you don't choose a number higher than that, the lower entries will default to 0.<br />(Usual default: 100)<br />Minimum: ${entryCount}` + '</div>';
         }
 
-        const result = await Popup.show.input(t`Apply Current Sorting`, content, '100', { okButton: t`Apply`, cancelButton: 'Cancel' });
+        const result = await Popup.show.input(t`Apply Current Sorting`, content, '100', { okButton: t`Apply`, cancelButton: translate('Cancel') });
         if (!result) return;
 
         const start = Number(result);
@@ -4583,11 +4583,11 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         }
 
         if (updated > 0) {
-            toastr.info(`Updated ${updated} Order values`, 'Apply Custom Sorting');
+            toastr.info(t`Updated ${updated} Order values`, translate('Apply Custom Sorting'));
             await saveWorldInfo(name, data, true);
             updateEditor(navigation_option.previous);
         } else {
-            toastr.info('All values up to date', 'Apply Custom Sorting');
+            toastr.info(translate('All values up to date'), translate('Apply Custom Sorting'));
         }
     });
 
@@ -4605,7 +4605,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             return;
         }
         const tempName = getFreeWorldName();
-        const finalName = await Popup.show.input('Create a new World Info?', 'Enter a name for the new file:', tempName);
+        const finalName = await Popup.show.input(t`Create a new World Info?`, t`Enter a name for the new file:`, tempName);
 
         if (finalName) {
             await saveWorldInfo(finalName, data, true);
@@ -4928,15 +4928,17 @@ function enableKeysInputHelper({ template, entry, entryPropName, originalDataVal
     });
 
     function templateStyling(item, { searchStyle = false } = {}) {
-        const content = $('<span>').addClass('item').text(item.text).attr('title', `${item.text}\n\nClick to edit`);
+        const content = $('<span>').addClass('item').text(item.text).attr('title', t`${item.text}\n\nClick to edit`);
         const isRegex = isValidRegex(item.text);
         if (isRegex) {
             content.html(highlightRegex(item.text));
-            content.addClass('regex_item').prepend($('<span>').addClass('regex_icon').text('•*').attr('title', 'Regex'));
+            content.addClass('regex_item').prepend($('<span>').addClass('regex_icon').text('•*').attr('title', translate('Regex')));
         }
         if (searchStyle && item.count) {
             const wrapper = $('<span>').addClass('result_block').append(content);
-            wrapper.append($('<span>').addClass('item_count').text(item.count).attr('title', `Used as a key ${item.count} ${item.count != 1 ? 'times' : 'time'} in this lorebook`));
+            wrapper.append($('<span>').addClass('item_count').text(item.count).attr('title', item.count != 1
+                ? t`Used as a key ${item.count} times in this lorebook`
+                : t`Used as a key ${item.count} time in this lorebook`));
             return wrapper;
         }
         return content;
@@ -5063,7 +5065,7 @@ function updatePosOrdDisplayHelper({ template, data, uid }) {
         case 3: posText = 'AN↓'; break;
         case 4: posText = `@D${entry.depth}`; break;
     }
-    template.find('.world_entry_form_position_value').text(`(${posText} ${entry.order})`);
+    template.find('.world_entry_form_position_value').text(t`(${posText} ${entry.order})`);
 }
 
 /**
@@ -5100,7 +5102,7 @@ function fillCharacterAndTagOptionsHelper({ characterFilter, entry }) {
     const tags = getContext().tags;
     tags.forEach((tag) => {
         const option = document.createElement('option');
-        option.innerText = `[Tag] ${tag.name}`;
+        option.innerText = t`[Tag] ${tag.name}`;
         option.selected = entry.characterFilter?.tags?.includes(tag.id);
         option.value = tag.id;
         option.setAttribute('data-type', 'tag');
@@ -5521,7 +5523,7 @@ export async function getWorldEntry(name, data, entry) {
         const editTemplate = WI_ENTRY_EDIT_TEMPLATE.clone();
 
         // UID display
-        editTemplate.find('.world_entry_form_uid_value').text(`(UID: ${entry.uid})`);
+        editTemplate.find('.world_entry_form_uid_value').text(t`(UID: ${entry.uid})`);
         const regenerateButton = editTemplate.find('.stmb-regenerate-entry');
         const regenerationEligibility = entry[STMB_MANAGED_FLAG] === true
             && getLorebookStorageForRequest(name) === 'user'
@@ -5697,12 +5699,12 @@ export async function getWorldEntry(name, data, entry) {
             const value = Number($(this).val());
             if (value < 0) {
                 $(this).val(0).trigger('input');
-                toastr.warning('Scan depth cannot be negative');
+                toastr.warning(translate('Scan depth cannot be negative'));
                 return;
             }
             if (value > MAX_SCAN_DEPTH) {
                 $(this).val(MAX_SCAN_DEPTH).trigger('input');
-                toastr.warning(`Scan depth cannot exceed ${MAX_SCAN_DEPTH}`);
+                toastr.warning(t`Scan depth cannot exceed ${MAX_SCAN_DEPTH}`);
                 return;
             }
             data.entries[uid].scanDepth = !isEmpty && !isNaN(value) && value >= 0 && value <= MAX_SCAN_DEPTH ? Math.floor(value) : null;
@@ -6202,7 +6204,7 @@ async function renameWorldInfo(name, data) {
     }
 
     const oldName = name;
-    const newName = await Popup.show.input('Rename World Info', 'Enter a new name:', oldName);
+    const newName = await Popup.show.input(t`Rename World Info`, t`Enter a new name:`, oldName);
 
     if (oldName === newName || !newName) {
         console.debug('World info rename cancelled');
@@ -7477,20 +7479,20 @@ export function checkEmbeddedWorld(chid) {
             accountStorage.setItem(checkKey, 'true');
 
             if (power_user.world_import_dialog) {
-                const html = `<h3>This character has an embedded World/Lorebook.</h3>
-                <h3>Would you like to import it now?</h3>
-                <div class="m-b-1">If you want to import it later, select "Import Card Lore" in the "More..." dropdown menu on the character panel.</div>`;
+                const html = `<h3 data-i18n="This character has an embedded World/Lorebook.">This character has an embedded World/Lorebook.</h3>
+                <h3 data-i18n="Would you like to import it now?">Would you like to import it now?</h3>
+                <div class="m-b-1" data-i18n="If you want to import it later, select &quot;Import Card Lore&quot; in the &quot;More...&quot; dropdown menu on the character panel.">If you want to import it later, select "Import Card Lore" in the "More..." dropdown menu on the character panel.</div>`;
                 const checkResult = (result) => {
                     if (result) {
                         importEmbeddedWorldInfo(true);
                     }
                 };
-                callGenericPopup(html, POPUP_TYPE.CONFIRM, '', { okButton: 'Yes' }).then(checkResult);
+                callGenericPopup(html, POPUP_TYPE.CONFIRM, '', { okButton: translate('Yes') }).then(checkResult);
             }
             else {
                 toastr.info(
-                    'To import and use it, select "Import Card Lore" in the "More..." dropdown menu on the character panel.',
-                    `${characters[chid].name} has an embedded World/Lorebook`,
+                    translate('To import and use it, select "Import Card Lore" in the "More..." dropdown menu on the character panel.'),
+                    t`${characters[chid].name} has an embedded World/Lorebook`,
                     { timeOut: 5000, extendedTimeOut: 10000 },
                 );
             }
@@ -7670,7 +7672,7 @@ export async function importWorldInfo(file) {
             formData.append('convertedData', JSON.stringify(convertRisuLorebook(jsonData)));
         }
     } catch (error) {
-        toastr.error(`Error parsing file: ${error}`);
+        toastr.error(t`Error parsing file: ${error}`);
         return;
     }
 
@@ -7816,7 +7818,7 @@ export async function promptWorldInfoMoveTarget(sourceWorld, sourceLabel = '') {
 
     const defaultOption = document.createElement('option');
     defaultOption.value = '';
-    defaultOption.textContent = `-- ${t`Select Target Lorebook`} --`;
+    defaultOption.textContent = t`-- ${t`Select Target Lorebook`} --`;
     select.appendChild(defaultOption);
 
     for (const worldName of selectableWorlds) {
@@ -7975,8 +7977,8 @@ export async function moveWorldInfoEntries(sourceName, targetName, uids, { delet
 
         const entryLabel = entryUidStrings.length === 1 ? t`Entry` : `${entryUidStrings.length} entries`;
         toastr.success(deleteOriginal
-            ? `${entryLabel} moved successfully from '${sourceName}' to '${targetName}'.`
-            : `${entryLabel} copied successfully to '${targetName}'.`);
+            ? t`${entryLabel} moved successfully from '${sourceName}' to '${targetName}'.`
+            : t`${entryLabel} copied successfully to '${targetName}'.`);
 
         return true;
     } catch (error) {
@@ -7992,8 +7994,8 @@ function updateWorldInfoSharedManageButton(name = '') {
 
     if (!item) {
         button.addClass('disabled');
-        button.attr('title', 'Share or manage shared lorebook owners');
-        button.attr('aria-label', 'Share or manage shared lorebook owners');
+        button.attr('title', translate('Share or manage shared lorebook owners'));
+        button.attr('aria-label', translate('Share or manage shared lorebook owners'));
         return;
     }
 
@@ -8006,8 +8008,8 @@ function updateWorldInfoSharedManageButton(name = '') {
     }
 
     button.toggleClass('disabled', item.storage !== 'user' && item.storage !== 'secure');
-    button.attr('title', 'Convert this lorebook to a shared secure lorebook');
-    button.attr('aria-label', 'Convert this lorebook to a shared secure lorebook');
+    button.attr('title', translate('Convert this lorebook to a shared secure lorebook'));
+    button.attr('aria-label', translate('Convert this lorebook to a shared secure lorebook'));
 }
 
 function updateWorldInfoCheckoutButton(name = '') {
@@ -8017,18 +8019,18 @@ function updateWorldInfoCheckoutButton(name = '') {
 
     if (!item || item.sharingMode !== 'shared') {
         button.hide().addClass('disabled');
-        labelElement.text('Check Out');
-        button.attr('title', 'Check out lorebook for editing');
-        button.attr('aria-label', 'Check out lorebook for editing');
+        labelElement.text(translate('Check Out'));
+        button.attr('title', translate('Check out lorebook for editing'));
+        button.attr('aria-label', translate('Check out lorebook for editing'));
         return;
     }
 
     button.show();
     if (item.checkoutState === 'self') {
-        labelElement.text('Check In');
+        labelElement.text(translate('Check In'));
         button.toggleClass('disabled', !item.canCheckIn);
-        button.attr('title', 'Check in shared lorebook');
-        button.attr('aria-label', 'Check in shared lorebook');
+        button.attr('title', translate('Check in shared lorebook'));
+        button.attr('aria-label', translate('Check in shared lorebook'));
         return;
     }
 
@@ -8039,14 +8041,14 @@ function updateWorldInfoCheckoutButton(name = '') {
         button.attr('title', item.checkedOutBy
             ? `Checked out by ${item.checkedOutBy}`
             : 'This shared lorebook is checked out by another owner');
-        button.attr('aria-label', `Shared lorebook checked out by ${item.checkedOutBy || 'another owner'}`);
+        button.attr('aria-label', t`Shared lorebook checked out by ${item.checkedOutBy || 'another owner'}`);
         return;
     }
 
-    labelElement.text('Check Out');
+    labelElement.text(translate('Check Out'));
     button.toggleClass('disabled', !item.canCheckOut);
-    button.attr('title', 'Check out shared lorebook');
-    button.attr('aria-label', 'Check out shared lorebook');
+    button.attr('title', translate('Check out shared lorebook'));
+    button.attr('aria-label', translate('Check out shared lorebook'));
 }
 
 function updateWorldInfoCheckoutStatus(name = '', data = null) {
@@ -8059,17 +8061,19 @@ function updateWorldInfoCheckoutStatus(name = '', data = null) {
     }
 
     const text = item.checkoutState === 'self'
-        ? `Checked out by you${item.checkedOutAt ? ` since ${item.checkedOutAt}` : ''}.`
+        ? item.checkedOutAt
+            ? t`Checked out by you since ${item.checkedOutAt}.`
+            : translate('Checked out by you.')
         : item.checkoutState === 'other'
-            ? `Checked out by ${item.checkedOutBy || 'another owner'}.`
-            : 'Shared lorebook is currently available for checkout.';
+            ? t`Checked out by ${item.checkedOutBy || translate('another owner')}.`
+            : translate('Shared lorebook is currently available for checkout.');
 
     const readOnlyMessage = item.checkoutState === 'other'
-        ? ' Check out is required before editing.'
+        ? translate('Check out is required before editing.')
         : isSharedLorebookReadOnly(item)
-            ? ` ${getWorldInfoReadOnlyMessage(item)}`
+            ? getWorldInfoReadOnlyMessage(item)
             : '';
-    status.text(`${text}${readOnlyMessage}`).show();
+    status.text([text, readOnlyMessage].filter(Boolean).join(' ')).show();
 }
 
 function applyWorldInfoReadOnlyState(name = '', data = null) {

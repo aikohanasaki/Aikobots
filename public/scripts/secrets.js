@@ -1,6 +1,6 @@
 import { DOMPurify, moment } from '../lib.js';
 import { event_types, eventSource, getRequestHeaders } from '../script.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { chat_completion_sources } from './openai.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
@@ -272,7 +272,7 @@ async function viewSecrets() {
     const data = await response.json();
     const table = document.createElement('table');
     table.classList.add('responsiveTable');
-    $(table).append('<thead><th>Key</th><th>Value</th></thead>');
+    $(table).append('<thead><th data-i18n="Key">Key</th><th data-i18n="Value">Value</th></thead>');
 
     for (const [key, value] of Object.entries(data)) {
         $(table).append(`<tr><td>${DOMPurify.sanitize(key)}</td><td>${DOMPurify.sanitize(value)}</td></tr>`);
@@ -493,7 +493,7 @@ async function checkOpenRouterAuth() {
             await writeSecret(SECRET_KEYS.OPENROUTER, data.key);
 
             if (secret_state[SECRET_KEYS.OPENROUTER]) {
-                toastr.success('OpenRouter token saved');
+                toastr.success(translate('OpenRouter token saved'));
                 // Remove the code from the URL
                 const currentUrl = window.location.href;
                 const urlWithoutSearchParams = currentUrl.split('?')[0];

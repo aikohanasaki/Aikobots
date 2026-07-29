@@ -1,3 +1,4 @@
+import { translate } from '../../../i18n.js';
 import { getRequestHeaders, substituteParams } from '../../../../script.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
 import { executeSlashCommandsOnChatInput, executeSlashCommandsWithOptions } from '../../../slash-commands.js';
@@ -237,7 +238,7 @@ export class QuickReplySet {
                 // JSON data
                 if (data.label === undefined || data.message === undefined) {
                     // not a QR
-                    toastr.error('Not a QR.');
+                    toastr.error(translate('Not a QR.'));
                     return;
                 }
             } else {
@@ -277,7 +278,7 @@ export class QuickReplySet {
             const dom = document.createElement('div'); {
                 dom.classList.add('qr--transferModal');
                 const title = document.createElement('h3'); {
-                    title.textContent = 'Transfer Quick Reply';
+                    title.textContent = translate('Transfer Quick Reply');
                     dom.append(title);
                 }
                 const subTitle = document.createElement('h4'); {
@@ -291,7 +292,7 @@ export class QuickReplySet {
                     sel.setAttribute('autofocus', '1');
                     const noOpt = document.createElement('option'); {
                         noOpt.value = '';
-                        noOpt.textContent = '-- Select QR Set --';
+                        noOpt.textContent = translate('-- Select QR Set --');
                         sel.append(noOpt);
                     }
                     for (const qrs of QuickReplySet.list) {
@@ -324,17 +325,17 @@ export class QuickReplySet {
                 }
                 const hintP = document.createElement('p'); {
                     const hint = document.createElement('small'); {
-                        hint.textContent = 'Type or arrows to select QR Set. Enter to transfer. Shift+Enter to copy.';
+                        hint.textContent = translate('Type or arrows to select QR Set. Enter to transfer. Shift+Enter to copy.');
                         hintP.append(hint);
                     }
                     dom.append(hintP);
                 }
             }
-            const dlg = new Popup(dom, POPUP_TYPE.CONFIRM, null, { okButton:'Transfer', cancelButton:'Cancel' });
+            const dlg = new Popup(dom, POPUP_TYPE.CONFIRM, null, { okButton:translate('Transfer'), cancelButton:translate('Cancel') });
             const copyBtn = document.createElement('div'); {
                 copyBtn.classList.add('qr--copy');
                 copyBtn.classList.add('menu_button');
-                copyBtn.textContent = 'Copy';
+                copyBtn.textContent = translate('Copy');
                 copyBtn.addEventListener('click', ()=>{
                     isCopy = true;
                     dlg.completeAffirmative();

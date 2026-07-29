@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { doExtrasFetch, getApiUrl, modules } from '../../extensions.js';
 import { saveTtsProviderSettings } from './index.js';
 
@@ -65,7 +66,7 @@ class XTTSTtsProvider {
 
     get settingsHtml() {
         let html = `
-        <label for="xtts_api_language">Language</label>
+        <label for="xtts_api_language" data-i18n="Language">Language</label>
         <select id="xtts_api_language">`;
 
         for (let language in this.languageLabels) {
@@ -80,12 +81,12 @@ class XTTSTtsProvider {
         html += `
         </select>
         <label">XTTS Settings:</label><br/>
-        <label for="xtts_tts_endpoint">Provider Endpoint:</label>
+        <label for="xtts_tts_endpoint" data-i18n="Provider Endpoint:">Provider Endpoint:</label>
         <input id="xtts_tts_endpoint" type="text" class="text_pole" maxlength="250" value="${this.defaultSettings.provider_endpoint}"/>
-        <span>Use <a target="_blank" href="https://github.com/daswer123/xtts-api-server">XTTSv2 TTS Server</a>.</span>
+        <span>Use <a target="_blank" href="https://github.com/daswer123/xtts-api-server" data-i18n="XTTSv2 TTS Server">XTTSv2 TTS Server</a>.</span>
         <label for="xtts_tts_streaming" class="checkbox_label">
             <input id="xtts_tts_streaming" type="checkbox" />
-            <span>Streaming <small>(RVC not supported)</small></span>
+            <span>Streaming <small data-i18n="(RVC not supported)">(RVC not supported)</small></span>
         </label>
         <label for="xtts_speed">Speed: <span id="xtts_tts_speed_output">${this.defaultSettings.speed}</span></label>
         <input id="xtts_speed" type="range" value="${this.defaultSettings.speed}" min="0.5" max="2" step="0.01" />
@@ -313,7 +314,7 @@ class XTTSTtsProvider {
             },
         );
         if (!response.ok) {
-            toastr.error(response.statusText, 'TTS Generation Failed');
+            toastr.error(response.statusText, translate('TTS Generation Failed'));
             throw new Error(`HTTP ${response.status}: ${await response.text()}`);
         }
         return response;

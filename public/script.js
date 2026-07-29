@@ -216,7 +216,7 @@ import {
     tag_import_setting,
     applyCharacterTagsToMessageDivs,
 } from './scripts/tags.js';
-import { initSecrets, readSecretState } from './scripts/secrets.js';
+import { initSecrets, readSecretState, updateSecretDisplay } from './scripts/secrets.js';
 import { markdownExclusionExt } from './scripts/showdown-exclusion.js';
 import { markdownUnderscoreExt } from './scripts/showdown-underscore.js';
 import { NOTE_MODULE_NAME, initAuthorsNote, metadata_keys, setFloatingPrompt, shouldWIAddPrompt } from './scripts/authors-note.js';
@@ -225,7 +225,7 @@ import { getRegexedString, regex_placement } from './scripts/extensions/regex/en
 import { initLogprobs, saveLogprobsForActiveMessage } from './scripts/logprobs.js';
 import { FILTER_STATES, FILTER_TYPES, FilterHelper, isFilterState } from './scripts/filters.js';
 import { getCfgPrompt, getGuidanceScale, initCfg } from './scripts/cfg-scale.js';
-import { initLocales, t } from './scripts/i18n.js';
+import { initLocales, t, translate } from './scripts/i18n.js';
 import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, getTokenizerModel, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
 import {
     user_avatar,
@@ -652,7 +652,7 @@ function maybeShowPromptTokenWarning(promptInspectionResponseData) {
     warningBox.style.boxShadow = '0 0 14px var(--black70a)';
 
     const message = document.createElement('div');
-    message.textContent = `prompt is now ${Math.round(promptTokenCount)} tokens long, please make memories or start a new chat!`;
+    message.textContent = t`prompt is now ${Math.round(promptTokenCount)} tokens long, please make memories or start a new chat!`;
     warningBox.append(message);
 
     const dismissId = `prompt_token_warning_dismiss_until_refresh_${Date.now()}`;
@@ -666,14 +666,14 @@ function maybeShowPromptTokenWarning(promptInspectionResponseData) {
     dismissLabel.append(dismissCheckbox);
 
     const dismissText = document.createElement('small');
-    dismissText.textContent = 'dismiss until refresh';
+    dismissText.textContent = translate('dismiss until refresh');
     dismissLabel.append(dismissText);
     warningBox.append(dismissLabel);
 
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
     closeButton.classList.add('menu_button');
-    closeButton.textContent = 'OK';
+    closeButton.textContent = translate('OK');
     closeButton.addEventListener('click', () => {
         promptTokenWarningDismissedUntilRefresh = dismissCheckbox.checked;
         warningBox.remove();
@@ -1279,7 +1279,7 @@ async function uploadSelectedCharacterAvatar(file, { previousPreviewSrc = '', ha
     }
 
     const loader = showLoader();
-    toastr.info('Updating avatar...', 'Character');
+    toastr.info(translate('Updating avatar...'), translate('Character'));
 
     try {
         const formData = new FormData();
@@ -1324,7 +1324,7 @@ async function uploadSelectedCharacterAvatar(file, { previousPreviewSrc = '', ha
             clearCharacterEditorDirtyState();
         }
 
-        toastr.success('Avatar updated.', 'Character');
+        toastr.success(translate('Avatar updated.'), translate('Character'));
         return true;
     } catch (error) {
         if (previousPreviewSrc) {
@@ -1335,7 +1335,7 @@ async function uploadSelectedCharacterAvatar(file, { previousPreviewSrc = '', ha
             clearCharacterEditorDirtyState();
         }
 
-        toastr.error(error?.message || 'Could not update the avatar.', 'Character');
+        toastr.error(error?.message || 'Could not update the avatar.', translate('Character'));
         return false;
     } finally {
         crop_data = undefined;
@@ -1890,7 +1890,7 @@ function updateSyncCurrentChatCooldownState() {
 
     const cooldownSeconds = getSyncCurrentChatCooldownSeconds();
     if (cooldownSeconds > 0) {
-        button.setAttribute('title', `save cooldown, ${cooldownSeconds} seconds remaining`);
+        button.setAttribute('title', t`save cooldown, ${cooldownSeconds} seconds remaining`);
         button.setAttribute('aria-disabled', 'true');
         button.classList.add('disabled');
         return;
@@ -2257,7 +2257,7 @@ function ensureTopChatSidebar() {
     }
 
     draggable.id = TOP_CHAT_SIDEBAR_ID;
-    title.textContent = 'Chats';
+    title.textContent = translate('Chats');
     closeButton.id = `${TOP_CHAT_SIDEBAR_ID}_close`;
     dragHandle.id = `${TOP_CHAT_SIDEBAR_ID}header`;
     closeButton.addEventListener('click', () => {
@@ -2328,7 +2328,7 @@ async function populateTopChatSidebar() {
     if (!chats.length) {
         const emptyState = document.createElement('div');
         emptyState.className = 'top_chat_sidebar_empty';
-        emptyState.textContent = 'No chats available.';
+        emptyState.textContent = translate('No chats available.');
         container.append(emptyState);
         loader.classList.add('displayNone');
         return;
@@ -2458,7 +2458,7 @@ function syncTopChatConnectionProfilesSelect() {
         return;
     }
 
-    topChatConnectionProfilesSelect.innerHTML = '<option selected>No connection profiles</option>';
+    topChatConnectionProfilesSelect.innerHTML = '<option selected data-i18n="No connection profiles">No connection profiles</option>';
     topChatConnectionProfilesSelect.disabled = true;
 }
 
@@ -2549,7 +2549,7 @@ async function refreshTopChatConnectionProfiles() {
 
     if (online_status === 'no_connection') {
         topChatConnectionProfilesStatus.classList.add('offline');
-        topChatConnectionProfilesStatus.textContent = 'No connection...';
+        topChatConnectionProfilesStatus.textContent = translate('No connection...');
         topChatConnectionProfilesModelIcon?.replaceChildren();
         return;
     }
@@ -2627,7 +2627,7 @@ async function refreshTopChatBarState() {
     }
 
     if (!hasChat) {
-        topChatBarChatNameSelect.innerHTML = '<option selected>No chat selected</option>';
+        topChatBarChatNameSelect.innerHTML = '<option selected data-i18n="No chat selected">No chat selected</option>';
         topChatBarChatNameSelect.disabled = true;
         lastTopChatSelectorEntries = null;
         await populateTopChatSidebar();
@@ -3493,10 +3493,10 @@ function ensureActiveSessionLockModal() {
     activeSessionLockModal.hidden = true;
     activeSessionLockModal.innerHTML = `
         <div class="active_session_lock_content">
-            <strong>Read-only session</strong>
+            <strong data-i18n="Read-only session">Read-only session</strong>
             <p>${ACTIVE_SESSION_LOCK_MESSAGE}</p>
             <div class="active_session_lock_actions">
-                <button id="active_session_reload" class="menu_button" type="button">Reload and Make Active</button>
+                <button id="active_session_reload" class="menu_button" type="button" data-i18n="Reload and Make Active">Reload and Make Active</button>
             </div>
         </div>`;
 
@@ -3563,7 +3563,7 @@ function setActiveSessionLocked(locked) {
         if (is_send_press) {
             stopGeneration();
         }
-        toastr.warning(ACTIVE_SESSION_LOCK_MESSAGE, 'Read-only session', { preventDuplicates: true });
+        toastr.warning(ACTIVE_SESSION_LOCK_MESSAGE, translate('Read-only session'), { preventDuplicates: true });
     }
 }
 
@@ -3981,7 +3981,7 @@ async function firstLoadInit() {
     await getClientVersion();
     await initSecrets();
     await readSecretState();
-    await initLocales();
+    await initLocales({ registerDebugFunction, onLocaleApplied: updateSecretDisplay });
     initChatUtilities();
     initDefaultSlashCommands();
     initOpenAI();
@@ -4253,8 +4253,8 @@ function getCharacterBlock(item, id) {
     const template = $('#character_template .character_select').clone();
     template.attr({ 'data-chid': id, 'id': `CharID${id}` });
     template.find('img').attr('src', this_avatar).attr('alt', item.name);
-    template.find('.avatar').attr('title', `[Character] ${item.name}\nFile: ${item.avatar}`);
-    template.find('.ch_name').text(item.name).attr('title', `[Character] ${item.name}`);
+    template.find('.avatar').attr('title', t`[Character] ${item.name}\nFile: ${item.avatar}`);
+    template.find('.ch_name').text(item.name).attr('title', t`[Character] ${item.name}`);
     template.find('.ch_name').css('color', isOwnedCharacter ? 'var(--SmartThemeEmColor)' : '');
     if (power_user.show_card_avatar_urls) {
         template.find('.ch_avatar_url').text(item.avatar);
@@ -6238,11 +6238,11 @@ function updateHistoryControls() {
     }
 
     if (visibleChatEndId < getTotalChatMessages() - 1) {
-        chatElement.prepend(`<button id="${RETURN_TO_TAIL_CONTROL_ID}" type="button" class="chat_history_button">Return to last message</button>`);
+        chatElement.prepend(`<button id="${RETURN_TO_TAIL_CONTROL_ID}" type="button" class="chat_history_button" data-i18n="Return to last message">Return to last message</button>`);
     }
 
     if (!isChatFullyHydrated() && visibleChatEndId < getTotalChatMessages() - 1) {
-        chatElement.prepend(`<button id="${HYDRATE_CHAT_CONTROL_ID}" type="button" class="chat_history_button">Load full chat for editing</button>`);
+        chatElement.prepend(`<button id="${HYDRATE_CHAT_CONTROL_ID}" type="button" class="chat_history_button" data-i18n="Load full chat for editing">Load full chat for editing</button>`);
     }
 }
 
@@ -6712,7 +6712,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     if (askConfirmation) {
         const result = await callGenericPopup(t`Are you sure you want to delete this message?`, POPUP_TYPE.CONFIRM, null, {
             okButton: canDeleteSwipe ? t`Delete Swipe` : t`Delete Message`,
-            cancelButton: 'Cancel',
+            cancelButton: translate('Cancel'),
             customButtons: canDeleteSwipe ? [t`Delete Message`] : null,
         });
         if (!result) {
@@ -7221,8 +7221,8 @@ function getMessageFromTemplate({
     mes.find('.ch_name .name_text').text(characterName);
     mes.find('.mes_bias').html(bias);
     mes.find('.timestamp').text(timestamp).attr('title', `${extra?.api ? extra.api + ' - ' : ''}${extra?.model ?? ''}`);
-    mes.find('.mesIDDisplay').text(`#${mesId}`);
-    tokenCount && mes.find('.tokenCounterDisplay').text(`${tokenCount}t`);
+    mes.find('.mesIDDisplay').text(t`#${mesId}`);
+    tokenCount && mes.find('.tokenCounterDisplay').text(t`${tokenCount}t`);
     title && mes.attr('title', title);
     timerValue && mes.find('.mes_timer').attr('title', timerTitle).text(timerValue);
     bookmarkLink && updateBookmarkDisplay(mes);
@@ -7715,7 +7715,7 @@ export function addCopyToCodeBlocks(messageElement) {
         hljs.highlightElement(codeBlocks.get(i));
         const copyButton = document.createElement('i');
         copyButton.classList.add('fa-solid', 'fa-copy', 'code-copy', 'interactable');
-        copyButton.title = 'Copy code';
+        copyButton.title = translate('Copy code');
         codeBlocks.get(i).appendChild(copyButton);
         copyButton.addEventListener('click', function (e) {
             e.stopPropagation();
@@ -7926,7 +7926,7 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
 
         if (mes.swipe_id == mes.swipes.length - 1) {
             swipeMessage.find('.mes_timer').text(params.timerValue).attr('title', params.timerTitle);
-            swipeMessage.find('.tokenCounterDisplay').text(`${params.tokenCount}t`);
+            swipeMessage.find('.tokenCounterDisplay').text(t`${params.tokenCount}t`);
         } else {
             swipeMessage.find('.mes_timer').empty();
             swipeMessage.find('.tokenCounterDisplay').empty();
@@ -9002,7 +9002,7 @@ class StreamingProcessor {
             if (currentTokenCount) {
                 targetMessage['extra']['token_count'] = currentTokenCount;
                 if (this.messageTokenCounterDom instanceof HTMLElement) {
-                    this.messageTokenCounterDom.textContent = `${currentTokenCount}t`;
+                    this.messageTokenCounterDom.textContent = t`${currentTokenCount}t`;
                 }
             }
 
@@ -11338,7 +11338,7 @@ export async function duplicateCharacter() {
 
     if (!canDuplicateCharacter(this_chid)) {
         const ownerLabel = getCharacterOwnerLabel(this_chid);
-        toastr.info(`Only ${ownerLabel} and admins can duplicate this character.`, 'Character locked');
+        toastr.info(t`Only ${ownerLabel} and admins can duplicate this character.`, translate('Character locked'));
         return '';
     }
 
@@ -13023,10 +13023,10 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
 
         const popupResult = await Popup.show.input(
             t`ERROR: Chat integrity check failed while saving the file.`,
-            t`<p>After you click OK, the page will be reloaded to prevent data corruption.</p>
-              <p>To confirm an overwrite (and potentially <b>LOSE YOUR DATA</b>), enter <code>OVERWRITE</code> (in all caps) in the box below before clicking OK.</p>`,
+            t`<p data-i18n="After you click OK, the page will be reloaded to prevent data corruption.">After you click OK, the page will be reloaded to prevent data corruption.</p>
+              <p>To confirm an overwrite (and potentially <b data-i18n="LOSE YOUR DATA">LOSE YOUR DATA</b>), enter <code>OVERWRITE</code> (in all caps) in the box below before clicking OK.</p>`,
             '',
-            { okButton: 'OK', cancelButton: false },
+            { okButton: translate('OK'), cancelButton: false },
         );
 
         const forceSaveConfirmed = popupResult === 'OVERWRITE';
@@ -13090,7 +13090,7 @@ async function read_avatar_load(input) {
         const fileData = await getBase64Async(file);
 
         if (!power_user.never_resize_avatars) {
-            const dlg = new Popup('Set the crop position of the avatar image', POPUP_TYPE.CROP, '', { cropImage: fileData });
+            const dlg = new Popup(translate('Set the crop position of the avatar image'), POPUP_TYPE.CROP, '', { cropImage: fileData });
             const croppedImage = await dlg.show();
 
             if (!croppedImage) {
@@ -13142,7 +13142,7 @@ export function buildAvatarList(block, entities, { templateId = 'inline_avatar_t
         avatarTemplate.attr('data-type', entity.type);
         avatarTemplate.attr('data-chid', id);
         avatarTemplate.find('img').attr('src', this_avatar).attr('alt', entity.item.name);
-        avatarTemplate.attr('title', `[Character] ${entity.item.name}\nFile: ${entity.item.avatar}`);
+        avatarTemplate.attr('title', t`[Character] ${entity.item.name}\nFile: ${entity.item.avatar}`);
         if (highlightFavs) {
             avatarTemplate.toggleClass('is_fav', entity.item.fav || entity.item.fav == 'true');
             avatarTemplate.find('.ch_fav').val(entity.item.fav);
@@ -13156,12 +13156,12 @@ export function buildAvatarList(block, entities, { templateId = 'inline_avatar_t
             avatarTemplate.empty();
             avatarTemplate.append(grpTemplate.children());
             avatarTemplate.attr({ 'data-grid': id, 'data-chid': null });
-            avatarTemplate.attr('title', `[Group] ${entity.item.name}`);
+            avatarTemplate.attr('title', t`[Group] ${entity.item.name}`);
         }
         else if (entity.type === 'persona') {
             avatarTemplate.attr({ 'data-pid': id, 'data-chid': null });
             avatarTemplate.find('img').attr('src', getThumbnailUrl('persona', entity.item.avatar));
-            avatarTemplate.attr('title', `[Persona] ${entity.item.name}\nFile: ${entity.item.avatar}`);
+            avatarTemplate.attr('title', t`[Persona] ${entity.item.name}\nFile: ${entity.item.avatar}`);
         }
 
         if (interactable) {
@@ -15198,7 +15198,7 @@ function updateManageChatsBulkActionsUi() {
         .prop('disabled', manageChatsBulkActionPending);
     $('#select_chat_search').toggle(!manageChatsBulkSelectMode);
     $('#manage_chats_bulk_actions').css('display', manageChatsBulkSelectMode ? 'flex' : 'none');
-    $('#manage_chats_bulk_selected_count').text(`${selectedCount} selected`);
+    $('#manage_chats_bulk_selected_count').text(t`${selectedCount} selected`);
     $('#manage_chats_bulk_actions button').prop('disabled', manageChatsBulkActionPending || selectedCount === 0);
     $('#manage_chats_bulk_cancel').prop('disabled', manageChatsBulkActionPending);
 }
@@ -15933,7 +15933,7 @@ async function buildManageChatsHtmlExport(rowContext, filename, messages) {
         }
 
         const messageHtml = isThought
-            ? safeText.replace('▶ Thought', '<span class="thought-indicator">▶ Thought</span><br>')
+            ? safeText.replace('▶ Thought', '<span class="thought-indicator" data-i18n="▶ Thought">▶ Thought</span><br>')
             : safeText;
 
         return `
@@ -16124,7 +16124,7 @@ async function buildManageChatsHtmlExport(rowContext, filename, messages) {
         <header class="header">
             <h1>${chatTitle}</h1>
             <p>${ownerLabel}</p>
-            <p>Exported ${generatedDate}</p>
+            <p><span data-i18n="Exported">Exported</span> ${generatedDate}</p>
         </header>
         <main class="content">
             ${bodyHtml || emptyState}
@@ -16167,7 +16167,7 @@ async function exportManageChatsOwnerChat(ownerContext, filename, format) {
 
     if (!response.ok) {
         await delay(250);
-        toastr.error(`Error: ${data.message}`);
+        toastr.error(t`Error: ${data.message}`);
         return;
     }
 
@@ -16347,7 +16347,7 @@ function appendManageChatsRow(target, chat, options = {}) {
     setManageChatsRowContext(chatBlock, options.rowContext);
     template.find('.avatar img').attr('src', options.avatarImgURL || default_avatar);
     template.find('.select_chat_block_filename').text(chat.file_name);
-    template.find('.chat_file_size').text(`(${chat.file_size},`);
+    template.find('.chat_file_size').text(t`(${chat.file_size},`);
     template.find('.chat_messages_num').text(`${chat.message_count} 💬)`);
     template.find('.select_chat_block_mes').text(chat.preview_message || '');
     template.find('.PastChat_cross').attr('file_name', chat.file_name);
@@ -16598,7 +16598,7 @@ async function displayChats(searchQuery, chatDetails, highlightNames) {
         }
     } catch (error) {
         console.error('Error loading chats:', error);
-        toastr.error('Could not load chat data. Try reloading the page.');
+        toastr.error(translate('Could not load chat data. Try reloading the page.'));
     }
 }
 
@@ -16864,13 +16864,13 @@ function select_rm_create({ switchMenu = true, hydrateForm = true } = {}) {
     $('#character_shared_status').hide().empty();
     $('#character_promote_shared').prop('hidden', true).prop('disabled', true);
     $('#character_manage_owners').prop('hidden', true).prop('disabled', true);
-    $('#character_checkout_toggle').prop('hidden', true).prop('disabled', true).text('Check Out / In');
+    $('#character_checkout_toggle').prop('hidden', true).prop('disabled', true).text(translate('Check Out / In'));
 
     //create text poles
     $('#rm_button_back').css('display', '');
     $('#character_import_button').css('display', '');
     if (hydrateForm) {
-        $('#character_popup-button-h3').text('Create character');
+        $('#character_popup-button-h3').text(translate('Create character'));
         $('#character_name_pole').val(create_save.name);
         $('#description_textarea').val(create_save.description);
         $('#character_world').val(create_save.world);
@@ -17239,22 +17239,22 @@ async function buildCharacterTokenDryRunPromptContext(chid) {
 
 async function runCharacterTokenDryRun() {
     if ($('#form_create').attr('actiontype') === 'createcharacter') {
-        toastr.info('Save the character before running a token dry run.', 'Token dry run');
+        toastr.info(translate('Save the character before running a token dry run.'), translate('Token dry run'));
         return;
     }
 
     if (this_chid === undefined || !characters[this_chid] || selected_group) {
-        toastr.warning('Choose a saved character first.', 'Token dry run');
+        toastr.warning(translate('Choose a saved character first.'), translate('Token dry run'));
         return;
     }
 
     if (hasUnsavedCharacterEdits()) {
-        toastr.info('Save your character edits before running a token dry run.', 'Token dry run');
+        toastr.info(translate('Save your character edits before running a token dry run.'), translate('Token dry run'));
         return;
     }
 
     if (!canEditCharacterMetadata(this_chid)) {
-        toastr.error(`Only ${getCharacterOwnerLabel(this_chid)} and admins can run a token dry run for this character.`, 'Token dry run');
+        toastr.error(t`Only ${getCharacterOwnerLabel(this_chid)} and admins can run a token dry run for this character.`, translate('Token dry run'));
         return;
     }
 
@@ -17290,10 +17290,10 @@ async function runCharacterTokenDryRun() {
             }
         }
         updateCharacterTokenDryRunButton(this_chid);
-        toastr.success('Token dry run updated.', 'Token dry run');
+        toastr.success(translate('Token dry run updated.'), translate('Token dry run'));
     } catch (error) {
         console.error('Token dry run failed', error);
-        toastr.error(error?.message || 'Token dry run failed.', 'Token dry run');
+        toastr.error(error?.message || 'Token dry run failed.', translate('Token dry run'));
         updateCharacterTokenDryRunButton(this_chid);
     } finally {
         if (previousDisabled) {
@@ -17345,8 +17345,8 @@ async function promoteSelectedCharacterToShared() {
 
     const ownerDefaults = ensureActingUserIncludedInCharacterOwnerHandles([]).join(', ');
     const ownerInput = await Popup.show.input(
-        'Share Character',
-        'Enter comma-separated owner handles. Your handle will be included automatically. Shared characters must keep at least two owners.',
+        translate('Share Character'),
+        t`Enter comma-separated owner handles. Your handle will be included automatically. Shared characters must keep at least two owners.`,
         ownerDefaults,
     );
     if (!ownerInput) {
@@ -17364,12 +17364,12 @@ async function promoteSelectedCharacterToShared() {
 
     const data = await response.json().catch(() => null);
     if (!response.ok) {
-        toastr.error(data?.error?.message || 'Could not share this character.', 'Character Sharing');
+        toastr.error(data?.error?.message || 'Could not share this character.', translate('Character Sharing'));
         return;
     }
 
     await refreshSelectedCharacterManagementState();
-    toastr.success('Character is now shared.', 'Character Sharing');
+    toastr.success(translate('Character is now shared.'), translate('Character Sharing'));
 }
 
 async function manageSelectedSharedCharacterOwners() {
@@ -17378,13 +17378,13 @@ async function manageSelectedSharedCharacterOwners() {
     }
 
     if (!characters[this_chid]?.canManageOwners) {
-        toastr.info(getCharacterSharedReadOnlyMessage(this_chid) || 'Shared owner management is unavailable.', 'Character Sharing');
+        toastr.info(getCharacterSharedReadOnlyMessage(this_chid) || 'Shared owner management is unavailable.', translate('Character Sharing'));
         return;
     }
 
     const ownerInput = await Popup.show.input(
-        'Manage Shared Character Owners',
-        'Enter comma-separated owner handles. Your handle will stay selected automatically. Shared characters must keep at least two owners.',
+        translate('Manage Shared Character Owners'),
+        t`Enter comma-separated owner handles. Your handle will stay selected automatically. Shared characters must keep at least two owners.`,
         getCharacterOwnerHandles(this_chid).join(', '),
     );
     if (!ownerInput) {
@@ -17402,12 +17402,12 @@ async function manageSelectedSharedCharacterOwners() {
 
     const data = await response.json().catch(() => null);
     if (!response.ok) {
-        toastr.error(data?.error?.message || 'Could not update shared character owners.', 'Character Sharing');
+        toastr.error(data?.error?.message || 'Could not update shared character owners.', translate('Character Sharing'));
         return;
     }
 
     await refreshSelectedCharacterManagementState();
-    toastr.success('Shared character owners updated.', 'Character Sharing');
+    toastr.success(translate('Shared character owners updated.'), translate('Character Sharing'));
 }
 
 async function toggleSelectedSharedCharacterCheckout() {
@@ -17418,15 +17418,15 @@ async function toggleSelectedSharedCharacterCheckout() {
     const checkoutState = String(characters[this_chid]?.checkoutState || 'available');
     const canForceCheckout = Boolean(characters[this_chid]?.canForceCheckout);
     if (checkoutState === 'other' && !canForceCheckout) {
-        toastr.info(getCharacterSharedReadOnlyMessage(this_chid), 'Character Sharing');
+        toastr.info(getCharacterSharedReadOnlyMessage(this_chid), translate('Character Sharing'));
         return;
     }
 
     let force = false;
     if (checkoutState === 'other' && canForceCheckout) {
         const confirmed = await Popup.show.confirm(
-            'Force Check Out Shared Character',
-            `Force take checkout from "${characters[this_chid]?.checkedOutBy || 'another owner'}"?`,
+            translate('Force Check Out Shared Character'),
+            t`Force take checkout from "${characters[this_chid]?.checkedOutBy || 'another owner'}"?`,
         );
         if (!confirmed) {
             return;
@@ -17446,7 +17446,7 @@ async function toggleSelectedSharedCharacterCheckout() {
 
     const data = await response.json().catch(() => null);
     if (!response.ok) {
-        toastr.error(data?.error?.message || 'Could not update shared character checkout.', 'Character Sharing');
+        toastr.error(data?.error?.message || 'Could not update shared character checkout.', translate('Character Sharing'));
         return;
     }
 
@@ -17508,7 +17508,7 @@ function updateCharacterSharedControls(chid) {
         );
         status.text(getCharacterSharedReadOnlyMessage(chid)).show();
     } else {
-        checkoutOption.text('Check Out / In');
+        checkoutOption.text(translate('Check Out / In'));
         status.hide().empty();
     }
 }
@@ -18226,7 +18226,7 @@ export function updateViewMessageIds(startIndex = null) {
 
     chatElement.find('.mes').each(function (index, element) {
         $(element).attr('mesid', minId + index);
-        $(element).find('.mesIDDisplay').text(`#${minId + index}`);
+        $(element).find('.mesIDDisplay').text(t`#${minId + index}`);
     });
 
     chatElement.find('.mes').removeClass('last_mes');
@@ -18325,7 +18325,7 @@ function updateAlternateGreetingsHintVisibility(root) {
 async function openCharacterWorldPopup() {
     const chid = $('#set_character_world').data('chid');
     if (menu_type != 'create' && chid === undefined) {
-        toastr.error('Does not have an Id for this character in world select menu.');
+        toastr.error(translate('Does not have an Id for this character in world select menu.'));
         return;
     }
 
@@ -18340,7 +18340,7 @@ async function openCharacterWorldPopup() {
         || !ownerHandle
         || canEditCharacterMetadata(chid);
     if (!canEditLoreLinks && ownerHandle) {
-        toastr.info(`Only ${getCharacterOwnerLabel(chid)} and admins may access character lore for this character.`, t`Character locked`);
+        toastr.info(t`Only ${getCharacterOwnerLabel(chid)} and admins may access character lore for this character.`, t`Character locked`);
         return;
     }
 
@@ -18423,8 +18423,8 @@ async function openCharacterWorldPopup() {
     if (effectiveHiddenLorebooks.length > 0) {
         template.find('.range-block-range').first().after($(`
             <div class="range-block-counter justifyLeft flex-container flexFlowColumn margin-bot-10px opacity50p">
-                <span>Effective hidden/system lorebooks are also active for this character at runtime.</span>
-                <span>These links are read-only here and are not changed when you edit metadata-linked lorebooks.</span>
+                <span data-i18n="Effective hidden/system lorebooks are also active for this character at runtime.">Effective hidden/system lorebooks are also active for this character at runtime.</span>
+                <span data-i18n="These links are read-only here and are not changed when you edit metadata-linked lorebooks.">These links are read-only here and are not changed when you edit metadata-linked lorebooks.</span>
                 <span><strong>${escapeHtml(effectiveHiddenLorebooks.join(', '))}</strong></span>
             </div>
         `));
@@ -18433,7 +18433,7 @@ async function openCharacterWorldPopup() {
     if (!canEditLoreLinks && ownerHandle) {
         template.find('.range-block-title').first().after($(`
             <div class="range-block-counter justifyLeft flex-container flexFlowColumn margin-bot-10px opacity50p">
-                <span>Editing lorebooks is locked for this character. Only ${escapeHtml(getCharacterOwnerLabel(chid))} and admins can change linked or embedded lorebooks.</span>
+                <span>${t`Editing lorebooks is locked for this character. Only ${escapeHtml(getCharacterOwnerLabel(chid))} and admins can change linked or embedded lorebooks.`}</span>
             </div>
         `));
     }
@@ -18467,10 +18467,10 @@ function openAlternateGreetings() {
     const chid = $('.open_alternate_greetings').data('chid');
 
     if (menu_type != 'create' && chid === undefined) {
-        toastr.error('Does not have an Id for this character in editor menu.');
+        toastr.error(translate('Does not have an Id for this character in editor menu.'));
         return;
     } else if (menu_type != 'create' && !canEditCharacterMetadata(chid)) {
-        toastr.info(`Only ${getCharacterOwnerLabel(chid)} and admins can edit alternate greetings for this character.`, t`Character locked`);
+        toastr.info(t`Only ${getCharacterOwnerLabel(chid)} and admins can edit alternate greetings for this character.`, t`Character locked`);
         return;
     } else {
         // If the character does not have alternate greetings, create an empty array
@@ -18773,7 +18773,7 @@ export async function createOrEditCharacter(e, options = {}) {
 
             create_save.extra_books = [];
 
-            $('#character_popup-button-h3').text('Create character');
+            $('#character_popup-button-h3').text(translate('Create character'));
 
             create_save.avatar = null;
 
@@ -19023,8 +19023,8 @@ export async function swipe(event, direction, { source, repeated, message = chat
             } else {
                 await Popup.show.confirm(
                     t`ERROR: <code>syncSwipeToMes</code> has failed to revert the failed ${direction} swipe on message #${mesId}.`,
-                    t`<p>After you click OK, the chat will be reloaded to prevent data corruption.</p>`,
-                    { okButton: 'OK', cancelButton: false },
+                    t`<p data-i18n="After you click OK, the chat will be reloaded to prevent data corruption.">After you click OK, the chat will be reloaded to prevent data corruption.</p>`,
+                    { okButton: translate('OK'), cancelButton: false },
                 );
                 console.trace(`Error! Recursion detected when reverting failed ${direction} swipe on message #${mesId}. Something has broken.`);
                 await reloadCurrentChat();
@@ -19196,7 +19196,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
                 const tokenCountText = (chat[mesId]?.extra?.reasoning || '') + chat[mesId].mes;
                 const tokenCount = await getTokenCountAsync(tokenCountText, 0);
                 chat[mesId].extra.token_count = tokenCount;
-                thisMesDiv.find('.tokenCounterDisplay').text(`${tokenCount}t`);
+                thisMesDiv.find('.tokenCounterDisplay').text(t`${tokenCount}t`);
             }
         }
 
@@ -19252,7 +19252,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
                 newSwipeId = Math.max(0, chat[mesId].swipes.length - 1);
             }
             if (newSwipeId > chat[mesId].swipes.length - 1) {
-                toastr.warning(`The swipe_id for message #${mesId} was ${newSwipeId}. It has been reset to ${chat[mesId].swipes.length - 1}.`);
+                toastr.warning(t`The swipe_id for message #${mesId} was ${newSwipeId}. It has been reset to ${chat[mesId].swipes.length - 1}.`);
                 chat[mesId].swipe_id = chat[mesId].swipes.length - 1;
                 await endSwipe();
                 return;
@@ -19265,7 +19265,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
             }
 
             if (newSwipeId < 0) {
-                toastr.warning(`The swipe_id for message #${mesId} was ${newSwipeId}. It has been reset to zero.`);
+                toastr.warning(t`The swipe_id for message #${mesId} was ${newSwipeId}. It has been reset to zero.`);
                 chat[mesId].swipe_id = 0;
                 await endSwipe();
                 return;
@@ -19615,7 +19615,7 @@ export async function renameGroupOrCharacterChat({ characterId, groupId, oldFile
     } catch {
         loader && hideLoader();
         await delay(500);
-        await callGenericPopup('An error has occurred. Chat was not renamed.', POPUP_TYPE.TEXT);
+        await callGenericPopup(translate('An error has occurred. Chat was not renamed.'), POPUP_TYPE.TEXT);
     } finally {
         loader && hideLoader();
     }
@@ -19758,17 +19758,17 @@ function getCatalogCharacterRow(entry) {
         .append($('<span></span>').text(entry.alreadyInstalled ? 'Installed' : 'Retrieve'))
         .prop('disabled', Boolean(entry.alreadyInstalled))
         .on('click', async () => {
-            retrieveButton.prop('disabled', true).find('span').text('Retrieving...');
+            retrieveButton.prop('disabled', true).find('span').text(translate('Retrieving...'));
             try {
                 await retrieveCatalogCharacter(publishedFilename);
                 entry.alreadyInstalled = true;
                 avatar.attr('src', getThumbnailUrl('avatar', publishedFilename, true));
-                retrieveButton.find('span').text('Installed');
-                toastr.success(`${displayName} was retrieved from The Catalog.`);
+                retrieveButton.find('span').text(translate('Installed'));
+                toastr.success(t`${displayName} was retrieved from The Catalog.`);
                 await getCharacters();
                 await printCharacters(true);
             } catch (error) {
-                retrieveButton.prop('disabled', false).find('span').text('Retrieve');
+                retrieveButton.prop('disabled', false).find('span').text(translate('Retrieve'));
                 toastr.error(error?.message || 'Failed to retrieve bot from The Catalog.');
             }
         });
@@ -19782,8 +19782,8 @@ async function showCharacterCatalog() {
     const list = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
 
     container
-        .append($('<h3 class="margin0"></h3>').text('The Catalog'))
-        .append(list.append($('<div class="opacity50p"></div>').text('Loading catalog...')));
+        .append($('<h3 class="margin0"></h3>').text(translate('The Catalog')))
+        .append(list.append($('<div class="opacity50p"></div>').text(translate('Loading catalog...'))));
 
     const popupPromise = callGenericPopup(container, POPUP_TYPE.TEXT, '', {
         wide: true,
@@ -19795,7 +19795,7 @@ async function showCharacterCatalog() {
         const entries = await getCatalogCharacters();
         list.empty();
         if (!entries.length) {
-            list.append($('<div class="opacity50p"></div>').text('No globally pushed bots are available.'));
+            list.append($('<div class="opacity50p"></div>').text(translate('No globally pushed bots are available.')));
         } else {
             for (const entry of entries) {
                 list.append(getCatalogCharacterRow(entry));
@@ -20026,18 +20026,18 @@ function addDebugFunctions() {
 
     registerDebugFunction('generationTest', 'Send a generation request', 'Generates text using the currently selected API.', async () => {
         const text = prompt('Input text:', 'Hello');
-        toastr.info('Working on it...');
+        toastr.info(translate('Working on it...'));
         const message = await generateRaw({ prompt: text });
         alert(message);
     });
     registerDebugFunction('toggleEventTracing', 'Toggle event tracing', 'Useful to see what triggered a certain event.', () => {
         localStorage.setItem('eventTracing', localStorage.getItem('eventTracing') === 'true' ? 'false' : 'true');
-        toastr.info('Event tracing is now ' + (localStorage.getItem('eventTracing') === 'true' ? 'enabled' : 'disabled'));
+        toastr.info(translate('Event tracing is now ') + (localStorage.getItem('eventTracing') === 'true' ? 'enabled' : 'disabled'));
     });
 
     registerDebugFunction('toggleRegenerateWarning', 'Toggle Ctrl+Enter regeneration confirmation', 'Toggle the warning when regenerating a message with a Ctrl+Enter hotkey.', () => {
         accountStorage.setItem('RegenerateWithCtrlEnter', accountStorage.getItem('RegenerateWithCtrlEnter') === 'true' ? 'false' : 'true');
-        toastr.info('Regenerate warning is now ' + (accountStorage.getItem('RegenerateWithCtrlEnter') === 'true' ? 'disabled' : 'enabled'));
+        toastr.info(translate('Regenerate warning is now ') + (accountStorage.getItem('RegenerateWithCtrlEnter') === 'true' ? 'disabled' : 'enabled'));
     });
 
     registerDebugFunction('copySetup', 'Copy ST setup to clipboard [WIP]', 'Useful data when reporting bugs', async () => {
@@ -20059,9 +20059,9 @@ API Settings: ${JSON.stringify(getSettingsContents[getSettingsContents.main_api 
 
         try {
             await copyText(logMessage);
-            toastr.info('Your ST API setup data has been copied to the clipboard.');
+            toastr.info(translate('Your ST API setup data has been copied to the clipboard.'));
         } catch (error) {
-            toastr.error('Failed to copy ST Setup to clipboard:', error);
+            toastr.error(translate('Failed to copy ST Setup to clipboard:'), error);
         }
     });
 }
@@ -20414,11 +20414,11 @@ jQuery(async function () {
         }
 
         if (failedCount > 0) {
-            toastr.error(`Failed to export ${failedCount} selected chat(s).`);
+            toastr.error(t`Failed to export ${failedCount} selected chat(s).`);
             return;
         }
 
-        toastr.success(`Exported ${selectedItems.length} selected chat(s).`);
+        toastr.success(t`Exported ${selectedItems.length} selected chat(s).`);
     }
 
     async function handleManageChatsBulkDelete() {
@@ -20429,7 +20429,7 @@ jQuery(async function () {
         }
 
         const result = await callGenericPopup(
-            `<h3>${t`Delete selected chat files?`}</h3><p>${selectedItems.length} selected chat(s) will be deleted.</p>`,
+            t`<h3>${t`Delete selected chat files?`}</h3><p>${selectedItems.length} selected chat(s) will be deleted.</p>`,
             POPUP_TYPE.CONFIRM,
         );
         if (result !== POPUP_RESULT.AFFIRMATIVE) {
@@ -20461,10 +20461,10 @@ jQuery(async function () {
 
         if (deletedCount > 0) {
             await eventSource.emit(event_types.CHAT_DELETED, name);
-            toastr.success(`Deleted ${deletedCount} selected chat(s).`);
+            toastr.success(t`Deleted ${deletedCount} selected chat(s).`);
         }
         if (failedCount > 0) {
-            toastr.error(`Failed to delete ${failedCount} selected chat(s).`);
+            toastr.error(t`Failed to delete ${failedCount} selected chat(s).`);
         }
     }
 
@@ -20605,7 +20605,7 @@ jQuery(async function () {
 
     $('#delete_button').on('click', async function () {
         if (this_chid === undefined || !characters[this_chid]) {
-            toastr.warning('No character selected.');
+            toastr.warning(translate('No character selected.'));
             return;
         }
 
@@ -20760,7 +20760,7 @@ jQuery(async function () {
             // display error message
             console.log(`An error has occurred: ${error.message}`);
             await delay(250);
-            toastr.error(`Error: ${error.message}`);
+            toastr.error(t`Error: ${error.message}`);
         }
     });
 
@@ -21046,7 +21046,7 @@ jQuery(async function () {
                 const messageId = $(this).closest('.mes').attr('mesid');
                 const text = chat[messageId]['mes'];
                 await copyText(text);
-                toastr.info('Copied!', '', { timeOut: 2000 });
+                toastr.info(translate('Copied!'), '', { timeOut: 2000 });
             } catch (err) {
                 console.error('Failed to copy: ', err);
             }
@@ -21276,12 +21276,12 @@ jQuery(async function () {
 
     $('#submit_character_review_button').on('click', async function () {
         if (this_chid === undefined || !characters[this_chid]) {
-            toastr.error('Choose a saved character first.', 'Submission unavailable');
+            toastr.error(translate('Choose a saved character first.'), translate('Submission unavailable'));
             return;
         }
 
         if (!canSubmitCharacterForReview(this_chid)) {
-            toastr.info(`Only ${getCharacterOwnerLabel(this_chid)} and admins can submit this character.`, 'Submission unavailable');
+            toastr.info(t`Only ${getCharacterOwnerLabel(this_chid)} and admins can submit this character.`, translate('Submission unavailable'));
             return;
         }
 
@@ -21657,12 +21657,12 @@ jQuery(async function () {
                 const source = getCharacterSource(this_chid);
                 if (source && isValidUrl(source)) {
                     const url = new URL(source);
-                    const confirm = await Popup.show.confirm('Open Source', `<span>Do you want to open the link to ${url.hostname} in a new tab?</span><var>${url}</var>`);
+                    const confirm = await Popup.show.confirm(t`Open Source`, `<span>${t`Do you want to open the link to ${url.hostname} in a new tab?`}</span><var>${url}</var>`);
                     if (confirm) {
                         window.open(source, '_blank');
                     }
                 } else {
-                    toastr.info('This character doesn\'t seem to have a source.');
+                    toastr.info(translate('This character doesn\'t seem to have a source.'));
                 }
             } break;
             case 'replace_update': {
@@ -21671,7 +21671,7 @@ jQuery(async function () {
                 const POPUP_RESULT_URL = POPUP_RESULT.CUSTOM1, POPUP_RESULT_FILE = POPUP_RESULT.CUSTOM2;
                 const result = await Popup.show.confirm(t`Replace Character`,
                     `<p>${t`Choose a new character card to replace this character with.`}</p>` +
-                    `<p>${t`You can also replace this character with the one from the online source.`}${onlineUrl ? `<br />This character was downloaded from: <var>${onlineUrl}</var>` : ''}</p>` +
+                    `<p>${t`You can also replace this character with the one from the online source.`}${onlineUrl ? `<br /><span data-i18n="This character was downloaded from:">This character was downloaded from:</span> <var>${onlineUrl}</var>` : ''}</p>` +
                     `<p>${t`All chats, assets and group memberships will be preserved, but local changes to the character data will be lost.`}<br />${t`Proceed?`}</p>`,
                     {
                         okButton: false,
@@ -21707,7 +21707,7 @@ jQuery(async function () {
                                 await processDroppedFiles([file], data);
                                 await postReplace();
                             } catch {
-                                toastr.error('Failed to replace the character card.', 'Something went wrong');
+                                toastr.error(translate('Failed to replace the character card.'), translate('Something went wrong'));
                             }
                         }
                         $('#character_replace_file').off('change').on('change', uploadReplacementCard).trigger('click');
@@ -21734,7 +21734,7 @@ jQuery(async function () {
             /*case 'delete_button':
                 popup_type = "del_ch";
                 callPopup(`
-                        <h3>Delete the character?</h3>
+                        <h3 data-i18n="Delete the character?">Delete the character?</h3>
                         <b>THIS IS PERMANENT!<br><br>
                         THIS WILL ALSO DELETE ALL<br>
                         OF THE CHARACTER'S CHAT FILES.<br><br></b>`
@@ -21785,7 +21785,7 @@ jQuery(async function () {
                     $(masterElement).val($(this).val()).trigger('input', { forced: true });
                 } else {
                     //if value not ok, warn and reset to last known valid value
-                    toastr.warning(`Invalid value. Must be between ${$(this).attr('min')} and ${$(this).attr('max')}`);
+                    toastr.warning(t`Invalid value. Must be between ${$(this).attr('min')} and ${$(this).attr('max')}`);
                     //newSlider.val(valueBeforeManualInput)
                     $(this).val(valueBeforeManualInput);
                 }
@@ -21811,7 +21811,7 @@ jQuery(async function () {
                 $(masterElement).val($(this).val()).trigger('input', { forced: true });
             } else {
                 //if value not ok, warn and reset to last known valid value
-                toastr.warning(`Invalid value. Must be between ${$(this).attr('min')} and ${$(this).attr('max')}`);
+                toastr.warning(t`Invalid value. Must be between ${$(this).attr('min')} and ${$(this).attr('max')}`);
                 $(this).val(valueBeforeManualInput);
             }
         }

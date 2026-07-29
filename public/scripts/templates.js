@@ -1,5 +1,5 @@
 import { DOMPurify, Handlebars } from '../lib.js';
-import { applyLocale } from './i18n.js';
+import { applyLocale, translate } from './i18n.js';
 
 /**
  * @type {Map<string, function>}
@@ -84,7 +84,7 @@ export async function renderTemplateAsync(templateId, templateData = {}, sanitiz
         return result;
     } catch (err) {
         console.error('Error rendering template', templateId, templateData, err);
-        toastr.error('Check the DevTools console for more information.', 'Error rendering template');
+        toastr.error(translate('Check the DevTools console for more information.'), translate('Error rendering template'));
     }
 }
 
@@ -126,6 +126,6 @@ export function renderTemplate(templateId, templateData = {}, sanitize = true, l
         return result;
     } catch (err) {
         console.error('Error rendering template', templateId, templateData, err);
-        toastr.error('Check the DevTools console for more information.', 'Error rendering template');
+        toastr.error(translate('Check the DevTools console for more information.'), translate('Error rendering template'));
     }
 }

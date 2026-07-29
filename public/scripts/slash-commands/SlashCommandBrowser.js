@@ -1,3 +1,4 @@
+import { translate } from '../i18n.js';
 import { escapeRegex } from '../utils.js';
 import { SlashCommandParser } from './SlashCommandParser.js';
 
@@ -18,13 +19,13 @@ export class SlashCommandBrowser {
                     search.classList.add('search');
                     const lbl = document.createElement('label'); {
                         lbl.classList.add('searchLabel');
-                        lbl.textContent = 'Search: ';
+                        lbl.textContent = translate('Search: ');
                         const inp = document.createElement('input'); {
                             this.search = inp;
                             inp.classList.add('searchInput');
                             inp.classList.add('text_pole');
                             inp.type = 'search';
-                            inp.placeholder = 'Search slash commands - use quotes to search "literal" instead of fuzzy';
+                            inp.placeholder = translate('Search slash commands - use quotes to search "literal" instead of fuzzy');
                             inp.addEventListener('input', ()=>{
                                 this.details?.remove();
                                 this.details = null;

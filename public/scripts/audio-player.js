@@ -1,3 +1,4 @@
+import { translate } from './i18n.js';
 import { formatTime } from './utils.js';
 
 export class AudioPlayer {
@@ -234,7 +235,7 @@ export class AudioPlayer {
         if (this.elements.playPauseBtn) {
             this.elements.playPauseBtn.classList.remove('fa-play');
             this.elements.playPauseBtn.classList.add('fa-pause');
-            this.elements.playPauseBtn.setAttribute('title', 'Pause');
+            this.elements.playPauseBtn.setAttribute('title', translate('Pause'));
         }
 
         if (typeof this.options.onPlay === 'function') {
@@ -252,7 +253,7 @@ export class AudioPlayer {
         if (this.elements.playPauseBtn) {
             this.elements.playPauseBtn.classList.remove('fa-pause');
             this.elements.playPauseBtn.classList.add('fa-play');
-            this.elements.playPauseBtn.setAttribute('title', 'Play');
+            this.elements.playPauseBtn.setAttribute('title', translate('Play'));
         }
 
         if (typeof this.options.onPause === 'function') {
@@ -270,7 +271,7 @@ export class AudioPlayer {
         if (this.elements.playPauseBtn) {
             this.elements.playPauseBtn.classList.remove('fa-pause');
             this.elements.playPauseBtn.classList.add('fa-play');
-            this.elements.playPauseBtn.setAttribute('title', 'Play');
+            this.elements.playPauseBtn.setAttribute('title', translate('Play'));
         }
 
         if (typeof this.options.onEnded === 'function') {

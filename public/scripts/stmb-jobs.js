@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 import {
     eventSource,
     event_types,
@@ -939,10 +940,10 @@ function renderJobRows(records = []) {
                 ? ` data-action="open-approval" data-job-id="${esc(job.id)}" role="button" tabindex="0" title="Review approval request"`
                 : '';
             const retryButton = job.state === 'failed'
-                ? `<button type="button" class="menu_button stmb-jobs-row-action" data-action="retry" data-chat-key="${esc(record.chatKey)}" data-job-id="${esc(job.id)}">Retry failed</button>`
+                ? `<button type="button" class="menu_button stmb-jobs-row-action" data-action="retry" data-chat-key="${esc(record.chatKey)}" data-job-id="${esc(job.id)}" data-i18n="Retry failed">Retry failed</button>`
                 : '';
             const dismissButton = canDismissNotification
-                ? `<button type="button" class="stmb-jobs-row-dismiss" data-action="dismiss-job" data-chat-key="${esc(record.chatKey)}" data-job-id="${esc(job.id)}" title="Dismiss notification" aria-label="Dismiss notification">&times;</button>`
+                ? `<button type="button" class="stmb-jobs-row-dismiss" data-action="dismiss-job" data-chat-key="${esc(record.chatKey)}" data-job-id="${esc(job.id)}" title="Dismiss notification" aria-label="Dismiss notification" data-i18n="[title]Dismiss notification;[aria-label]Dismiss notification">&times;</button>`
                 : '';
             return `
                 <div class="stmb-jobs-row ${getStatusToneClass(job)}"${approvalAttrs}>
@@ -954,7 +955,7 @@ function renderJobRows(records = []) {
                         </div>
                         ${rangeLabel ? `<div class="stmb-jobs-row-meta">${esc(rangeLabel)}</div>` : ''}
                         <div class="stmb-jobs-row-meta">${esc(job.characterName)}${job.chatTitle ? ` - ${esc(job.chatTitle)}` : ''}</div>
-                        <div class="stmb-jobs-row-meta">${job.lorebookName ? `Lorebook: ${esc(job.lorebookName)}` : ''}${elapsedLabel ? ` - ${esc(elapsedLabel)}` : ''}</div>
+                        <div class="stmb-jobs-row-meta">${job.lorebookName ? `<span data-i18n="Lorebook:">Lorebook:</span> ${esc(job.lorebookName)}` : ''}${elapsedLabel ? ` - ${esc(elapsedLabel)}` : ''}</div>
                         ${job.detail ? `<div class="stmb-jobs-row-detail">${esc(job.detail)}</div>` : ''}
                         ${job.error?.message ? `<div class="stmb-jobs-row-error">${esc(job.error.message)}</div>` : ''}
                     </div>
@@ -965,7 +966,7 @@ function renderJobRows(records = []) {
         }));
     }
 
-    jobsRows.innerHTML = sections.join('') || '<div class="stmb-jobs-empty">No Memory Books jobs.</div>';
+    jobsRows.innerHTML = sections.join('') || '<div class="stmb-jobs-empty" data-i18n="No Memory Books jobs.">No Memory Books jobs.</div>';
 
     const currentChatKey = getCurrentChatKey();
     const currentRecord = records.find(record => record.chatKey === currentChatKey);
@@ -974,10 +975,10 @@ function renderJobRows(records = []) {
     const completedCount = records.reduce((count, record) => count + getCompletedCount(record.store), 0);
     const notificationCount = records.reduce((count, record) => count + getDismissibleNotificationCount(record.store), 0);
     jobsActions.innerHTML = `
-        <button type="button" class="menu_button" data-action="cancel-active" ${hasCurrentRunningJob ? '' : 'disabled'}>Cancel current active job</button>
-        <button type="button" class="menu_button" data-action="cancel-all-active" ${hasAnyActiveJobs ? '' : 'disabled'}>Cancel all jobs</button>
+        <button type="button" class="menu_button" data-action="cancel-active" ${hasCurrentRunningJob ? '' : 'disabled'} data-i18n="Cancel current active job">Cancel current active job</button>
+        <button type="button" class="menu_button" data-action="cancel-all-active" ${hasAnyActiveJobs ? '' : 'disabled'} data-i18n="Cancel all jobs">Cancel all jobs</button>
         <button type="button" class="menu_button" data-action="clear-completed" ${completedCount > 0 ? '' : 'disabled'}>Clear completed</button>
-        ${notificationCount > 0 ? '<button type="button" class="stmb-jobs-action-link" data-action="dismiss-notifications">Dismiss all notifications</button>' : ''}
+        ${notificationCount > 0 ? '<button type="button" class="stmb-jobs-action-link" data-action="dismiss-notifications" data-i18n="Dismiss all notifications">Dismiss all notifications</button>' : ''}
     `;
 }
 
@@ -1003,7 +1004,7 @@ function renderStmbJobsUi() {
     topBarButton.classList.toggle('disabled', false);
     topBarButton.classList.toggle('active', isPanelOpen);
     topBarButton.title = tooltip;
-    topBarButton.setAttribute('aria-label', `Memory Books Jobs. ${tooltip}`);
+    topBarButton.setAttribute('aria-label', t`Memory Books Jobs. ${tooltip}`);
     topBarButton.setAttribute('aria-expanded', String(isPanelOpen));
     topBarBadge.textContent = hasActiveJobs ? String(activeCount) : (recentFailureCount > 0 ? String(recentFailureCount) : '');
     topBarBadge.style.display = hasActiveJobs || recentFailureCount > 0 ? 'inline-flex' : 'none';

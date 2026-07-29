@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 import { isAdmin } from './user.js';
 import { isMobile } from './RossAscends-mods.js';
 import { renderTemplateAsync } from './templates.js';
@@ -678,7 +679,7 @@ function bindHiddenTemplatesPanelEvents(panel) {
             return;
         }
 
-        const templateName = normalizeName(await Popup.show.input('Create Hidden Lorebook Template', 'Enter a new template name:', ''));
+        const templateName = normalizeName(await Popup.show.input(t`Create Hidden Lorebook Template`, t`Enter a new template name:`, ''));
         if (!templateName) {
             return;
         }
@@ -704,7 +705,7 @@ function bindHiddenTemplatesPanelEvents(panel) {
         }
 
         const currentTemplateName = panel.currentTemplate;
-        const nextTemplateName = normalizeName(await Popup.show.input('Rename Hidden Lorebook Template', 'Enter a new template name:', currentTemplateName));
+        const nextTemplateName = normalizeName(await Popup.show.input(t`Rename Hidden Lorebook Template`, t`Enter a new template name:`, currentTemplateName));
         if (!nextTemplateName || nextTemplateName === currentTemplateName) {
             return;
         }
@@ -740,7 +741,7 @@ function bindHiddenTemplatesPanelEvents(panel) {
         }
 
         const currentTemplateName = panel.currentTemplate;
-        const confirmed = await Popup.show.confirm('Delete Hidden Lorebook Template', `Delete template "${currentTemplateName}"? This removes the template assignment from any characters using it.`);
+        const confirmed = await Popup.show.confirm(t`Delete Hidden Lorebook Template`, t`Delete template "${currentTemplateName}"? This removes the template assignment from any characters using it.`);
         if (!confirmed) {
             return;
         }

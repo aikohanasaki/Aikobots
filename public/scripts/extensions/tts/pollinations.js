@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { getRequestHeaders } from '../../../script.js';
 import { splitRecursive } from '../../utils.js';
 import { getPreviewString, saveTtsProviderSettings } from './index.js';
@@ -141,7 +142,7 @@ export class PollinationsTtsProvider {
             });
 
             if (!response.ok) {
-                toastr.error(response.statusText, 'TTS Generation Failed');
+                toastr.error(response.statusText, translate('TTS Generation Failed'));
                 throw new Error(`HTTP ${response.status}: ${await response.text()}`);
             }
 

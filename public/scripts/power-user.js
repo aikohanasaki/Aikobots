@@ -56,7 +56,7 @@ import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCom
 import { POPUP_RESULT, POPUP_TYPE, callGenericPopup, fixToastrForDialogs } from './popup.js';
 import { fuzzySearchCategories } from './filters.js';
 import { IMAGE_OVERSWIPE, MEDIA_DISPLAY } from './constants.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { getBackgroundPath, isCustomBackgroundUrl } from './backgrounds.js';
 import { deriveBackgroundName, extractDominantColor, generateThemePalette } from './util/ThemeGenerator.js';
 import { setMobileBackgroundAudioPlayback } from './mobile-background-audio.js';
@@ -727,7 +727,7 @@ var originalSliderValues = [];
 async function switchLabMode({ noReset = false } = {}) {
 
     /*     if (power_user.enableZenSliders && power_user.enableLabMode) {
-            toastr.warning("Can't start Lab Mode while Zen Sliders are active")
+            toastr.warning(translate("Can't start Lab Mode while Zen Sliders are active"))
             return
             //$("#enableZenSliders").trigger('click')
         }
@@ -892,7 +892,7 @@ async function CreateZenSliders(elmnt) {
                 var numVal = Number(sliderValue).toFixed(decimals);
                 offVal = Number(offVal).toFixed(decimals);
                 if (numVal === offVal) {
-                    handle.text('Off').css('color', 'rgba(128,128,128,0.5');
+                    handle.text(translate('Off')).css('color', 'rgba(128,128,128,0.5');
                 } else {
                     handle.text(numVal).css('color', '');
                 }
@@ -941,7 +941,7 @@ async function CreateZenSliders(elmnt) {
                                 valueBeforeManualInput = manualInput;
                             } else {
                                 //if value not ok, warn and reset to last known valid value
-                                toastr.warning(`Invalid value. Must be between ${sliderMin} and ${sliderMax}`);
+                                toastr.warning(t`Invalid value. Must be between ${sliderMin} and ${sliderMax}`);
                                 console.log(valueBeforeManualInput);
                                 newSlider.val(valueBeforeManualInput);
                                 handle.text(valueBeforeManualInput);
@@ -994,7 +994,7 @@ async function CreateZenSliders(elmnt) {
         //everything else uses the flat slider value
         else {
             //show 'off' if disabled value is set
-            if (numVal === offVal) { handle.text('Off').css('color', 'rgba(128,128,128,0.5'); }
+            if (numVal === offVal) { handle.text(translate('Off')).css('color', 'rgba(128,128,128,0.5'); }
             else { handle.text(ui.value.toFixed(decimals)).css('color', ''); }
             newSlider.val(handleText);
         }
@@ -2945,14 +2945,14 @@ export function sortEntitiesList(entities, forceSearch, filterHelper = null) {
  */
 async function updateTheme() {
     await saveTheme(power_user.theme);
-    toastr.success('Theme saved.');
+    toastr.success(translate('Theme saved.'));
 }
 
 async function deleteTheme() {
     const themeName = power_user.theme;
 
     if (!themeName) {
-        toastr.info('No theme selected.');
+        toastr.info(translate('No theme selected.'));
         return;
     }
 
@@ -2985,7 +2985,7 @@ async function deleteTheme() {
         if (power_user.theme) {
             applyTheme(power_user.theme);
         }
-        toastr.success('Theme deleted.');
+        toastr.success(translate('Theme deleted.'));
     }
 }
 
@@ -3035,7 +3035,7 @@ async function importTheme(file) {
     option.innerText = parsed.name;
     $('#themes').append(option);
     saveSettingsDebounced();
-    toastr.success(parsed.name, 'Theme imported');
+    toastr.success(parsed.name, translate('Theme imported'));
 }
 
 /**
@@ -3046,7 +3046,7 @@ async function importTheme(file) {
  */
 async function saveTheme(name = undefined, theme = undefined) {
     if (typeof name !== 'string') {
-        const newName = await callGenericPopup('Enter a theme preset name:', POPUP_TYPE.INPUT, power_user.theme);
+        const newName = await callGenericPopup(translate('Enter a theme preset name:'), POPUP_TYPE.INPUT, power_user.theme);
 
         if (!newName) {
             return;
@@ -3066,7 +3066,7 @@ async function saveTheme(name = undefined, theme = undefined) {
     });
 
     if (!response.ok) {
-        toastr.error('Check the server connection and reload the page to prevent data loss.', 'Theme could not be saved');
+        toastr.error(translate('Check the server connection and reload the page to prevent data loss.'), translate('Theme could not be saved'));
         console.error('Theme could not be saved', response);
         throw new Error('Theme could not be saved');
     }
@@ -3167,7 +3167,7 @@ function getNewTheme(parsed) {
 }
 
 async function saveMovingUI() {
-    const popupResult = await callGenericPopup('Enter a name for the MovingUI Preset:', POPUP_TYPE.INPUT);
+    const popupResult = await callGenericPopup(translate('Enter a name for the MovingUI Preset:'), POPUP_TYPE.INPUT);
 
     if (!popupResult) {
         return;
@@ -3206,7 +3206,7 @@ async function saveMovingUI() {
         power_user.movingUIPreset = name;
         saveSettingsDebounced();
     } else {
-        toastr.error('Failed to save MovingUI state.');
+        toastr.error(translate('Failed to save MovingUI state.'));
         console.error('MovingUI could not be saved', response);
     }
 }
@@ -3292,10 +3292,10 @@ async function resetMovablePanels(type) {
             return;
             //if happening due to resize, tell user.
         } else if (type === 'resize') {
-            toastr.warning('Panel positions reset due to zoom/resize');
+            toastr.warning(translate('Panel positions reset due to zoom/resize'));
             //if happening due to manual button press
         } else {
-            toastr.success('Panel positions reset');
+            toastr.success(translate('Panel positions reset'));
         }
     });
 }
@@ -3356,7 +3356,7 @@ async function doRandomChat(_, tagName) {
     resetSelectedGroup();
     const characterId = getRandomCharacterId();
     if (!characterId) {
-        toastr.error('No characters found');
+        toastr.error(translate('No characters found'));
         return;
     }
     setCharacterId(characterId);
@@ -3376,7 +3376,7 @@ async function loadUntilMesId(mesId) {
     const target = await jumpToMessageWindow(mesId);
 
     if (!target.length) {
-        toastr.error(`Could not find message with ID: ${mesId}`);
+        toastr.error(t`Could not find message with ID: ${mesId}`);
         return target;
     }
 
@@ -3389,14 +3389,14 @@ async function doMesCut(_, text) {
 
     //reject invalid args or no args
     if (!range) {
-        toastr.warning('Must provide a Message ID or a range to cut.');
+        toastr.warning(translate('Must provide a Message ID or a range to cut.'));
         return;
     }
 
     if (!isChatFullyHydrated()) {
         const hydrated = await hydrateCurrentChatForEditing();
         if (!hydrated) {
-            toastr.error('Could not load the full chat for cutting messages.');
+            toastr.error(translate('Could not load the full chat for cutting messages.'));
             return '';
         }
     }
@@ -3413,7 +3413,7 @@ async function doMesCut(_, text) {
             logicalChatIndex: mesIDToCut,
         });
         if (!swipeValidation.ok) {
-            toastr.error('Message swipe data is inconsistent. Reload the chat before cutting this message.');
+            toastr.error(translate('Message swipe data is inconsistent. Reload the chat before cutting this message.'));
             return cutText;
         }
 
@@ -3448,7 +3448,7 @@ async function doMesCut(_, text) {
 async function doDelMode(_, text) {
     //reject invalid args
     if (text && isNaN(text)) {
-        toastr.warning('Must enter a number or nothing.');
+        toastr.warning(translate('Must enter a number or nothing.'));
         return '';
     }
 
@@ -3466,7 +3466,7 @@ async function doDelMode(_, text) {
     }
 
     if (count > chat.length) {
-        toastr.warning(`Cannot delete more than ${chat.length} messages.`);
+        toastr.warning(t`Cannot delete more than ${chat.length} messages.`);
         return '';
     }
 
@@ -3501,7 +3501,7 @@ function getBgColTarget(args = {}) {
     }
 
     if (!bgUrl || bgUrl === 'none') {
-        toastr.warning('No background image set.');
+        toastr.warning(translate('No background image set.'));
         return null;
     }
 
@@ -3527,7 +3527,7 @@ async function setAvgBG(args = {}) {
     const { bgUrl, themeName } = target;
 
     if (themes.some(t => t.name === themeName) && !force) {
-        toastr.warning('Pass "force=true" to overwrite.', `A theme named "${themeName}" already exists.`);
+        toastr.warning(translate('Pass "force=true" to overwrite.'), t`A theme named "${themeName}" already exists.`);
         return '';
     }
 
@@ -3549,10 +3549,10 @@ async function setAvgBG(args = {}) {
         await saveTheme(themeName, theme);
         applyTheme(themeName);
 
-        toastr.success(`Theme "${themeName}" generated and applied.`);
+        toastr.success(t`Theme "${themeName}" generated and applied.`);
     } catch (error) {
         console.error('Failed to generate theme from background', error);
-        toastr.error('Could not generate a theme from the current background.');
+        toastr.error(translate('Could not generate a theme from the current background.'));
     }
 
     return '';
@@ -3578,7 +3578,7 @@ async function onGenerateThemeFromBackgroundClick() {
 
         if (themes.some(t => t.name === target.themeName)) {
             const confirm = await callGenericPopup(
-                `A theme named "${target.themeName}" already exists. Overwrite it?`,
+                t`A theme named "${target.themeName}" already exists. Overwrite it?`,
                 POPUP_TYPE.CONFIRM,
             );
 
@@ -3614,7 +3614,7 @@ async function setThemeCallback(_, themeName) {
     const theme = results[0]?.item;
 
     if (!theme) {
-        toastr.warning(`Could not find theme with name: ${themeName}`);
+        toastr.warning(t`Could not find theme with name: ${themeName}`);
         return;
     }
 
@@ -3638,7 +3638,7 @@ async function setmovingUIPreset(_, text) {
     const preset = results[0]?.item;
 
     if (!preset) {
-        toastr.warning(`Could not find preset with name: ${text}`);
+        toastr.warning(t`Could not find preset with name: ${text}`);
         return;
     }
 
@@ -4455,7 +4455,7 @@ jQuery(() => {
         const value = !!$(this).prop('checked');
         if (power_user.enableLabMode === true && value === true) {
             //disallow zenSliders while Lab Mode is active
-            toastr.warning('Disable Mad Lab Mode before enabling Zen Sliders');
+            toastr.warning(translate('Disable Mad Lab Mode before enabling Zen Sliders'));
             $(this).prop('checked', false).trigger('input');
             return;
         }
@@ -4468,7 +4468,7 @@ jQuery(() => {
         const value = !!$(this).prop('checked');
         if (power_user.enableZenSliders === true && value === true) {
             //disallow Lab Mode if ZenSliders are active
-            toastr.warning('Disable Zen Sliders before enabling Mad Lab Mode');
+            toastr.warning(translate('Disable Zen Sliders before enabling Mad Lab Mode'));
             $(this).prop('checked', false).trigger('input');
             return;
         }
@@ -4813,7 +4813,7 @@ jQuery(() => {
             await importTheme(file);
         } catch (error) {
             console.error('Error importing UI theme', error);
-            toastr.error(String(error), 'Failed to import UI theme');
+            toastr.error(String(error), translate('Failed to import UI theme'));
         } finally {
             if (inputElement) {
                 inputElement.value = null;
@@ -4918,14 +4918,14 @@ jQuery(() => {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Cuts the specified message or continuous chunk from the chat.">
                 Cuts the specified message or continuous chunk from the chat.
             </div>
-            <div>
+            <div data-i18n="Ranges are inclusive!">
                 Ranges are inclusive!
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code>/cut 0-10</code></pre>
@@ -4977,14 +4977,14 @@ jQuery(() => {
             }),
         ],
         helpString: `
-        <div>
+        <div data-i18n="Sets a UI theme by name.">
             Sets a UI theme by name.
         </div>
-        <div>
+        <div data-i18n="If no theme name is is provided, this will return the currently active theme.">
             If no theme name is is provided, this will return the currently active theme.
         </div>
         <div>
-            <strong>Example:</strong>
+            <strong data-i18n="Example:">Example:</strong>
             <ul>
                 <li>
                     <pre><code>/theme Cappuccino</code></pre>
@@ -5009,22 +5009,22 @@ jQuery(() => {
             }[args.to || 'chat'];
 
             if (!targetSelector) {
-                toastr.error(`Invalid target: ${args.to}`);
+                toastr.error(t`Invalid target: ${args.to}`);
                 return;
             }
 
             if (!args.varname) {
-                toastr.error('CSS variable name is required');
+                toastr.error(translate('CSS variable name is required'));
                 return;
             }
             if (!args.varname.startsWith('--')) {
-                toastr.error('CSS variable names must start with "--"');
+                toastr.error(translate('CSS variable names must start with "--"'));
                 return;
             }
 
             const elements = document.querySelectorAll(targetSelector);
             if (elements.length === 0) {
-                toastr.error(`No elements found for ${args.to ?? 'chat'} with selector "${targetSelector}"`);
+                toastr.error(t`No elements found for ${args.to ?? 'chat'} with selector "${targetSelector}"`);
                 return;
             }
 
@@ -5068,10 +5068,10 @@ jQuery(() => {
                 Only setting of variable names is supported. They have to be prefixed with double dashes ("--exampleVar").
                 Setting actual CSS properties is not supported. Custom CSS in the theme settings can be used for that.
                 <br /><br />
-                <b>This value will be gone after a page reload!</b>
+                <b data-i18n="This value will be gone after a page reload!">This value will be gone after a page reload!</b>
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code>/css-var varname="--SmartThemeBodyColor" #ff0000</code></pre>
@@ -5102,12 +5102,12 @@ jQuery(() => {
         name: 'stop-strings',
         aliases: ['stopping-strings', 'custom-stopping-strings', 'custom-stop-strings'],
         helpString: `
-            <div>
+            <div data-i18n="Sets a list of custom stopping strings. Gets the list if no value is provided. Use a &quot;force&quot; argument to force set an empty value.">
                 Sets a list of custom stopping strings. Gets the list if no value is provided.
                 Use a "force" argument to force set an empty value.
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
             </div>
             <ul>
                 <li>Force set an empty value: <pre><code class="language-stscript">/stop-strings force="true" {{noop}}</code></pre></li>
@@ -5164,12 +5164,12 @@ jQuery(() => {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'start-reply-with',
         helpString: `
-            <div>
+            <div data-i18n="Sets a &quot;Start Reply With&quot;. Gets the current value if no value is provided. Use a &quot;force&quot; argument to force set an empty value.">
                 Sets a "Start Reply With". Gets the current value if no value is provided.
                 Use a "force" argument to force set an empty value.
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
             </div>
             <ul>
                 <li>Set the field value: <pre><code class="language-stscript">/start-reply-with Sure!</code></pre></li>

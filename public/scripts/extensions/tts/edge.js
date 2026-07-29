@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { getRequestHeaders } from '../../../script.js';
 import { getApiUrl } from '../../extensions.js';
 import { doExtrasFetch, modules } from '../../extensions.js';
@@ -29,10 +30,10 @@ class EdgeTtsProvider {
 
     get settingsHtml() {
         let html = `Microsoft Edge TTS<br>
-        <label for="edge_tts_provider">Provider</label>
+        <label for="edge_tts_provider" data-i18n="Provider">Provider</label>
         <select id="edge_tts_provider">
-            <option value="${EDGE_TTS_PROVIDER.extras}">Extras</option>
-            <option value="${EDGE_TTS_PROVIDER.plugin}">Plugin</option>
+            <option value="${EDGE_TTS_PROVIDER.extras}" data-i18n="Extras">Extras</option>
+            <option value="${EDGE_TTS_PROVIDER.plugin}" data-i18n="Plugin">Plugin</option>
         </select>
         <label for="edge_tts_rate">Rate: <span id="edge_tts_rate_output"></span></label>
         <input id="edge_tts_rate" type="range" value="${this.defaultSettings.rate}" min="-100" max="100" step="1" />
@@ -181,7 +182,7 @@ class EdgeTtsProvider {
             },
         );
         if (!response.ok) {
-            toastr.error(response.statusText, 'TTS Generation Failed');
+            toastr.error(response.statusText, translate('TTS Generation Failed'));
             throw new Error(`HTTP ${response.status}: ${await response.text()}`);
         }
         return response;

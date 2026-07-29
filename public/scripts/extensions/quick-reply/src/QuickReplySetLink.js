@@ -1,3 +1,4 @@
+import { translate } from '../../../i18n.js';
 import { QuickReplySet } from './QuickReplySet.js';
 
 export class QuickReplySetLink {
@@ -57,7 +58,7 @@ export class QuickReplySetLink {
             }
             const visible = document.createElement('label'); {
                 visible.classList.add('qr--visible');
-                visible.title = 'Show buttons';
+                visible.title = translate('Show buttons');
                 const cb = document.createElement('input'); {
                     cb.type = 'checkbox';
                     cb.checked = this.isVisible;
@@ -75,7 +76,7 @@ export class QuickReplySetLink {
                 edit.classList.add('menu_button_icon');
                 edit.classList.add('fa-solid');
                 edit.classList.add('fa-pencil');
-                edit.title = 'Edit quick reply set';
+                edit.title = translate('Edit quick reply set');
                 edit.addEventListener('click', ()=>this.requestEditSet());
                 item.append(edit);
             }
@@ -85,7 +86,7 @@ export class QuickReplySetLink {
                 del.classList.add('menu_button_icon');
                 del.classList.add('fa-solid');
                 del.classList.add('fa-trash-can');
-                del.title = 'Remove quick reply set';
+                del.title = translate('Remove quick reply set');
                 del.addEventListener('click', ()=>this.delete());
                 item.append(del);
             }

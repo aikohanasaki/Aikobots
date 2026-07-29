@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { event_types, eventSource, getRequestHeaders } from '../../../script.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
 import { getPreviewString, saveTtsProviderSettings } from './index.js';
@@ -23,15 +24,15 @@ class AzureTtsProvider {
         <div class="azure_tts_settings">
             <div class="flex-container alignItemsBaseline">
                 <h4 for="azure_tts_key" class="flex1 margin0">
-                    <a href="https://portal.azure.com/" target="_blank">Azure TTS Key</a>
+                    <a href="https://portal.azure.com/" target="_blank" data-i18n="Azure TTS Key">Azure TTS Key</a>
                 </h4>
                 <div id="azure_tts_key" class="menu_button menu_button_icon manage-api-keys" data-key="api_key_azure_tts">
                     <i class="fa-solid fa-key"></i>
-                    <span>Click to set</span>
+                    <span data-i18n="Click to set">Click to set</span>
                 </div>
             </div>
-            <label for="azure_tts_region">Region:</label>
-            <input id="azure_tts_region" type="text" class="text_pole" placeholder="e.g. westus" />
+            <label for="azure_tts_region" data-i18n="Region:">Region:</label>
+            <input id="azure_tts_region" type="text" class="text_pole" placeholder="e.g. westus" data-i18n="[placeholder]e.g. westus"/>
             <hr>
         </div>
         `;
@@ -199,7 +200,7 @@ class AzureTtsProvider {
         });
 
         if (!response.ok) {
-            toastr.error(response.statusText, 'TTS Generation Failed');
+            toastr.error(response.statusText, translate('TTS Generation Failed'));
             throw new Error(`HTTP ${response.status}: ${await response.text()}`);
         }
 

@@ -1,13 +1,13 @@
 <div id="sd_comfy_workflow_editor_template">
     <div class="sd_comfy_workflow_editor">
-        <h3><strong>ComfyUI Workflow Editor: <span id="sd_comfy_workflow_editor_name"></span></strong></h3>
+        <h3><strong><span data-i18n="ComfyUI Workflow Editor:">ComfyUI Workflow Editor:</span> <span id="sd_comfy_workflow_editor_name"></span></strong></h3>
         <div class="sd_comfy_workflow_editor_content">
             <div class="flex-container flexFlowColumn sd_comfy_workflow_editor_workflow_container">
-                <label for="sd_comfy_workflow_editor_workflow">Workflow (JSON)</label>
-                <textarea id="sd_comfy_workflow_editor_workflow" class="text_pole wide100p textarea_compact flex1" placeholder="Insert your ComfyUI workflow here by copying the JSON data obtained via the 'Save (API Format)' option. This option becomes available after enabling 'Dev Mode' in the settings. Remember to replace specific values within your workflow with placeholders as required for your use case."></textarea>
+                <label for="sd_comfy_workflow_editor_workflow" data-i18n="Workflow (JSON)">Workflow (JSON)</label>
+                <textarea id="sd_comfy_workflow_editor_workflow" class="text_pole wide100p textarea_compact flex1" placeholder="Insert your ComfyUI workflow here by copying the JSON data obtained via the 'Save (API Format)' option. This option becomes available after enabling 'Dev Mode' in the settings. Remember to replace specific values within your workflow with placeholders as required for your use case." data-i18n="[placeholder]Insert your ComfyUI workflow here by copying the JSON data obtained via the 'Save (API Format)' option. This option becomes available after enabling 'Dev Mode' in the settings. Remember to replace specific values within your workflow with placeholders as required for your use case."></textarea>
             </div>
             <div class="sd_comfy_workflow_editor_placeholder_container">
-                <div>Placeholders</div>
+                <div data-i18n="Placeholders">Placeholders</div>
                 <ul class="sd_comfy_workflow_editor_placeholder_list">
                     <li data-placeholder="prompt" class="sd_comfy_workflow_editor_not_found">"%prompt%"</li>
                     <li data-placeholder="negative_prompt" class="sd_comfy_workflow_editor_not_found">"%negative_prompt%"</li>
@@ -26,12 +26,12 @@
                     <li><hr></li>
                     <li data-placeholder="seed" class="sd_comfy_workflow_editor_not_found">
                         "%seed%"
-                        <a href="javascript:;" class="notes-link"><span class="note-link-span" title="Will generate a new random seed in SillyTavern that is then used in the ComfyUI workflow.">?</span></a>
+                        <a href="javascript:;" class="notes-link"><span class="note-link-span" title="Will generate a new random seed in SillyTavern that is then used in the ComfyUI workflow." data-i18n="[title]Will generate a new random seed in SillyTavern that is then used in the ComfyUI workflow.">?</span></a>
                     </li>
                 </ul>
-                <div>Custom</div>
+                <div data-i18n="Custom">Custom</div>
                 <div class="sd_comfy_workflow_editor_placeholder_actions">
-                    <span id="sd_comfy_workflow_editor_placeholder_add" title="Add custom placeholder">+</span>
+                    <span id="sd_comfy_workflow_editor_placeholder_add" title="Add custom placeholder" data-i18n="[title]Add custom placeholder">+</span>
                 </div>
                 <ul class="sd_comfy_workflow_editor_placeholder_list" id="sd_comfy_workflow_editor_placeholder_list_custom">
                 </ul>

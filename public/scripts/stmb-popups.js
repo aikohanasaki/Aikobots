@@ -1,3 +1,4 @@
+import { t, translate } from './i18n.js';
 import {
     DOMPurify,
 } from '../lib.js';
@@ -54,39 +55,39 @@ export async function showRegenerationReviewPopup({
 } = {}) {
     const initialFinalTitle = formatTitle?.(generatedTitle) || String(generatedTitle || '').trim();
     const linkedWarning = linkedLorebooks.length > 0
-        ? `<div class="stmb-regeneration-linked-warning"><strong>Linked group copies are not modified.</strong> Only this entry will be replaced. Linked books: ${escapeHtml(linkedLorebooks.join(', '))}</div>`
+        ? `<div class="stmb-regeneration-linked-warning"><strong data-i18n="Linked group copies are not modified.">Linked group copies are not modified.</strong> <span data-i18n="Only this entry will be replaced. Linked books:">Only this entry will be replaced. Linked books:</span> ${escapeHtml(linkedLorebooks.join(', '))}</div>`
         : '';
     const popup = new Popup(DOMPurify.sanitize(`
         <div class="stmb-regeneration-review">
-            <h3>Review regenerated memory</h3>
-            <p>Approval is required before anything is overwritten.</p>
+            <h3 data-i18n="Review regenerated memory">Review regenerated memory</h3>
+            <p data-i18n="Approval is required before anything is overwritten.">Approval is required before anything is overwritten.</p>
             ${linkedWarning}
             <div class="stmb-regeneration-columns">
                 <section class="stmb-regeneration-column">
-                    <h4>Before</h4>
-                    <label>Title</label>
+                    <h4 data-i18n="Before">Before</h4>
+                    <label data-i18n="Title">Title</label>
                     <input class="text_pole" value="${escapeHtml(String(originalEntry?.comment || ''))}" readonly>
-                    <label>Content</label>
+                    <label data-i18n="Content">Content</label>
                     <textarea class="text_pole stmb-regeneration-content" readonly>${escapeHtml(String(originalEntry?.content || ''))}</textarea>
-                    <label>Keywords</label>
+                    <label data-i18n="Keywords">Keywords</label>
                     <input class="text_pole" value="${escapeHtml(keywordsToString(originalEntry?.key))}" readonly>
                 </section>
                 <section class="stmb-regeneration-column">
-                    <h4>After</h4>
-                    <label for="stmb-regeneration-title">Semantic title</label>
+                    <h4 data-i18n="After">After</h4>
+                    <label for="stmb-regeneration-title" data-i18n="Semantic title">Semantic title</label>
                     <input id="stmb-regeneration-title" class="text_pole" value="${escapeHtml(String(generatedTitle || ''))}">
-                    <label for="stmb-regeneration-final-title">Final formatted title</label>
+                    <label for="stmb-regeneration-final-title" data-i18n="Final formatted title">Final formatted title</label>
                     <input id="stmb-regeneration-final-title" class="text_pole" value="${escapeHtml(initialFinalTitle)}" readonly>
-                    <label for="stmb-regeneration-content">Content</label>
+                    <label for="stmb-regeneration-content" data-i18n="Content">Content</label>
                     <textarea id="stmb-regeneration-content" class="text_pole stmb-regeneration-content">${escapeHtml(String(generatedContent || ''))}</textarea>
-                    <label for="stmb-regeneration-keywords">Keywords</label>
+                    <label for="stmb-regeneration-keywords" data-i18n="Keywords">Keywords</label>
                     <input id="stmb-regeneration-keywords" class="text_pole" value="${escapeHtml(keywordsToString(generatedKeywords))}">
                 </section>
             </div>
         </div>
     `), POPUP_TYPE.TEXT, '', {
-        okButton: 'Replace Entry',
-        cancelButton: 'Cancel',
+        okButton: translate('Replace Entry'),
+        cancelButton: translate('Cancel'),
         wide: true,
         large: true,
         allowVerticalScrolling: true,
@@ -103,7 +104,7 @@ export async function showRegenerationReviewPopup({
     const title = String(finalTitleInput?.value || '').trim();
     const content = String(popup.dlg?.querySelector('#stmb-regeneration-content')?.value || '').trim();
     if (!title || !content) {
-        toastr.error('Title and content are required.', 'STMB');
+        toastr.error(translate('Title and content are required.'), 'STMB');
         return { action: 'cancel' };
     }
     return {
@@ -124,7 +125,7 @@ function truncatePreviewText(text, maxLength = 180) {
 
 function renderConsolidationPreviewSourceList(sources = []) {
     if (!sources.length) {
-        return '<div class="opacity70p">No assigned source memories found.</div>';
+        return '<div class="opacity70p" data-i18n="No assigned source memories found.">No assigned source memories found.</div>';
     }
 
     return sources.map(source => `
@@ -169,34 +170,34 @@ export async function showConsolidationPreviewPopup({
         });
         return `
             <div class="world_entry_form_control stmb-consolidation-preview-card" data-summary-index="${index}">
-                <h4>${escapeHtml(targetLabel)} ${index + 1}</h4>
+                <h4>${escapeHtml(translate(targetLabel))} ${index + 1}</h4>
                 ${allowIndividualActions ? `
                     <div class="flex flexFlowRow gap10px marginBot10">
                         <label class="checkbox_label">
                             <input type="radio" name="stmb-consolidation-action-${index}" value="accept" checked>
-                            <span>Accept this summary</span>
+                            <span data-i18n="Accept this summary">Accept this summary</span>
                         </label>
                         <label class="checkbox_label">
                             <input type="radio" name="stmb-consolidation-action-${index}" value="reject">
-                            <span>Reject this summary and leave its memories unsaved</span>
+                            <span data-i18n="Reject this summary and leave its memories unsaved">Reject this summary and leave its memories unsaved</span>
                         </label>
                     </div>
                 ` : ''}
                 <label>
-                    <h4>Summary Title:</h4>
-                    <input type="text" class="text_pole stmb-consolidation-preview-title" value="${escapeHtml(String(candidate?.title || '').trim())}" placeholder="Summary title">
+                    <h4 data-i18n="Summary Title:">Summary Title:</h4>
+                    <input type="text" class="text_pole stmb-consolidation-preview-title" value="${escapeHtml(String(candidate?.title || '').trim())}" placeholder="Summary title" data-i18n="[placeholder]Summary title">
                 </label>
                 <label>
-                    <h4>Summary Content:</h4>
-                    <textarea class="text_pole textarea_compact stmb-consolidation-preview-content" rows="8" placeholder="Summary content">${escapeHtml(String(candidate?.summary || '').trim())}</textarea>
+                    <h4 data-i18n="Summary Content:">Summary Content:</h4>
+                    <textarea class="text_pole textarea_compact stmb-consolidation-preview-content" rows="8" placeholder="Summary content" data-i18n="[placeholder]Summary content">${escapeHtml(String(candidate?.summary || '').trim())}</textarea>
                 </label>
                 <label>
-                    <h4>Keywords:</h4>
-                    <small class="opacity50p">Separate keywords with commas</small>
-                    <input type="text" class="text_pole stmb-consolidation-preview-keywords" value="${escapeHtml(keywordsToString(candidate?.keywords))}" placeholder="keyword1, keyword2, keyword3">
+                    <h4 data-i18n="Keywords:">Keywords:</h4>
+                    <small class="opacity50p" data-i18n="Separate keywords with commas">Separate keywords with commas</small>
+                    <input type="text" class="text_pole stmb-consolidation-preview-keywords" value="${escapeHtml(keywordsToString(candidate?.keywords))}" placeholder="keyword1, keyword2, keyword3" data-i18n="[placeholder]keyword1, keyword2, keyword3">
                 </label>
                 <details class="marginTop10">
-                    <summary>Assigned source memories</summary>
+                    <summary data-i18n="Assigned source memories">Assigned source memories</summary>
                     <div class="padding10 marginTop5 stmb-box">${renderConsolidationPreviewSourceList(sourceItems)}</div>
                 </details>
             </div>
@@ -205,25 +206,25 @@ export async function showConsolidationPreviewPopup({
 
     const html = `
         <div class="stmb-consolidation-preview-popup">
-            <h3>Consolidation Preview</h3>
+            <h3 data-i18n="Consolidation Preview">Consolidation Preview</h3>
             <div class="world_entry_form_control">
-                <small class="marginBot10">Review generated summaries before saving. You can edit title, summary, and keywords.</small>
+                <small class="marginBot10" data-i18n="Review generated summaries before saving. You can edit title, summary, and keywords.">Review generated summaries before saving. You can edit title, summary, and keywords.</small>
             </div>
             ${ambiguousAssignments ? `
                 <div class="info-block warning marginBot10">
                     Multiple consolidations returned more than one summary, but memory assignments were not clearly stated. Individual accept/reject is unavailable; approve or regenerate the whole batch.
                 </div>
             ` : ''}
-            ${lockedCount ? `<div class="info-block marginBot10">Already accepted summaries: ${Number(lockedCount) || 0}</div>` : ''}
+            ${lockedCount ? `<div class="info-block marginBot10"><span data-i18n="Already accepted summaries:">Already accepted summaries:</span> ${Number(lockedCount) || 0}</div>` : ''}
             <div class="stmb-consolidation-preview-list">${cardsHtml}</div>
-            ${pendingCount ? `<div class="info-block marginTop10">Pending source memories after this round: ${Number(pendingCount) || 0}</div>` : ''}
+            ${pendingCount ? `<div class="info-block marginTop10"><span data-i18n="Pending source memories after this round:">Pending source memories after this round:</span> ${Number(pendingCount) || 0}</div>` : ''}
         </div>
     `;
 
     safePlayMessageSound();
     const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
-        okButton: ambiguousAssignments ? 'Save Entire Batch' : 'Finish Review and Save',
-        cancelButton: 'Cancel',
+        okButton: ambiguousAssignments ? translate('Save Entire Batch') : translate('Finish Review and Save'),
+        cancelButton: translate('Cancel'),
         allowVerticalScrolling: true,
         wide: true,
         large: true,
@@ -247,11 +248,11 @@ export async function showConsolidationPreviewPopup({
                 const title = card.querySelector('.stmb-consolidation-preview-title')?.value?.trim() || '';
                 const summary = card.querySelector('.stmb-consolidation-preview-content')?.value?.trim() || '';
                 if (!title) {
-                    toastr.error('Summary title cannot be empty', 'STMB');
+                    toastr.error(translate('Summary title cannot be empty'), 'STMB');
                     return false;
                 }
                 if (!summary) {
-                    toastr.error('Summary content cannot be empty', 'STMB');
+                    toastr.error(translate('Summary content cannot be empty'), 'STMB');
                     return false;
                 }
             }
@@ -259,7 +260,7 @@ export async function showConsolidationPreviewPopup({
             return true;
         },
         customButtons: [{
-            text: 'Regenerate Batch',
+            text: translate('Regenerate Batch'),
             result: STMB_POPUP_RESULTS.RETRY,
             classes: ['menu_button', 'whitespacenowrap'],
             action: null,
@@ -319,7 +320,7 @@ export async function showConsolidationPreviewPopup({
 }
 
 function renderProfileOptions(profiles = [], selectedIndex = 0) {
-    return profiles.map((profile, index) => `<option value="${index}" ${index === selectedIndex ? 'selected' : ''}>${escapeHtml(String(profile?.name || `Profile ${index + 1}`))}</option>`).join('');
+    return profiles.map((profile, index) => `<option value="${index}" ${index === selectedIndex ? 'selected' : ''}>${escapeHtml(String(profile?.name || t`Profile ${index + 1}`))}</option>`).join('');
 }
 
 function applyProfileDisplay(dialog, profiles, profileIndex, { editablePrompt = false } = {}) {
@@ -343,17 +344,17 @@ function applyProfileDisplay(dialog, profiles, profileIndex, { editablePrompt = 
 export async function showAutoSummaryDecisionPopup() {
     const html = `
         <div class="stmb-auto-summary-popup">
-            <h4>Auto-Summary Ready</h4>
+            <h4 data-i18n="Auto-Summary Ready">Auto-Summary Ready</h4>
             <div class="world_entry_form_control">
-                <p>Auto-summary is enabled but there is no assigned lorebook for this chat.</p>
-                <p>Would you like to select a lorebook for memory storage, or postpone this auto-summary?</p>
-                <label for="stmb-postpone-messages">Postpone for how many messages?</label>
+                <p data-i18n="Auto-summary is enabled but there is no assigned lorebook for this chat.">Auto-summary is enabled but there is no assigned lorebook for this chat.</p>
+                <p data-i18n="Would you like to select a lorebook for memory storage, or postpone this auto-summary?">Would you like to select a lorebook for memory storage, or postpone this auto-summary?</p>
+                <label for="stmb-postpone-messages" data-i18n="Postpone for how many messages?">Postpone for how many messages?</label>
                 <select id="stmb-postpone-messages" class="text_pole" style="width:100%">
-                    <option value="10">10 messages</option>
-                    <option value="20">20 messages</option>
-                    <option value="30">30 messages</option>
-                    <option value="40">40 messages</option>
-                    <option value="50">50 messages</option>
+                    <option value="10" data-i18n="10 messages">10 messages</option>
+                    <option value="20" data-i18n="20 messages">20 messages</option>
+                    <option value="30" data-i18n="30 messages">30 messages</option>
+                    <option value="40" data-i18n="40 messages">40 messages</option>
+                    <option value="50" data-i18n="50 messages">50 messages</option>
                 </select>
             </div>
         </div>
@@ -361,8 +362,8 @@ export async function showAutoSummaryDecisionPopup() {
 
     safePlayMessageSound();
     const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
-        okButton: 'Select Lorebook',
-        cancelButton: 'Postpone',
+        okButton: translate('Select Lorebook'),
+        cancelButton: translate('Postpone'),
         allowVerticalScrolling: true,
     });
 
@@ -390,7 +391,7 @@ export async function showLorebookPickerPopup(lorebookNames = [], options = {}) 
             <div class="world_entry_form_control">
                 ${items.length > 0
                     ? `
-                        <label for="stmb-lorebook-picker">Lorebook</label>
+                        <label for="stmb-lorebook-picker" data-i18n="Lorebook">Lorebook</label>
                         <select id="stmb-lorebook-picker" class="text_pole" style="width:100%">
                             ${items.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}
                         </select>
@@ -403,8 +404,8 @@ export async function showLorebookPickerPopup(lorebookNames = [], options = {}) 
 
     safePlayMessageSound();
     const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
-        okButton: 'Select',
-        cancelButton: 'Cancel',
+        okButton: translate('Select'),
+        cancelButton: translate('Cancel'),
         allowVerticalScrolling: true,
     });
 
@@ -454,7 +455,7 @@ export async function showLorebookRecoveryPopup(data = {}) {
 
     const html = `
         <div class="stmb-lorebook-recovery-popup">
-            <h4>Memory Lorebook Missing</h4>
+            <h4 data-i18n="Memory Lorebook Missing">Memory Lorebook Missing</h4>
             <div class="world_entry_form_control">
                 <p>${problemText}</p>
                 <p>${actionText}</p>
@@ -466,16 +467,16 @@ export async function showLorebookRecoveryPopup(data = {}) {
     safePlayMessageSound();
     const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
         okButton: false,
-        cancelButton: 'Cancel',
+        cancelButton: translate('Cancel'),
         leftAlign: true,
         customButtons: [
             ...(allowCreate ? [{
-                text: 'Create New Lorebook',
+                text: translate('Create New Lorebook'),
                 result: POPUP_RESULT.CUSTOM1,
                 appendAtEnd: true,
             }] : []),
             ...(hasExistingLorebooks ? [{
-                text: 'Select Existing Lorebook',
+                text: translate('Select Existing Lorebook'),
                 result: POPUP_RESULT.CUSTOM2,
                 appendAtEnd: true,
             }] : []),
@@ -495,16 +496,16 @@ export async function showLorebookRecoveryPopup(data = {}) {
 export async function showAutoConsolidationPromptPopup(data = {}) {
     const html = `
         <div class="stmb-auto-consolidation-popup">
-            <h3>Consolidation Available</h3>
-            <p>You now have ${escapeHtml(String(data?.eligibleCount ?? 0))} eligible ${escapeHtml(String(data?.sourcePlural || 'entries'))}. That meets the minimum of ${escapeHtml(String(data?.requiredMin ?? 0))} needed to create a ${escapeHtml(String(data?.targetLabel || 'summary'))}.</p>
-            <p class="opacity70p">Open Consolidate Memories now?</p>
+            <h3 data-i18n="Consolidation Available">Consolidation Available</h3>
+            <p>${t`You now have ${escapeHtml(String(data?.eligibleCount ?? 0))} eligible ${escapeHtml(String(data?.sourcePlural || 'entries'))}. That meets the minimum of ${escapeHtml(String(data?.requiredMin ?? 0))} needed to create a ${escapeHtml(String(data?.targetLabel || 'summary'))}.`}</p>
+            <p class="opacity70p" data-i18n="Open Consolidate Memories now?">Open Consolidate Memories now?</p>
         </div>
     `;
 
     safePlayMessageSound();
     const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
-        okButton: 'Open Consolidation',
-        cancelButton: 'Later',
+        okButton: translate('Open Consolidation'),
+        cancelButton: translate('Later'),
         allowVerticalScrolling: true,
     });
 
@@ -547,130 +548,130 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
         .join('');
     const html = `
         <div class="stmb-summary-consolidation-popup">
-            <h3>Consolidate Memories</h3>
+            <h3 data-i18n="Consolidate Memories">Consolidate Memories</h3>
             ${hasLorebook ? '' : `
                 <div class="world_entry_form_control opacity70p">
-                    <div>No memory lorebook is currently assigned.</div>
-                    <div>You can review consolidation options, but Run will still require an assigned lorebook.</div>
+                    <div data-i18n="No memory lorebook is currently assigned.">No memory lorebook is currently assigned.</div>
+                    <div data-i18n="You can review consolidation options, but Run will still require an assigned lorebook.">You can review consolidation options, but Run will still require an assigned lorebook.</div>
                 </div>
             `}
             <div class="world_entry_form_control">
-                <label for="stmb-summary-tier">Summary Tier</label>
+                <label for="stmb-summary-tier" data-i18n="Summary Tier">Summary Tier</label>
                 <select id="stmb-summary-tier" class="text_pole" style="width:100%">
                     ${tierOptions.map(option => `<option value="${escapeHtml(String(option.value))}" ${Number(option.value) === targetTier ? 'selected' : ''}>${escapeHtml(String(option.label))}</option>`).join('')}
                 </select>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-summary-preset">Preset</label>
+                <label for="stmb-summary-preset" data-i18n="Preset">Preset</label>
                 <div class="flex-container flexGap10" style="align-items:center;">
                     <select id="stmb-summary-preset" class="text_pole" style="width:100%">
                         ${renderPresetOptions()}
                     </select>
-                    ${data?.allowPresetRebuild ? '<button id="stmb-summary-preset-rebuild" class="menu_button whitespacenowrap" type="button">Rebuild from built-ins</button>' : ''}
+                    ${data?.allowPresetRebuild ? '<button id="stmb-summary-preset-rebuild" class="menu_button whitespacenowrap" type="button" data-i18n="Rebuild from built-ins">Rebuild from built-ins</button>' : ''}
                 </div>
             </div>
             <div class="world_entry_form_control">
-                <label>Effective prompt</label>
+                <label data-i18n="Effective prompt">Effective prompt</label>
                 <pre id="stmb-summary-effective-prompt" class="text_pole" style="white-space:pre-wrap; max-height:220px; overflow:auto;"></pre>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-summary-required-min">Minimum eligible source entries</label>
+                <label for="stmb-summary-required-min" data-i18n="Minimum eligible source entries">Minimum eligible source entries</label>
                 <input id="stmb-summary-required-min" type="number" min="1" step="1" class="text_pole" style="width:100%" value="${escapeHtml(String(data?.requiredMin ?? 5))}">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-summary-max-items-per-pass">Maximum source entries per pass</label>
+                <label for="stmb-summary-max-items-per-pass" data-i18n="Maximum source entries per pass">Maximum source entries per pass</label>
                 <input id="stmb-summary-max-items-per-pass" type="number" min="1" max="100" step="1" class="text_pole" style="width:100%" value="${escapeHtml(String(data?.maxItemsPerPass ?? 15))}">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-summary-token-target">Token Budget</label>
+                <label for="stmb-summary-token-target" data-i18n="Token Budget">Token Budget</label>
                 <input id="stmb-summary-token-target" type="number" min="1000" max="150000" step="100" class="text_pole" style="width:100%" value="${escapeHtml(String(data?.tokenTarget ?? 30000))}">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-summary-max-passes">Automatic summary attempts</label>
+                <label for="stmb-summary-max-passes" data-i18n="Automatic summary attempts">Automatic summary attempts</label>
                 <input id="stmb-summary-max-passes" type="number" min="1" max="50" step="1" class="text_pole" style="width:100%" value="${escapeHtml(String(data?.maxPasses ?? 10))}">
             </div>
             <div class="world_entry_form_control">
-                <h4 class="stmb-section-title">Lorebook Entry Settings</h4>
-                <small class="opacity70p">These settings control how generated summaries are saved into the lorebook.</small>
+                <h4 class="stmb-section-title" data-i18n="Lorebook Entry Settings">Lorebook Entry Settings</h4>
+                <small class="opacity70p" data-i18n="These settings control how generated summaries are saved into the lorebook.">These settings control how generated summaries are saved into the lorebook.</small>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-summary-entry-const-vect">Activation Mode</label>
+                <label for="stmb-summary-entry-const-vect" data-i18n="Activation Mode">Activation Mode</label>
                 <select id="stmb-summary-entry-const-vect" class="text_pole" style="width:100%">
-                    <option value="link" ${String(initialEntrySettings.constVectMode || 'link') === 'link' ? 'selected' : ''}>Vectorized (Default)</option>
-                    <option value="blue" ${String(initialEntrySettings.constVectMode || '') === 'blue' ? 'selected' : ''}>Constant</option>
-                    <option value="green" ${String(initialEntrySettings.constVectMode || '') === 'green' ? 'selected' : ''}>Normal</option>
+                    <option value="link" ${String(initialEntrySettings.constVectMode || 'link') === 'link' ? 'selected' : ''} data-i18n="Vectorized (Default)">Vectorized (Default)</option>
+                    <option value="blue" ${String(initialEntrySettings.constVectMode || '') === 'blue' ? 'selected' : ''} data-i18n="Constant">Constant</option>
+                    <option value="green" ${String(initialEntrySettings.constVectMode || '') === 'green' ? 'selected' : ''} data-i18n="Normal">Normal</option>
                 </select>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-summary-entry-position">Insertion Position</label>
+                <label for="stmb-summary-entry-position" data-i18n="Insertion Position">Insertion Position</label>
                 <select id="stmb-summary-entry-position" class="text_pole" style="width:100%">
-                    <option value="0" ${Number(initialEntrySettings.position ?? 0) === 0 ? 'selected' : ''}>↑Char</option>
-                    <option value="1" ${Number(initialEntrySettings.position ?? 0) === 1 ? 'selected' : ''}>↓Char</option>
-                    <option value="5" ${Number(initialEntrySettings.position ?? 0) === 5 ? 'selected' : ''}>↑EM</option>
-                    <option value="6" ${Number(initialEntrySettings.position ?? 0) === 6 ? 'selected' : ''}>↓EM</option>
-                    <option value="2" ${Number(initialEntrySettings.position ?? 0) === 2 ? 'selected' : ''}>↑AN</option>
-                    <option value="3" ${Number(initialEntrySettings.position ?? 0) === 3 ? 'selected' : ''}>↓AN</option>
-                    <option value="7" ${Number(initialEntrySettings.position ?? 0) === 7 ? 'selected' : ''}>Outlet</option>
+                    <option value="0" ${Number(initialEntrySettings.position ?? 0) === 0 ? 'selected' : ''} data-i18n="↑Char">↑Char</option>
+                    <option value="1" ${Number(initialEntrySettings.position ?? 0) === 1 ? 'selected' : ''} data-i18n="↓Char">↓Char</option>
+                    <option value="5" ${Number(initialEntrySettings.position ?? 0) === 5 ? 'selected' : ''} data-i18n="↑EM">↑EM</option>
+                    <option value="6" ${Number(initialEntrySettings.position ?? 0) === 6 ? 'selected' : ''} data-i18n="↓EM">↓EM</option>
+                    <option value="2" ${Number(initialEntrySettings.position ?? 0) === 2 ? 'selected' : ''} data-i18n="↑AN">↑AN</option>
+                    <option value="3" ${Number(initialEntrySettings.position ?? 0) === 3 ? 'selected' : ''} data-i18n="↓AN">↓AN</option>
+                    <option value="7" ${Number(initialEntrySettings.position ?? 0) === 7 ? 'selected' : ''} data-i18n="Outlet">Outlet</option>
                 </select>
             </div>
             <div id="stmb-summary-entry-outlet-name-container" class="world_entry_form_control ${Number(initialEntrySettings.position ?? 0) === 7 ? '' : 'displayNone'}">
-                <label for="stmb-summary-entry-outlet-name">Outlet Name</label>
+                <label for="stmb-summary-entry-outlet-name" data-i18n="Outlet Name">Outlet Name</label>
                 <input id="stmb-summary-entry-outlet-name" class="text_pole" style="width:100%" value="${escapeHtml(String(initialEntrySettings.outletName || ''))}">
             </div>
             <div class="world_entry_form_control">
-                <label><strong>Insertion Order</strong></label>
+                <label><strong data-i18n="Insertion Order">Insertion Order</strong></label>
                 <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px">
                     <label class="checkbox_label">
                         <input type="radio" name="stmb-summary-order-mode" value="auto" ${String(initialEntrySettings.orderMode || 'auto') === 'auto' ? 'checked' : ''}>
-                        <span>Auto (uses summary #)</span>
+                        <span data-i18n="Auto (uses summary #)">Auto (uses summary #)</span>
                     </label>
                     <label class="checkbox_label">
                         <input type="radio" name="stmb-summary-order-mode" value="reverse" ${String(initialEntrySettings.orderMode || '') === 'reverse' ? 'checked' : ''}>
-                        <span>Reverse (only use with Outlets)</span>
+                        <span data-i18n="Reverse (only use with Outlets)">Reverse (only use with Outlets)</span>
                         <input id="stmb-summary-reverse-start" type="number" min="100" max="9999" step="1" class="text_pole ${String(initialEntrySettings.orderMode || '') === 'reverse' ? '' : 'displayNone'}" style="margin-left:auto; width:110px" value="${escapeHtml(String(initialEntrySettings.reverseStart ?? 9999))}">
                     </label>
                     <label class="checkbox_label">
                         <input type="radio" name="stmb-summary-order-mode" value="manual" ${String(initialEntrySettings.orderMode || '') === 'manual' ? 'checked' : ''}>
-                        <span>Manual</span>
+                        <span data-i18n="Manual">Manual</span>
                         <input id="stmb-summary-order-value" type="number" min="0" max="9999" step="1" class="text_pole ${String(initialEntrySettings.orderMode || '') === 'manual' ? '' : 'displayNone'}" style="margin-left:auto; width:110px" value="${escapeHtml(String(initialEntrySettings.orderValue ?? 100))}">
                     </label>
                 </div>
             </div>
             <div class="world_entry_form_control">
-                <label><strong>Recursion Settings</strong></label>
+                <label><strong data-i18n="Recursion Settings">Recursion Settings</strong></label>
                 <div class="buttons_block justifyCenter">
                     <label class="checkbox_label">
                         <input id="stmb-summary-entry-prevent-recursion" type="checkbox" ${initialEntrySettings.preventRecursion ? 'checked' : ''}>
-                        <span>Prevent Recursion</span>
+                        <span data-i18n="Prevent Recursion">Prevent Recursion</span>
                     </label>
                     <label class="checkbox_label">
                         <input id="stmb-summary-entry-delay-recursion" type="checkbox" ${initialEntrySettings.delayUntilRecursion ? 'checked' : ''}>
-                        <span>Delay Until Recursion</span>
+                        <span data-i18n="Delay Until Recursion">Delay Until Recursion</span>
                     </label>
                 </div>
             </div>
             <div class="world_entry_form_control">
                 <label class="checkbox_label">
                     <input id="stmb-summary-disable-originals" type="checkbox" ${data?.disableOriginals !== false ? 'checked' : ''}>
-                    <span>Disable selected source entries after creating summaries</span>
+                    <span data-i18n="Disable selected source entries after creating summaries">Disable selected source entries after creating summaries</span>
                 </label>
             </div>
             <div class="world_entry_form_control">
                 <div id="stmb-summary-lock-status" class="opacity70p marginBot5"></div>
                 <div class="flex-container flexGap10 marginBot5">
-                    <button id="stmb-summary-select-all" class="menu_button" type="button">Select All</button>
-                    <button id="stmb-summary-deselect-all" class="menu_button" type="button">Deselect All</button>
+                    <button id="stmb-summary-select-all" class="menu_button" type="button" data-i18n="Select All">Select All</button>
+                    <button id="stmb-summary-deselect-all" class="menu_button" type="button" data-i18n="Deselect All">Deselect All</button>
                 </div>
                 <div id="stmb-summary-source-list" style="max-height:300px; overflow-y:auto; border:1px solid var(--SmartHover2); padding:6px"></div>
-                <small id="stmb-summary-tip" class="opacity70p">Tip: uncheck source entries that should not be included.</small>
+                <small id="stmb-summary-tip" class="opacity70p" data-i18n="Tip: uncheck source entries that should not be included.">Tip: uncheck source entries that should not be included.</small>
             </div>
         </div>
     `;
 
     safePlayMessageSound();
     const popupOptions = {
-        okButton: 'Run',
-        cancelButton: 'Cancel',
+        okButton: translate('Run'),
+        cancelButton: translate('Cancel'),
         wide: true,
         large: true,
         allowVerticalScrolling: true,
@@ -685,7 +686,7 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
             }
 
             if (!hasLorebook) {
-                toastr.error('Assign a lorebook before running consolidation', 'STMB');
+                toastr.error(translate('Assign a lorebook before running consolidation'), 'STMB');
                 return false;
             }
 
@@ -700,7 +701,7 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
             );
 
             if (selectedCount < requiredMin) {
-                toastr.error(`Select at least ${requiredMin} ${String(config.sourcePlural || 'source entries').toLowerCase()} before running consolidation`, 'STMB');
+                toastr.error(t`Select at least ${requiredMin} ${String(config.sourcePlural || 'source entries').toLowerCase()} before running consolidation`, 'STMB');
                 return false;
             }
 
@@ -776,10 +777,10 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
         }
 
         if (tipEl) {
-            tipEl.textContent = `Tip: uncheck ${String(config.sourcePlural || 'source entries').toLowerCase()} that should not be included.`;
+            tipEl.textContent = t`Tip: uncheck ${String(config.sourcePlural || 'source entries').toLowerCase()} that should not be included.`;
         }
         if (statusEl) {
-            statusEl.textContent = `Need ${requiredMin} eligible ${String(config.sourcePlural || 'source entries').toLowerCase()}, have ${(config.candidates || []).length}.`;
+            statusEl.textContent = t`Need ${requiredMin} eligible ${String(config.sourcePlural || 'source entries').toLowerCase()}, have ${(config.candidates || []).length}.`;
             statusEl.className = (config.candidates || []).length < requiredMin
                 ? 'info-block warning marginBot5'
                 : 'info-block marginBot5';
@@ -915,28 +916,28 @@ export async function showConfirmationPopup(data) {
     const selectedIndex = Number.isInteger(data?.selectedProfileIndex) ? data.selectedProfileIndex : 0;
     const html = `
         <div class="stmb-confirm-popup">
-            <h3>Create Memory</h3>
+            <h3 data-i18n="Create Memory">Create Memory</h3>
             <div class="world_entry_form_control opacity70p">
-                <div>Scene: ${escapeHtml(String(data?.sceneStart ?? '?'))}-${escapeHtml(String(data?.sceneEnd ?? '?'))}</div>
-                <div>Messages: ${escapeHtml(String(data?.messageCount ?? '?'))}</div>
-                <div>Estimated tokens: ${escapeHtml(String(data?.estimatedTokens ?? '?'))}</div>
+                <div><span data-i18n="Scene:">Scene:</span> ${escapeHtml(String(data?.sceneStart ?? '?'))}-${escapeHtml(String(data?.sceneEnd ?? '?'))}</div>
+                <div><span data-i18n="Messages:">Messages:</span> ${escapeHtml(String(data?.messageCount ?? '?'))}</div>
+                <div><span data-i18n="Estimated tokens:">Estimated tokens:</span> ${escapeHtml(String(data?.estimatedTokens ?? '?'))}</div>
             </div>
-            ${data?.showWarning ? `<div class="world_entry_form_control"><strong>Warning:</strong> Large scene exceeds the warning threshold of ${escapeHtml(String(data?.tokenThreshold ?? '?'))} tokens.</div>` : ''}
+            ${data?.showWarning ? `<div class="world_entry_form_control"><strong data-i18n="Warning:">Warning:</strong> ${t`Large scene exceeds the warning threshold of ${escapeHtml(String(data?.tokenThreshold ?? '?'))} tokens.`}</div>` : ''}
             <div class="world_entry_form_control">
-                <label for="stmb-confirm-profile-select">Profile</label>
+                <label for="stmb-confirm-profile-select" data-i18n="Profile">Profile</label>
                 <select id="stmb-confirm-profile-select" class="text_pole" style="width:100%">
                     ${renderProfileOptions(profiles, selectedIndex)}
                 </select>
             </div>
             <div class="world_entry_form_control opacity70p">
-                <div>Profile model: <span id="stmb-confirm-profile-model"></span></div>
-                <div>Profile temperature: <span id="stmb-confirm-profile-temp"></span></div>
-                <div>Current UI provider: ${escapeHtml(String(data?.currentApi || 'Unknown'))}</div>
-                <div>Current UI model: ${escapeHtml(String(data?.currentModel || 'Unknown'))}</div>
-                <div>Current UI temperature: ${escapeHtml(String(data?.currentTemperature ?? 0.7))}</div>
+                <div><span data-i18n="Profile model:">Profile model:</span> <span id="stmb-confirm-profile-model"></span></div>
+                <div><span data-i18n="Profile temperature:">Profile temperature:</span> <span id="stmb-confirm-profile-temp"></span></div>
+                <div><span data-i18n="Current UI provider:">Current UI provider:</span> ${escapeHtml(String(data?.currentApi || translate('Unknown')))}</div>
+                <div><span data-i18n="Current UI model:">Current UI model:</span> ${escapeHtml(String(data?.currentModel || translate('Unknown')))}</div>
+                <div><span data-i18n="Current UI temperature:">Current UI temperature:</span> ${escapeHtml(String(data?.currentTemperature ?? 0.7))}</div>
             </div>
             <div class="world_entry_form_control">
-                <label>Effective prompt</label>
+                <label data-i18n="Effective prompt">Effective prompt</label>
                 <pre id="stmb-confirm-prompt" class="text_pole" style="white-space:pre-wrap; max-height:220px; overflow:auto;"></pre>
             </div>
         </div>
@@ -944,17 +945,17 @@ export async function showConfirmationPopup(data) {
 
     safePlayMessageSound();
     const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
-        okButton: 'Create Memory',
-        cancelButton: 'Cancel',
+        okButton: translate('Create Memory'),
+        cancelButton: translate('Cancel'),
         allowVerticalScrolling: true,
         customButtons: [
             {
-                text: 'Settings...',
+                text: translate('Settings...'),
                 result: STMB_POPUP_RESULTS.SETTINGS,
                 classes: ['menu_button', 'whitespacenowrap'],
             },
             {
-                text: 'Advanced Options...',
+                text: translate('Advanced Options...'),
                 result: STMB_POPUP_RESULTS.ADVANCED,
                 classes: ['menu_button', 'whitespacenowrap'],
             },
@@ -998,44 +999,44 @@ export async function showAdvancedOptionsPopup(data) {
         : 30000;
     const html = `
         <div class="stmb-advanced-popup">
-            <h3>Advanced Options</h3>
+            <h3 data-i18n="Advanced Options">Advanced Options</h3>
             <div class="world_entry_form_control opacity70p">
-                <div>Scene: ${escapeHtml(String(data?.sceneStart ?? '?'))}-${escapeHtml(String(data?.sceneEnd ?? '?'))}</div>
-                <div>Messages: ${escapeHtml(String(data?.messageCount ?? '?'))}</div>
-                <div>Available memories: ${escapeHtml(String(data?.availableMemories ?? 0))}</div>
-                <div>Base tokens: ${escapeHtml(String(baseEstimatedTokens))}</div>
-                <div>Total estimated tokens: <span id="stmb-advanced-total-tokens">${escapeHtml(String(baseEstimatedTokens))}</span></div>
-                <div id="stmb-advanced-token-warning" class="${baseEstimatedTokens > tokenThreshold ? '' : 'displayNone'}"><strong>Warning:</strong> Large scene exceeds the warning threshold of ${escapeHtml(String(tokenThreshold))} tokens.</div>
+                <div><span data-i18n="Scene:">Scene:</span> ${escapeHtml(String(data?.sceneStart ?? '?'))}-${escapeHtml(String(data?.sceneEnd ?? '?'))}</div>
+                <div><span data-i18n="Messages:">Messages:</span> ${escapeHtml(String(data?.messageCount ?? '?'))}</div>
+                <div><span data-i18n="Available memories:">Available memories:</span> ${escapeHtml(String(data?.availableMemories ?? 0))}</div>
+                <div><span data-i18n="Base tokens:">Base tokens:</span> ${escapeHtml(String(baseEstimatedTokens))}</div>
+                <div><span data-i18n="Total estimated tokens:">Total estimated tokens:</span> <span id="stmb-advanced-total-tokens">${escapeHtml(String(baseEstimatedTokens))}</span></div>
+                <div id="stmb-advanced-token-warning" class="${baseEstimatedTokens > tokenThreshold ? '' : 'displayNone'}"><strong data-i18n="Warning:">Warning:</strong> ${t`Large scene exceeds the warning threshold of ${escapeHtml(String(tokenThreshold))} tokens.`}</div>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-advanced-profile-select">Profile</label>
+                <label for="stmb-advanced-profile-select" data-i18n="Profile">Profile</label>
                 <select id="stmb-advanced-profile-select" class="text_pole" style="width:100%">
                     ${renderProfileOptions(profiles, selectedIndex)}
                 </select>
             </div>
             <div class="world_entry_form_control opacity70p">
-                <div>Profile model: <span id="stmb-advanced-profile-model"></span></div>
-                <div>Profile temperature: <span id="stmb-advanced-profile-temp"></span></div>
-                <div>Current UI provider: ${escapeHtml(String(data?.currentApi || 'Unknown'))}</div>
-                <div>Current UI model: ${escapeHtml(String(data?.currentModel || 'Unknown'))}</div>
-                <div>Current UI temperature: ${escapeHtml(String(data?.currentTemperature ?? 0.7))}</div>
+                <div><span data-i18n="Profile model:">Profile model:</span> <span id="stmb-advanced-profile-model"></span></div>
+                <div><span data-i18n="Profile temperature:">Profile temperature:</span> <span id="stmb-advanced-profile-temp"></span></div>
+                <div><span data-i18n="Current UI provider:">Current UI provider:</span> ${escapeHtml(String(data?.currentApi || translate('Unknown')))}</div>
+                <div><span data-i18n="Current UI model:">Current UI model:</span> ${escapeHtml(String(data?.currentModel || translate('Unknown')))}</div>
+                <div><span data-i18n="Current UI temperature:">Current UI temperature:</span> ${escapeHtml(String(data?.currentTemperature ?? 0.7))}</div>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-advanced-prompt">Effective prompt</label>
+                <label for="stmb-advanced-prompt" data-i18n="Effective prompt">Effective prompt</label>
                 <textarea id="stmb-advanced-prompt" class="text_pole" style="width:100%; min-height:220px; white-space:pre-wrap;"></textarea>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-advanced-memory-count">Context memories</label>
+                <label for="stmb-advanced-memory-count" data-i18n="Context memories">Context memories</label>
                 <input id="stmb-advanced-memory-count" type="number" min="0" max="7" step="1" class="text_pole" style="width:100%" value="${escapeHtml(String(data?.defaultMemoryCount ?? 0))}">
             </div>
             <div class="world_entry_form_control">
                 <label class="checkbox_label">
                     <input id="stmb-advanced-override-settings" type="checkbox" ${data?.overrideSettings ? 'checked' : ''}>
-                    <span>Use current SillyTavern model/provider settings for this run</span>
+                    <span data-i18n="Use current SillyTavern model/provider settings for this run">Use current SillyTavern model/provider settings for this run</span>
                 </label>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-advanced-profile-name">New profile name</label>
+                <label for="stmb-advanced-profile-name" data-i18n="New profile name">New profile name</label>
                 <input id="stmb-advanced-profile-name" class="text_pole" style="width:100%" value="${escapeHtml(String(data?.suggestedProfileName || ''))}">
             </div>
         </div>
@@ -1043,8 +1044,8 @@ export async function showAdvancedOptionsPopup(data) {
 
     safePlayMessageSound();
     const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
-        okButton: 'Create Memory',
-        cancelButton: 'Cancel',
+        okButton: translate('Create Memory'),
+        cancelButton: translate('Cancel'),
         wide: true,
         large: true,
         allowVerticalScrolling: true,
@@ -1055,12 +1056,12 @@ export async function showAdvancedOptionsPopup(data) {
             if (popupInstance.result === STMB_POPUP_RESULTS.SAVE_PROFILE) {
                 const profileName = String(dialog.querySelector('#stmb-advanced-profile-name')?.value || '').trim();
                 if (!profileName) {
-                    toastr.error('Please enter a profile name', 'STMB');
+                    toastr.error(translate('Please enter a profile name'), 'STMB');
                     return false;
                 }
                 const promptText = String(dialog.querySelector('#stmb-advanced-prompt')?.value || '').trim();
                 if (!promptText) {
-                    toastr.error('Prompt cannot be empty', 'STMB');
+                    toastr.error(translate('Prompt cannot be empty'), 'STMB');
                     return false;
                 }
             }
@@ -1068,14 +1069,14 @@ export async function showAdvancedOptionsPopup(data) {
             if (popupInstance.result === POPUP_RESULT.AFFIRMATIVE) {
                 const promptText = String(dialog.querySelector('#stmb-advanced-prompt')?.value || '').trim();
                 if (!promptText) {
-                    toastr.error('Prompt cannot be empty', 'STMB');
+                    toastr.error(translate('Prompt cannot be empty'), 'STMB');
                     return false;
                 }
                 const shouldSave = dialog.querySelector('.popup_button_ok')?.dataset.shouldSave === 'true';
                 if (shouldSave) {
                     const profileName = String(dialog.querySelector('#stmb-advanced-profile-name')?.value || '').trim();
                     if (!profileName) {
-                        toastr.error('Please enter a profile name or use "Create Memory" to proceed without saving', 'STMB');
+                        toastr.error(translate('Please enter a profile name or use "Create Memory" to proceed without saving'), 'STMB');
                         return false;
                     }
                 }
@@ -1085,12 +1086,12 @@ export async function showAdvancedOptionsPopup(data) {
         },
         customButtons: [
             {
-                text: 'Settings...',
+                text: translate('Settings...'),
                 result: STMB_POPUP_RESULTS.SETTINGS,
                 classes: ['menu_button', 'whitespacenowrap'],
             },
             {
-                text: 'Save as New Profile',
+                text: translate('Save as New Profile'),
                 result: STMB_POPUP_RESULTS.SAVE_PROFILE,
                 classes: ['menu_button', 'whitespacenowrap'],
             },
@@ -1133,12 +1134,12 @@ export async function showAdvancedOptionsPopup(data) {
         }
 
         if (hasChanges) {
-            createButton.textContent = 'Save Profile & Create Memory';
-            createButton.title = 'Save the modified settings as a new profile and create the memory';
+            createButton.textContent = translate('Save Profile & Create Memory');
+            createButton.title = translate('Save the modified settings as a new profile and create the memory');
             createButton.dataset.shouldSave = 'true';
         } else {
-            createButton.textContent = 'Create Memory';
-            createButton.title = 'Create memory using the selected profile settings';
+            createButton.textContent = translate('Create Memory');
+            createButton.title = translate('Create memory using the selected profile settings');
             createButton.dataset.shouldSave = 'false';
         }
     };
@@ -1191,7 +1192,7 @@ export async function showAdvancedOptionsPopup(data) {
         }
 
         if (totalTokensEl) {
-            totalTokensEl.textContent = 'Calculating...';
+            totalTokensEl.textContent = translate('Calculating...');
         }
 
         try {
@@ -1279,22 +1280,22 @@ export async function showMemoryPreviewPopup(memoryResult, sceneData, profileSet
 
         const html = `
             <div class="stmb-preview-popup">
-                <h3>Review Memory</h3>
+                <h3 data-i18n="Review Memory">Review Memory</h3>
                 <div class="world_entry_form_control opacity70p">
-                    <div>Profile: ${escapeHtml(String(profileSettings.name || 'Current SillyTavern Settings'))}</div>
-                    <div>Scene: ${escapeHtml(String(sceneData.sceneStart))}-${escapeHtml(String(sceneData.sceneEnd))}</div>
-                    <div>Messages: ${escapeHtml(String(sceneData.messageCount))}</div>
+                    <div><span data-i18n="Profile:">Profile:</span> ${escapeHtml(String(profileSettings.name || translate('Current SillyTavern Settings')))}</div>
+                    <div><span data-i18n="Scene:">Scene:</span> ${escapeHtml(String(sceneData.sceneStart))}-${escapeHtml(String(sceneData.sceneEnd))}</div>
+                    <div><span data-i18n="Messages:">Messages:</span> ${escapeHtml(String(sceneData.messageCount))}</div>
                 </div>
                 <div class="world_entry_form_control">
-                    <label for="stmb-preview-title">Title</label>
+                    <label for="stmb-preview-title" data-i18n="Title">Title</label>
                     <input id="stmb-preview-title" class="text_pole" style="width:100%" value="${escapeHtml(title)}" ${options.lockTitle ? 'readonly' : ''}>
                 </div>
                 <div class="world_entry_form_control">
-                    <label for="stmb-preview-content">Content</label>
+                    <label for="stmb-preview-content" data-i18n="Content">Content</label>
                     <textarea id="stmb-preview-content" class="text_pole" style="width:100%; min-height:220px; white-space:pre-wrap;">${escapeHtml(content)}</textarea>
                 </div>
                 <div class="world_entry_form_control">
-                    <label for="stmb-preview-keywords">Keywords</label>
+                    <label for="stmb-preview-keywords" data-i18n="Keywords">Keywords</label>
                     <textarea id="stmb-preview-keywords" class="text_pole" style="width:100%; min-height:90px; white-space:pre-wrap;">${escapeHtml(keywordsText)}</textarea>
                 </div>
             </div>
@@ -1302,8 +1303,8 @@ export async function showMemoryPreviewPopup(memoryResult, sceneData, profileSet
 
         safePlayMessageSound();
         const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
-            okButton: 'Edit & Save',
-            cancelButton: 'Cancel',
+            okButton: translate('Edit & Save'),
+            cancelButton: translate('Cancel'),
             wide: true,
             allowVerticalScrolling: true,
             onClosing: popupInstance => {
@@ -1314,11 +1315,11 @@ export async function showMemoryPreviewPopup(memoryResult, sceneData, profileSet
                 const titleValue = String(popupInstance.dlg.querySelector('#stmb-preview-title')?.value || '').trim();
                 const contentValue = String(popupInstance.dlg.querySelector('#stmb-preview-content')?.value || '').trim();
                 if (!contentValue) {
-                    toastr.error('Memory content cannot be empty', 'STMB');
+                    toastr.error(translate('Memory content cannot be empty'), 'STMB');
                     return false;
                 }
                 if (!options.lockTitle && !titleValue) {
-                    toastr.error('Memory title cannot be empty', 'STMB');
+                    toastr.error(translate('Memory title cannot be empty'), 'STMB');
                     return false;
                 }
                 return true;
@@ -1327,7 +1328,7 @@ export async function showMemoryPreviewPopup(memoryResult, sceneData, profileSet
                 ? []
                 : [
                     {
-                        text: 'Retry Generation',
+                        text: translate('Retry Generation'),
                         result: STMB_POPUP_RESULTS.RETRY,
                         classes: ['menu_button', 'whitespacenowrap'],
                     },
@@ -1388,28 +1389,28 @@ export function showFailedAIResponsePopup(error, { onApply } = {}) {
 
         const html = `
             <div class="stmb-failed-response-popup">
-                <h3>Review Failed AI Response</h3>
+                <h3 data-i18n="Review Failed AI Response">Review Failed AI Response</h3>
                 <div class="world_entry_form_control">
-                    <div><strong>Error:</strong> ${escapeHtml(message)}</div>
-                    ${code ? `<div><strong>Code:</strong> ${escapeHtml(code)}</div>` : ''}
+                    <div><strong data-i18n="Error:">Error:</strong> ${escapeHtml(message)}</div>
+                    ${code ? `<div><strong data-i18n="Code:">Code:</strong> ${escapeHtml(code)}</div>` : ''}
                 </div>
                 ${rawResponse ? `
                     <div class="world_entry_form_control">
-                        <h4>Raw AI Response</h4>
+                        <h4 data-i18n="Raw AI Response">Raw AI Response</h4>
                         <textarea id="stmb-corrected-raw" class="text_pole" style="width:100%; min-height:220px; max-height:360px; white-space:pre; overflow:auto;">${escapeHtml(rawResponse)}</textarea>
                         <div class="buttons_block gap10px">
-                            <button id="stmb-copy-raw" class="menu_button">Copy Raw</button>
-                            <button id="stmb-apply-corrected-raw" class="menu_button" ${canApply ? '' : 'disabled'}>Create Memory from corrected JSON</button>
+                            <button id="stmb-copy-raw" class="menu_button" data-i18n="Copy Raw">Copy Raw</button>
+                            <button id="stmb-apply-corrected-raw" class="menu_button" ${canApply ? '' : 'disabled'} data-i18n="Create Memory from corrected JSON">Create Memory from corrected JSON</button>
                         </div>
-                        ${canApply ? '' : '<div class="opacity70p">Unable to apply corrected JSON because the original generation context is missing.</div>'}
+                        ${canApply ? '' : '<div class="opacity70p" data-i18n="Unable to apply corrected JSON because the original generation context is missing.">Unable to apply corrected JSON because the original generation context is missing.</div>'}
                     </div>
-                ` : '<div class="world_entry_form_control opacity70p">No raw response was captured.</div>'}
+                ` : '<div class="world_entry_form_control opacity70p" data-i18n="No raw response was captured.">No raw response was captured.</div>'}
                 ${providerBody ? `
                     <div class="world_entry_form_control">
-                        <h4>Provider Error Body</h4>
+                        <h4 data-i18n="Provider Error Body">Provider Error Body</h4>
                         <pre class="text_pole" style="white-space:pre-wrap; max-height:200px; overflow:auto;"><code>${escapeHtml(providerBody)}</code></pre>
                         <div class="buttons_block gap10px">
-                            <button id="stmb-copy-provider" class="menu_button">Copy Provider Body</button>
+                            <button id="stmb-copy-provider" class="menu_button" data-i18n="Copy Provider Body">Copy Provider Body</button>
                         </div>
                     </div>
                 ` : ''}
@@ -1422,7 +1423,7 @@ export function showFailedAIResponsePopup(error, { onApply } = {}) {
             large: true,
             allowVerticalScrolling: true,
             okButton: false,
-            cancelButton: 'Close',
+            cancelButton: translate('Close'),
         });
 
         const dlg = popup.dlg;
@@ -1433,17 +1434,17 @@ export function showFailedAIResponsePopup(error, { onApply } = {}) {
         dlg.querySelector('#stmb-copy-raw')?.addEventListener('click', async () => {
             try {
                 await navigator.clipboard.writeText(rawResponse);
-                toastr.success('Copied raw response', 'STMB');
+                toastr.success(translate('Copied raw response'), 'STMB');
             } catch {
-                toastr.error('Copy failed', 'STMB');
+                toastr.error(translate('Copy failed'), 'STMB');
             }
         });
         dlg.querySelector('#stmb-copy-provider')?.addEventListener('click', async () => {
             try {
                 await navigator.clipboard.writeText(providerBody);
-                toastr.success('Copied provider body', 'STMB');
+                toastr.success(translate('Copied provider body'), 'STMB');
             } catch {
-                toastr.error('Copy failed', 'STMB');
+                toastr.error(translate('Copy failed'), 'STMB');
             }
         });
         applyButton?.addEventListener('click', async () => {
@@ -1564,46 +1565,46 @@ export function showFailedSummaryResponsePopup(error, { onApply } = {}) {
 
     const html = `
         <div class="stmb-failed-summary-popup">
-            <h3>Review Failed Summary Response</h3>
+            <h3 data-i18n="Review Failed Summary Response">Review Failed Summary Response</h3>
             <div class="world_entry_form_control">
-                <div><strong>Error:</strong> ${escapeHtml(message)}</div>
-                ${code ? `<div><strong>Code:</strong> ${escapeHtml(code)}</div>` : ''}
+                <div><strong data-i18n="Error:">Error:</strong> ${escapeHtml(message)}</div>
+                ${code ? `<div><strong data-i18n="Code:">Code:</strong> ${escapeHtml(code)}</div>` : ''}
             </div>
             ${rawResponse ? `
                 <div class="world_entry_form_control">
-                    <h4>Raw Summary Response</h4>
+                    <h4 data-i18n="Raw Summary Response">Raw Summary Response</h4>
                     <textarea id="stmb-summary-corrected-raw" class="text_pole" style="width:100%; min-height:220px; max-height:360px; white-space:pre; overflow:auto;">${escapeHtml(rawResponse)}</textarea>
                     <div class="buttons_block gap10px">
-                        <button id="stmb-summary-copy-raw" class="menu_button">Copy Raw</button>
-                        <button id="stmb-summary-extract-fields" class="menu_button">Extract Title/Summary/Keywords</button>
-                        <button id="stmb-summary-fill-json" class="menu_button">Fill JSON</button>
-                        <button id="stmb-summary-apply-corrected-raw" class="menu_button" ${canApply ? '' : 'disabled'}>Create Summary from corrected JSON</button>
+                        <button id="stmb-summary-copy-raw" class="menu_button" data-i18n="Copy Raw">Copy Raw</button>
+                        <button id="stmb-summary-extract-fields" class="menu_button" data-i18n="Extract Title/Summary/Keywords">Extract Title/Summary/Keywords</button>
+                        <button id="stmb-summary-fill-json" class="menu_button" data-i18n="Fill JSON">Fill JSON</button>
+                        <button id="stmb-summary-apply-corrected-raw" class="menu_button" ${canApply ? '' : 'disabled'} data-i18n="Create Summary from corrected JSON">Create Summary from corrected JSON</button>
                     </div>
-                    ${canApply ? '' : '<div class="opacity70p">Unable to apply corrected JSON because the original consolidation context is missing.</div>'}
+                    ${canApply ? '' : '<div class="opacity70p" data-i18n="Unable to apply corrected JSON because the original consolidation context is missing.">Unable to apply corrected JSON because the original consolidation context is missing.</div>'}
                 </div>
                 <div class="world_entry_form_control">
-                    <h4>Extractable Fields</h4>
-                    <div class="opacity70p">Use Extract to populate fields from the raw response, then Fill JSON to generate valid summary JSON.</div>
+                    <h4 data-i18n="Extractable Fields">Extractable Fields</h4>
+                    <div class="opacity70p" data-i18n="Use Extract to populate fields from the raw response, then Fill JSON to generate valid summary JSON.">Use Extract to populate fields from the raw response, then Fill JSON to generate valid summary JSON.</div>
                     <div class="world_entry_form_control">
-                        <label for="stmb-summary-field-title">Title</label>
+                        <label for="stmb-summary-field-title" data-i18n="Title">Title</label>
                         <input id="stmb-summary-field-title" class="text_pole" style="width:100%" value="${escapeHtml(String(prefill?.title || ''))}">
                     </div>
                     <div class="world_entry_form_control">
-                        <label for="stmb-summary-field-summary">Summary</label>
+                        <label for="stmb-summary-field-summary" data-i18n="Summary">Summary</label>
                         <textarea id="stmb-summary-field-summary" class="text_pole" style="width:100%; min-height:120px; white-space:pre-wrap;">${escapeHtml(String(prefill?.summary || ''))}</textarea>
                     </div>
                     <div class="world_entry_form_control">
-                        <label for="stmb-summary-field-keywords">Keywords (one per line or comma-separated)</label>
+                        <label for="stmb-summary-field-keywords" data-i18n="Keywords (one per line or comma-separated)">Keywords (one per line or comma-separated)</label>
                         <textarea id="stmb-summary-field-keywords" class="text_pole" style="width:100%; min-height:90px; white-space:pre-wrap;">${escapeHtml(Array.isArray(prefill?.keywords) ? prefill.keywords.join('\n') : '')}</textarea>
                     </div>
                 </div>
                 ${originalRawResponse && originalRawResponse !== rawResponse ? `
                     <details class="world_entry_form_control">
-                        <summary class="opacity70p">Show original (pre-retry) response</summary>
+                        <summary class="opacity70p" data-i18n="Show original (pre-retry) response">Show original (pre-retry) response</summary>
                         <textarea class="text_pole" style="width:100%; min-height:160px; max-height:260px; white-space:pre; overflow:auto;">${escapeHtml(originalRawResponse)}</textarea>
                     </details>
                 ` : ''}
-            ` : '<div class="world_entry_form_control opacity70p">No raw response was captured.</div>'}
+            ` : '<div class="world_entry_form_control opacity70p" data-i18n="No raw response was captured.">No raw response was captured.</div>'}
         </div>
     `;
 
@@ -1613,7 +1614,7 @@ export function showFailedSummaryResponsePopup(error, { onApply } = {}) {
         large: true,
         allowVerticalScrolling: true,
         okButton: false,
-        cancelButton: 'Close',
+        cancelButton: translate('Close'),
     });
 
     const dlg = popup.dlg;
@@ -1624,9 +1625,9 @@ export function showFailedSummaryResponsePopup(error, { onApply } = {}) {
     dlg.querySelector('#stmb-summary-copy-raw')?.addEventListener('click', async () => {
         try {
             await navigator.clipboard.writeText(rawResponse);
-            toastr.success('Copied raw response', 'STMB');
+            toastr.success(translate('Copied raw response'), 'STMB');
         } catch {
-            toastr.error('Copy failed', 'STMB');
+            toastr.error(translate('Copy failed'), 'STMB');
         }
     });
     dlg.querySelector('#stmb-summary-extract-fields')?.addEventListener('click', () => {
@@ -1636,17 +1637,17 @@ export function showFailedSummaryResponsePopup(error, { onApply } = {}) {
         dlg.querySelector('#stmb-summary-field-summary').value = String(extracted.summary || '');
         dlg.querySelector('#stmb-summary-field-keywords').value = Array.isArray(extracted.keywords) ? extracted.keywords.join('\n') : '';
         if (!extracted.title && !extracted.summary && (!Array.isArray(extracted.keywords) || extracted.keywords.length === 0)) {
-            toastr.warning('Could not extract summary fields from the raw response', 'STMB');
+            toastr.warning(translate('Could not extract summary fields from the raw response'), 'STMB');
             return;
         }
-        toastr.success('Extracted fields from raw response', 'STMB');
+        toastr.success(translate('Extracted fields from raw response'), 'STMB');
     });
     dlg.querySelector('#stmb-summary-fill-json')?.addEventListener('click', () => {
         const title = String(dlg.querySelector('#stmb-summary-field-title')?.value || '').trim();
         const summary = String(dlg.querySelector('#stmb-summary-field-summary')?.value || '').trim();
         const keywords = splitKeywords(dlg.querySelector('#stmb-summary-field-keywords')?.value || '');
         if (!title || !summary) {
-            toastr.warning('Title and Summary are required to build a summary.', 'STMB');
+            toastr.warning(translate('Title and Summary are required to build a summary.'), 'STMB');
             return;
         }
 
@@ -1658,7 +1659,7 @@ export function showFailedSummaryResponsePopup(error, { onApply } = {}) {
         if (rawEl) {
             rawEl.value = JSON.stringify(payload, null, 2);
         }
-        toastr.success('Filled JSON from fields', 'STMB');
+        toastr.success(translate('Filled JSON from fields'), 'STMB');
     });
     applyButton?.addEventListener('click', async () => {
         if (!canApply || isApplying) {
@@ -1677,7 +1678,7 @@ export function showFailedSummaryResponsePopup(error, { onApply } = {}) {
             if (!applied) {
                 return;
             }
-            toastr.success('Summary created from corrected JSON', 'STMB');
+            toastr.success(translate('Summary created from corrected JSON'), 'STMB');
             await popup.completeCancelled();
         } catch (applyError) {
             console.error('STMB manual summary repair failed', applyError);

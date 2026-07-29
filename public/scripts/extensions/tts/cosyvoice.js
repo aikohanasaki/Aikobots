@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { saveTtsProviderSettings } from './index.js';
 
 export { CosyVoiceProvider };
@@ -50,7 +51,7 @@ class CosyVoiceProvider {
     get settingsHtml() {
         let html = `
 
-        <label for="tts_endpoint">Provider Endpoint:</label>
+        <label for="tts_endpoint" data-i18n="Provider Endpoint:">Provider Endpoint:</label>
         <input id="tts_endpoint" type="text" class="text_pole" maxlength="250" height="300" value="${this.defaultSettings.provider_endpoint}"/>
         <span>Windows users Use <a target="_blank" href="https://github.com/v3ucn/CosyVoice_For_Windows">CosyVoice_For_Windows</a>(Unofficial).</span><br/>
         <span>Macos Users Use <a target="_blank" href="https://github.com/v3ucn/CosyVoice_for_MacOs">CosyVoice_for_MacOs</a>(Unofficial).</span><br/>
@@ -191,7 +192,7 @@ class CosyVoiceProvider {
             },
         );
         if (!response.ok) {
-            toastr.error(response.statusText, 'TTS Generation Failed');
+            toastr.error(response.statusText, translate('TTS Generation Failed'));
             throw new Error(`HTTP ${response.status}: ${await response.text()}`);
         }
         return response;

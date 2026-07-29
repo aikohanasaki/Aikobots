@@ -1,3 +1,4 @@
+import { t, translate } from '../../i18n.js';
 import { getPreviewString, saveTtsProviderSettings } from './index.js';
 import { getBase64Async } from '../../utils.js';
 import { getRequestHeaders } from '../../../script.js';
@@ -23,19 +24,19 @@ class SpeechT5TtsProvider {
 
     get settingsHtml() {
         let html = `
-        <label for="speecht5_tts_speaker">Speaker:</label>
+        <label for="speecht5_tts_speaker" data-i18n="Speaker:">Speaker:</label>
         <div class="flex-container">
             <select id="speecht5_tts_speaker" class="text_pole flex1">
             </select>
-            <div id="speecht5_tts_speaker_upload_button" class="menu_button" title="Upload speaker">
+            <div id="speecht5_tts_speaker_upload_button" class="menu_button" title="Upload speaker" data-i18n="[title]Upload speaker">
                 <i class="fa-solid fa-upload"></i>
             </div>
-            <div id="speecht5_tts_delete_speaker_button" class="menu_button" title="Delete speaker">
+            <div id="speecht5_tts_delete_speaker_button" class="menu_button" title="Delete speaker" data-i18n="[title]Delete speaker">
                 <i class="fa-solid fa-trash"></i>
             </div>
         </div>
         <input type="file" id="speecht5_tts_speaker_upload" class="displayNone">
-        <div><i>Loading model for the first time may take a while!</i></div>
+        <div><i data-i18n="Loading model for the first time may take a while!">Loading model for the first time may take a while!</i></div>
         `;
         return html;
     }
@@ -95,7 +96,7 @@ class SpeechT5TtsProvider {
         $('#speecht5_tts_speaker_upload').on('change', async (event) => {
             const file = event.target.files[0];
             if (file.size != 2048) {
-                toastr.error('Invalid speaker file size, expected 2048 bytes');
+                toastr.error(translate('Invalid speaker file size, expected 2048 bytes'));
                 return;
             }
 
@@ -124,7 +125,7 @@ class SpeechT5TtsProvider {
 
             const speaker = this.settings.speakers.find(s => s.voice_id === this.settings.speaker);
             if (!speaker) {
-                toastr.error('Speaker not found');
+                toastr.error(translate('Speaker not found'));
                 return;
             }
 
@@ -168,7 +169,7 @@ class SpeechT5TtsProvider {
         const speaker = await this.getVoice(voiceId);
 
         if (!speaker) {
-            toastr.error(`Speaker not found: ${voiceId}`, 'TTS Generation Failed');
+            toastr.error(t`Speaker not found: ${voiceId}`, translate('TTS Generation Failed'));
             throw new Error(`Speaker not found: ${voiceId}`);
         }
 
@@ -186,7 +187,7 @@ class SpeechT5TtsProvider {
         );
 
         if (!response.ok) {
-            toastr.error(response.statusText, 'TTS Generation Failed');
+            toastr.error(response.statusText, translate('TTS Generation Failed'));
             throw new Error(`HTTP ${response.status}: ${await response.text()}`);
         }
 

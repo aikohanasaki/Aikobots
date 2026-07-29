@@ -1,3 +1,4 @@
+import { t, translate } from '../../../../i18n.js';
 import { Popup } from '../../../../popup.js';
 import { getSortableDelay } from '../../../../utils.js';
 import { log, warn } from '../../index.js';
@@ -101,7 +102,7 @@ export class SettingsUi {
             this.settings.chatConfig.renderSettingsInto(clone);
         } else {
             const info = document.createElement('div'); {
-                info.textContent = 'No active chat.';
+                info.textContent = translate('No active chat.');
                 // @ts-ignore
                 clone.append(info);
             }
@@ -116,7 +117,7 @@ export class SettingsUi {
             const setListContainer = /** @type {HTMLElement} */ (clone.querySelector('.qr--setList'));
             setListContainer.innerHTML = '';
             const info = document.createElement('div');
-            info.textContent = 'No character is currently loaded.';
+            info.textContent = translate('No character is currently loaded.');
             setListContainer.append(info);
         } else {
             // Let the config object handle its own rendering. It will render an empty list if there are no sets,
@@ -307,7 +308,7 @@ export class SettingsUi {
     }
 
     async deleteQrSet() {
-        const confirmed = await Popup.show.confirm('Delete Quick Reply Set', `Are you sure you want to delete the Quick Reply Set "${this.currentQrSet.name}"?<br>This cannot be undone.`);
+        const confirmed = await Popup.show.confirm(translate('Delete Quick Reply Set'), t`Are you sure you want to delete the Quick Reply Set "${this.currentQrSet.name}"?<br>This cannot be undone.`);
         if (confirmed) {
             await this.doDeleteQrSet(this.currentQrSet);
             this.rerender();
@@ -339,11 +340,11 @@ export class SettingsUi {
     }
 
     async renameQrSet() {
-        const newName = await Popup.show.input('Rename Quick Reply Set', 'Enter a new name:', this.currentQrSet.name);
+        const newName = await Popup.show.input(t`Rename Quick Reply Set`, t`Enter a new name:`, this.currentQrSet.name);
         if (newName && newName.length > 0) {
             const existingSet = QuickReplySet.get(newName);
             if (existingSet) {
-                toastr.error(`A Quick Reply Set named "${newName}" already exists.`);
+                toastr.error(t`A Quick Reply Set named "${newName}" already exists.`);
                 return;
             }
             const oldName = this.currentQrSet.name;
@@ -385,11 +386,11 @@ export class SettingsUi {
     }
 
     async addQrSet() {
-        const name = await Popup.show.input('Create a new Quick Reply Set', 'Enter a name for the new Quick Reply Set:');
+        const name = await Popup.show.input(t`Create a new Quick Reply Set`, t`Enter a name for the new Quick Reply Set:`);
         if (name && name.length > 0) {
             const oldQrs = QuickReplySet.get(name);
             if (oldQrs) {
-                const replace = Popup.show.confirm('Replace existing World Info', `A Quick Reply Set named "${name}" already exists.<br>Do you want to overwrite the existing Quick Reply Set?<br>The existing set will be deleted. This cannot be undone.`);
+                const replace = Popup.show.confirm(translate('Replace existing World Info'), t`A Quick Reply Set named "${name}" already exists.<br>Do you want to overwrite the existing Quick Reply Set?<br>The existing set will be deleted. This cannot be undone.`);
                 if (replace) {
                     const idx = QuickReplySet.list.indexOf(oldQrs);
                     await this.doDeleteQrSet(oldQrs);
@@ -443,7 +444,7 @@ export class SettingsUi {
             const text = await file.text();
             const props = JSON.parse(text);
             if (!Number.isInteger(props.version) || typeof props.name != 'string') {
-                toastr.error(`The file "${file.name}" does not appear to be a valid quick reply set.`);
+                toastr.error(t`The file "${file.name}" does not appear to be a valid quick reply set.`);
                 warn(`The file "${file.name}" does not appear to be a valid quick reply set.`);
             } else {
                 /**@type {QuickReplySet}*/
@@ -452,7 +453,7 @@ export class SettingsUi {
                 qrs.init();
                 const oldQrs = QuickReplySet.get(props.name);
                 if (oldQrs) {
-                    const replace = Popup.show.confirm('Replace existing World Info', `A Quick Reply Set named "${name}" already exists.<br>Do you want to overwrite the existing Quick Reply Set?<br>The existing set will be deleted. This cannot be undone.`);
+                    const replace = Popup.show.confirm(translate('Replace existing World Info'), t`A Quick Reply Set named "${name}" already exists.<br>Do you want to overwrite the existing Quick Reply Set?<br>The existing set will be deleted. This cannot be undone.`);
                     if (replace) {
                         const idx = QuickReplySet.list.indexOf(oldQrs);
                         await this.doDeleteQrSet(oldQrs);
@@ -491,7 +492,7 @@ export class SettingsUi {
             }
         } catch (ex) {
             warn(ex);
-            toastr.error(`Failed to import "${file.name}":\n\n${ex.message}`);
+            toastr.error(t`Failed to import "${file.name}":\n\n${ex.message}`);
         }
     }
 
@@ -507,11 +508,11 @@ export class SettingsUi {
     }
 
     async duplicateQrSet() {
-        const newName = await Popup.show.input('Duplicate Quick Reply Set', 'Enter a name for the new Quick Reply Set:', `${this.currentQrSet.name} (Copy)`);
+        const newName = await Popup.show.input(t`Duplicate Quick Reply Set`, t`Enter a name for the new Quick Reply Set:`, t`${this.currentQrSet.name} (Copy)`);
         if (newName && newName.length > 0) {
             const existingSet = QuickReplySet.get(newName);
             if (existingSet) {
-                toastr.error(`A Quick Reply Set named "${newName}" already exists.`);
+                toastr.error(t`A Quick Reply Set named "${newName}" already exists.`);
                 return;
             }
             const newQrSet = QuickReplySet.from(this.currentQrSet.toJSON());

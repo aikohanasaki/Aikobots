@@ -17,7 +17,7 @@
                 <div class="flex1 flex-container flexFlowColumn flexNoGap">
                     <label for="caption_multimodal_api" data-i18n="API">API</label>
                     <select id="caption_multimodal_api" class="flex1 text_pole">
-                        <option value="aimlapi">AI/ML API</option>
+                        <option value="aimlapi" data-i18n="AI/ML API">AI/ML API</option>
                         <option value="anthropic">Claude</option>
                         <option value="cohere">Cohere</option>
                         <option value="custom" data-i18n="Custom (OpenAI-compatible)">Custom (OpenAI-compatible)</option>
@@ -117,16 +117,16 @@
                         <option data-type="google" value="gemini-2.5-flash-lite-preview-06-17">gemini-2.5-flash-lite-preview-06-17</option>
                         <option data-type="google" value="gemini-2.5-flash-image">gemini-2.5-flash-image</option>
                         <option data-type="google" value="gemini-2.5-flash-image-preview">gemini-2.5-flash-image-preview</option>
-                        <option data-type="google" value="gemini-2.0-pro-exp-02-05">gemini-2.0-pro-exp-02-05 → 2.5-exp-03-25</option>
-                        <option data-type="google" value="gemini-2.0-pro-exp">gemini-2.0-pro-exp → 2.5-exp-03-25</option>
-                        <option data-type="google" value="gemini-exp-1206">gemini-exp-1206 → 2.5-exp-03-25</option>
+                        <option data-type="google" value="gemini-2.0-pro-exp-02-05" data-i18n="gemini-2.0-pro-exp-02-05 → 2.5-exp-03-25">gemini-2.0-pro-exp-02-05 → 2.5-exp-03-25</option>
+                        <option data-type="google" value="gemini-2.0-pro-exp" data-i18n="gemini-2.0-pro-exp → 2.5-exp-03-25">gemini-2.0-pro-exp → 2.5-exp-03-25</option>
+                        <option data-type="google" value="gemini-exp-1206" data-i18n="gemini-exp-1206 → 2.5-exp-03-25">gemini-exp-1206 → 2.5-exp-03-25</option>
                         <option data-type="google" value="gemini-2.0-flash-001">gemini-2.0-flash-001</option>
                         <option data-type="google" value="gemini-2.0-flash-exp-image-generation">gemini-2.0-flash-exp-image-generation</option>
                         <option data-type="google" value="gemini-2.0-flash-exp">gemini-2.0-flash-exp</option>
                         <option data-type="google" value="gemini-2.0-flash">gemini-2.0-flash</option>
-                        <option data-type="google" value="gemini-2.0-flash-thinking-exp-01-21">gemini-2.0-flash-thinking-exp-01-21 → 2.5-flash-preview-5-20</option>
-                        <option data-type="google" value="gemini-2.0-flash-thinking-exp-1219">gemini-2.0-flash-thinking-exp-1219 → 2.5-flash-preview-05-20</option>
-                        <option data-type="google" value="gemini-2.0-flash-thinking-exp">gemini-2.0-flash-thinking-exp → 2.5-flash-preview-05-20</option>
+                        <option data-type="google" value="gemini-2.0-flash-thinking-exp-01-21" data-i18n="gemini-2.0-flash-thinking-exp-01-21 → 2.5-flash-preview-5-20">gemini-2.0-flash-thinking-exp-01-21 → 2.5-flash-preview-5-20</option>
+                        <option data-type="google" value="gemini-2.0-flash-thinking-exp-1219" data-i18n="gemini-2.0-flash-thinking-exp-1219 → 2.5-flash-preview-05-20">gemini-2.0-flash-thinking-exp-1219 → 2.5-flash-preview-05-20</option>
+                        <option data-type="google" value="gemini-2.0-flash-thinking-exp" data-i18n="gemini-2.0-flash-thinking-exp → 2.5-flash-preview-05-20">gemini-2.0-flash-thinking-exp → 2.5-flash-preview-05-20</option>
                         <option data-type="google" value="gemini-2.0-flash-lite-001">gemini-2.0-flash-lite-001</option>
                         <option data-type="google" value="gemini-2.0-flash-lite-preview-02-05">gemini-2.0-flash-lite-preview-02-05</option>
                         <option data-type="google" value="gemini-2.0-flash-lite-preview">gemini-2.0-flash-lite-preview</option>
@@ -153,9 +153,9 @@
                     </select>
                 </div>
                 <div data-type="zai">
-                    <b>Will use Common API. Coding API is not supported!</b>
+                    <b data-i18n="Will use Common API. Coding API is not supported!">Will use Common API. Coding API is not supported!</b>
                 </div>
-                <label data-type="openai,anthropic,google,vertexai,mistral,xai" class="checkbox_label flexBasis100p" for="caption_allow_reverse_proxy" title="Allow using reverse proxy if defined and valid.">
+                <label data-type="openai,anthropic,google,vertexai,mistral,xai" class="checkbox_label flexBasis100p" for="caption_allow_reverse_proxy" title="Allow using reverse proxy if defined and valid." data-i18n="[title]Allow using reverse proxy if defined and valid.">
                     <input id="caption_allow_reverse_proxy" type="checkbox" class="checkbox">
                     <span data-i18n="Allow reverse proxy">Allow reverse proxy</span>
                 </label>
@@ -165,14 +165,14 @@
             </div>
             <div id="caption_prompt_block">
                 <label for="caption_prompt" data-i18n="Caption Prompt">Caption Prompt</label>
-                <textarea id="caption_prompt" class="text_pole textarea_compact autoSetHeight" rows="1" placeholder="&lt; Use default &gt;">{{PROMPT_DEFAULT}}</textarea>
+                <textarea id="caption_prompt" class="text_pole textarea_compact autoSetHeight" rows="1" placeholder="&lt; Use default &gt;" data-i18n="[placeholder]Use default">{{PROMPT_DEFAULT}}</textarea>
                 <label class="checkbox_label margin-bot-10px" for="caption_prompt_ask" title="Ask for a custom prompt every time an image is captioned." data-i18n="[title]Ask for a custom prompt every time an image is captioned.">
                     <input id="caption_prompt_ask" type="checkbox" class="checkbox">
                     <span data-i18n="Ask every time">Ask every time</span>
                 </label>
             </div>
             <label for="caption_template"><span data-i18n="Message Template">Message Template</span> <small><span data-i18n="(use _space">(use </span> <code>&lcub;&lcub;caption&rcub;&rcub;</code> <span data-i18n="macro)">macro)</span></small></label>
-            <textarea id="caption_template" class="text_pole textarea_compact autoSetHeight" rows="2" placeholder="&lt; Use default &gt;">{{TEMPLATE_DEFAULT}}</textarea>
+            <textarea id="caption_template" class="text_pole textarea_compact autoSetHeight" rows="2" placeholder="&lt; Use default &gt;" data-i18n="[placeholder]Use default">{{TEMPLATE_DEFAULT}}</textarea>
             <label class="checkbox_label" for="caption_auto_mode">
                 <input id="caption_auto_mode" type="checkbox" class="checkbox">
                 <span data-i18n="Automatically caption images">Automatically caption images</span>

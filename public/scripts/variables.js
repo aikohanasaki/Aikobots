@@ -1,3 +1,4 @@
+import { t, translate } from './i18n.js';
 import { chat_metadata, getCurrentChatId, saveSettingsDebounced } from '../script.js';
 import { extension_settings, saveMetadataDebounced } from './extensions.js';
 import { executeSlashCommandsWithOptions } from './slash-commands.js';
@@ -266,7 +267,7 @@ async function listVariablesCallback(args) {
 
     // Old legacy return type handling
     if (args.format) {
-        toastr.warning(`Legacy argument 'format' with value '${args.format}' is deprecated. Please use 'return' instead. Routing to the correct return type...`, 'Deprecation warning');
+        toastr.warning(t`Legacy argument 'format' with value '${args.format}' is deprecated. Please use 'return' instead. Routing to the correct return type...`, translate('Deprecation warning'));
         const type = String(args?.format).toLowerCase().trim();
         switch (type) {
             case 'none':
@@ -999,7 +1000,7 @@ export function registerVariableCommands() {
                 To convert the value to a specific JSON type when using <code>index</code>, use the <code>as</code> argument.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/setvar key=color green</code></pre>
@@ -1040,7 +1041,7 @@ export function registerVariableCommands() {
                 Get a local variable value and pass it down the pipe. The <code>index</code> argument is optional.
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/getvar height</code></pre>
@@ -1076,11 +1077,11 @@ export function registerVariableCommands() {
             ),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Add a value to a local variable and pass the result down the pipe.">
                 Add a value to a local variable and pass the result down the pipe.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/addvar key=score 10</code></pre>
@@ -1125,7 +1126,7 @@ export function registerVariableCommands() {
                 To convert the value to a specific JSON type when using <code>index</code>, use the <code>as</code> argument.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/setglobalvar key=color green</code></pre>
@@ -1164,7 +1165,7 @@ export function registerVariableCommands() {
                 Get a global variable value and pass it down the pipe. The <code>index</code> argument is optional.
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/getglobalvar height</code></pre>
@@ -1199,11 +1200,11 @@ export function registerVariableCommands() {
             ),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Add a value to a global variable and pass the result down the pipe.">
                 Add a value to a global variable and pass the result down the pipe.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/addglobalvar key=score 10</code></pre>
@@ -1228,11 +1229,11 @@ export function registerVariableCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Increment a local variable by 1 and pass the result down the pipe.">
                 Increment a local variable by 1 and pass the result down the pipe.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/incvar score</code></pre>
@@ -1257,11 +1258,11 @@ export function registerVariableCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Decrement a local variable by 1 and pass the result down the pipe.">
                 Decrement a local variable by 1 and pass the result down the pipe.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/decvar score</code></pre>
@@ -1285,11 +1286,11 @@ export function registerVariableCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Increment a global variable by 1 and pass the result down the pipe.">
                 Increment a global variable by 1 and pass the result down the pipe.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/incglobalvar score</code></pre>
@@ -1313,11 +1314,11 @@ export function registerVariableCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Decrement a global variable by 1 and pass the result down the pipe.">
                 Decrement a global variable by 1 and pass the result down the pipe.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/decglobalvar score</code></pre>
@@ -1380,7 +1381,7 @@ export function registerVariableCommands() {
                 and if the condition yields true, then execute any valid slash command enclosed in quotes and pass the
                 result of the command execution down the pipe.
             </div>
-            <div>
+            <div data-i18n="Numeric values and string literals for left and right operands supported.">
                 Numeric values and string literals for left and right operands supported.
             </div>
             <div>
@@ -1392,21 +1393,21 @@ export function registerVariableCommands() {
                 Only acceptable rules for no provided right operand are <code>not</code>, and no provided rule - which default to returning whether it is not or is truthy.
             </div>
             <div>
-                <strong>Available rules:</strong>
+                <strong data-i18n="Available rules:">Available rules:</strong>
                 <ul>
-                    <li><code>eq</code> => a == b <small>(strings & numbers)</small></li>
-                    <li><code>neq</code> => a !== b <small>(strings & numbers)</small></li>
-                    <li><code>in</code> => a includes b <small>(strings & numbers as strings)</small></li>
-                    <li><code>nin</code> => a not includes b <small>(strings & numbers as strings)</small></li>
-                    <li><code>gt</code> => a > b <small>(numbers)</small></li>
-                    <li><code>gte</code> => a >= b <small>(numbers)</small></li>
-                    <li><code>lt</code> => a < b <small>(numbers)</small></li>
-                    <li><code>lte</code> => a <= b <small>(numbers)</small></li>
-                    <li><code>not</code> => !a <small>(truthy)</small></li>
+                    <li><code>eq</code> => a == b <small data-i18n="(strings & numbers)">(strings & numbers)</small></li>
+                    <li><code>neq</code> => a !== b <small data-i18n="(strings & numbers)">(strings & numbers)</small></li>
+                    <li><code>in</code> => a includes b <small data-i18n="(strings & numbers as strings)">(strings & numbers as strings)</small></li>
+                    <li><code>nin</code> => a not includes b <small data-i18n="(strings & numbers as strings)">(strings & numbers as strings)</small></li>
+                    <li><code>gt</code> => a > b <small data-i18n="(numbers)">(numbers)</small></li>
+                    <li><code>gte</code> => a >= b <small data-i18n="(numbers)">(numbers)</small></li>
+                    <li><code>lt</code> => a < b <small data-i18n="(numbers)">(numbers)</small></li>
+                    <li><code>lte</code> => a <= b <small data-i18n="(numbers)">(numbers)</small></li>
+                    <li><code>not</code> => !a <small data-i18n="(truthy)">(truthy)</small></li>
                 </ul>
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/if left=score right=10 rule=gte "/speak You win"</code></pre>
@@ -1482,25 +1483,25 @@ export function registerVariableCommands() {
                 Compares the value of the left operand <code>a</code> with the value of the right operand <code>b</code>,
                 and if the condition yields true, then execute any valid slash command enclosed in quotes.
             </div>
-            <div>
+            <div data-i18n="Numeric values and string literals for left and right operands supported.">
                 Numeric values and string literals for left and right operands supported.
             </div>
             <div>
-                <strong>Available rules:</strong>
+                <strong data-i18n="Available rules:">Available rules:</strong>
                 <ul>
-                    <li><code>eq</code> => a == b <small>(strings & numbers)</small></li>
-                    <li><code>neq</code> => a !== b <small>(strings & numbers)</small></li>
-                    <li><code>in</code> => a includes b <small>(strings & numbers as strings)</small></li>
-                    <li><code>nin</code> => a not includes b <small>(strings & numbers as strings)</small></li>
-                    <li><code>gt</code> => a > b <small>(numbers)</small></li>
-                    <li><code>gte</code> => a >= b <small>(numbers)</small></li>
-                    <li><code>lt</code> => a < b <small>(numbers)</small></li>
-                    <li><code>lte</code> => a <= b <small>(numbers)</small></li>
-                    <li><code>not</code> => !a <small>(truthy)</small></li>
+                    <li><code>eq</code> => a == b <small data-i18n="(strings & numbers)">(strings & numbers)</small></li>
+                    <li><code>neq</code> => a !== b <small data-i18n="(strings & numbers)">(strings & numbers)</small></li>
+                    <li><code>in</code> => a includes b <small data-i18n="(strings & numbers as strings)">(strings & numbers as strings)</small></li>
+                    <li><code>nin</code> => a not includes b <small data-i18n="(strings & numbers as strings)">(strings & numbers as strings)</small></li>
+                    <li><code>gt</code> => a > b <small data-i18n="(numbers)">(numbers)</small></li>
+                    <li><code>gte</code> => a >= b <small data-i18n="(numbers)">(numbers)</small></li>
+                    <li><code>lt</code> => a < b <small data-i18n="(numbers)">(numbers)</small></li>
+                    <li><code>lte</code> => a <= b <small data-i18n="(numbers)">(numbers)</small></li>
+                    <li><code>not</code> => !a <small data-i18n="(truthy)">(truthy)</small></li>
                 </ul>
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/setvar key=i 0 | /while left=i right=10 rule=lte "/addvar key=i 1"</code></pre>
@@ -1545,7 +1546,7 @@ export function registerVariableCommands() {
                 Execute any valid slash command enclosed in quotes <code>repeats</code> number of times.
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/setvar key=i 1 | /times 5 "/addvar key=i 1"</code></pre>
@@ -1575,11 +1576,11 @@ export function registerVariableCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Delete a local variable.">
                 Delete a local variable.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/flushvar score</code></pre>
@@ -1601,11 +1602,11 @@ export function registerVariableCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Deletes the specified global variable.">
                 Deletes the specified global variable.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/flushglobalvar score</code></pre>
@@ -1631,14 +1632,14 @@ export function registerVariableCommands() {
         ],
         splitUnnamedArgument: true,
         helpString: `
-            <div>
+            <div data-i18n="Performs an addition of the set of values and passes the result down the pipe.">
                 Performs an addition of the set of values and passes the result down the pipe.
             </div>
-            <div>
+            <div data-i18n="Can use variable names, or a JSON array consisting of numbers and variables (with quotes).">
                 Can use variable names, or a JSON array consisting of numbers and variables (with quotes).
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/add 10 i 30 j</code></pre>
@@ -1666,14 +1667,14 @@ export function registerVariableCommands() {
         ],
         splitUnnamedArgument: true,
         helpString: `
-            <div>
+            <div data-i18n="Performs a multiplication of the set of values and passes the result down the pipe.">
                 Performs a multiplication of the set of values and passes the result down the pipe.
             </div>
-            <div>
+            <div data-i18n="Can use variable names, or a JSON array consisting of numbers and variables (with quotes).">
                 Can use variable names, or a JSON array consisting of numbers and variables (with quotes).
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/mul 10 i 30 j</code></pre>
@@ -1701,14 +1702,14 @@ export function registerVariableCommands() {
         ],
         splitUnnamedArgument: true,
         helpString: `
-            <div>
+            <div data-i18n="Returns the maximum value of the set of values and passes the result down the pipe.">
                 Returns the maximum value of the set of values and passes the result down the pipe.
             </div>
-            <div>
+            <div data-i18n="Can use variable names, or a JSON array consisting of numbers and variables (with quotes).">
                 Can use variable names, or a JSON array consisting of numbers and variables (with quotes).
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/max 10 i 30 j</code></pre>
@@ -1736,14 +1737,14 @@ export function registerVariableCommands() {
         ],
         splitUnnamedArgument: true,
         helpString: `
-            <div>
+            <div data-i18n="Returns the minimum value of the set of values and passes the result down the pipe.">
                 Returns the minimum value of the set of values and passes the result down the pipe.
             </div>
-            <div>
+            <div data-i18n="Can use variable names, or a JSON array consisting of numbers and variables (with quotes).">
                 Can use variable names, or a JSON array consisting of numbers and variables (with quotes).
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/min 10 i 30 j</code></pre>
@@ -1771,14 +1772,14 @@ export function registerVariableCommands() {
         ],
         splitUnnamedArgument: true,
         helpString: `
-            <div>
+            <div data-i18n="Performs a subtraction of the set of values and passes the result down the pipe.">
                 Performs a subtraction of the set of values and passes the result down the pipe.
             </div>
-            <div>
+            <div data-i18n="Can use variable names, or a JSON array consisting of numbers and variables (with quotes).">
                 Can use variable names, or a JSON array consisting of numbers and variables (with quotes).
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/sub i 5</code></pre>
@@ -1812,12 +1813,12 @@ export function registerVariableCommands() {
         ],
         splitUnnamedArgument: true,
         helpString: `
-            <div>
+            <div data-i18n="Performs a division of two values and passes the result down the pipe. Can use variable names.">
                 Performs a division of two values and passes the result down the pipe.
                 Can use variable names.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/div 10 i</code></pre>
@@ -1848,12 +1849,12 @@ export function registerVariableCommands() {
         ],
         splitUnnamedArgument: true,
         helpString: `
-            <div>
+            <div data-i18n="Performs a modulo operation of two values and passes the result down the pipe. Can use variable names.">
                 Performs a modulo operation of two values and passes the result down the pipe.
                 Can use variable names.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/mod i 2</code></pre>
@@ -1884,12 +1885,12 @@ export function registerVariableCommands() {
         ],
         splitUnnamedArgument: true,
         helpString: `
-            <div>
+            <div data-i18n="Performs a power operation of two values and passes the result down the pipe. Can use variable names.">
                 Performs a power operation of two values and passes the result down the pipe.
                 Can use variable names.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/pow i 2</code></pre>
@@ -1912,12 +1913,12 @@ export function registerVariableCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Performs a sine operation of a value and passes the result down the pipe. Can use variable names.">
                 Performs a sine operation of a value and passes the result down the pipe.
                 Can use variable names.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/sin i</code></pre>
@@ -1940,12 +1941,12 @@ export function registerVariableCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Performs a cosine operation of a value and passes the result down the pipe. Can use variable names.">
                 Performs a cosine operation of a value and passes the result down the pipe.
                 Can use variable names.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/cos i</code></pre>
@@ -1969,12 +1970,12 @@ export function registerVariableCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Performs a logarithm operation of a value and passes the result down the pipe. Can use variable names.">
                 Performs a logarithm operation of a value and passes the result down the pipe.
                 Can use variable names.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/log i</code></pre>
@@ -1997,12 +1998,12 @@ export function registerVariableCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Performs an absolute value operation of a value and passes the result down the pipe. Can use variable names.">
                 Performs an absolute value operation of a value and passes the result down the pipe.
                 Can use variable names.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/abs i</code></pre>
@@ -2025,12 +2026,12 @@ export function registerVariableCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Performs a square root operation of a value and passes the result down the pipe. Can use variable names.">
                 Performs a square root operation of a value and passes the result down the pipe.
                 Can use variable names.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/sqrt i</code></pre>
@@ -2053,12 +2054,12 @@ export function registerVariableCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Rounds a value and passes the result down the pipe. Can use variable names.">
                 Rounds a value and passes the result down the pipe.
                 Can use variable names.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/round i</code></pre>
@@ -2084,19 +2085,19 @@ export function registerVariableCommands() {
             <div>
                 Gets the length of a value and passes the result down the pipe.
                 <ul>
-                    <li>
+                    <li data-i18n="For strings, returns the number of characters.">
                         For strings, returns the number of characters.
                     </li>
-                    <li>
+                    <li data-i18n="For lists and dictionaries, returns the number of elements.">
                         For lists and dictionaries, returns the number of elements.
                     </li>
-                    <li>
+                    <li data-i18n="For numbers, returns the number of digits (including the sign and decimal point).">
                         For numbers, returns the number of digits (including the sign and decimal point).
                     </li>
                 </ul>
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/len Lorem ipsum | /echo</code></pre>
@@ -2130,16 +2131,16 @@ export function registerVariableCommands() {
             <div>
                 Sorts a list or dictionary in ascending order and passes the result down the pipe.
                 <ul>
-                    <li>
+                    <li data-i18n="For lists, returns the list sorted by value.">
                         For lists, returns the list sorted by value.
                     </li>
-                    <li>
+                    <li data-i18n="For dictionaries, returns the ordered list of keys after sorting. Setting keysort=false means keys are sorted by associated value.">
                         For dictionaries, returns the ordered list of keys after sorting. Setting keysort=false means keys are sorted by associated value.
                     </li>
                 </ul>
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/sort [5,3,4,1,2] | /echo</code></pre>
@@ -2187,7 +2188,7 @@ export function registerVariableCommands() {
                 Returns a random number between <code>from</code> and <code>to</code> (inclusive).
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/rand</code></pre>
@@ -2255,7 +2256,7 @@ export function registerVariableCommands() {
                 To convert the value to a specific JSON type when using with <code>index</code>, use the <code>as</code> argument.
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/let x foo | /var x foo bar | /var x | /echo</code></pre>
@@ -2297,11 +2298,11 @@ export function registerVariableCommands() {
         splitUnnamedArgument: true,
         splitUnnamedArgumentCount: 1,
         helpString: `
-            <div>
+            <div data-i18n="Declares a new variable in the current scope.">
                 Declares a new variable in the current scope.
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/let x foo bar | /echo {{var::x}}</code></pre>
@@ -2334,11 +2335,11 @@ export function registerVariableCommands() {
         ],
         returns: 'serialized closure as string',
         helpString: `
-            <div>
+            <div data-i18n="Serialize a closure as text that can be stored in global and chat variables.">
                 Serialize a closure as text that can be stored in global and chat variables.
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/closure-serialize {: x=1 /echo x is {{var::x}} and y is {{var::y}} :} |\n/setvar key=myClosure</code></pre>
@@ -2364,11 +2365,11 @@ export function registerVariableCommands() {
         ],
         returns: 'deserialized closure',
         helpString: `
-            <div>
+            <div data-i18n="Deserialize a closure from text.">
                 Deserialize a closure from text.
             </div>
             <div>
-                <strong>Examples:</strong>
+                <strong data-i18n="Examples:">Examples:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/closure-deserialize {{getvar::myClosure}} |\n/let myClosure {{pipe}} |\n/let y bar |\n/:myClosure x=foo</code></pre>

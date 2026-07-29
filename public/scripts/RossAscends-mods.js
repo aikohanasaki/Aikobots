@@ -1,3 +1,4 @@
+import { t, translate } from './i18n.js';
 import { DOMPurify, Bowser } from '../lib.js';
 
 import {
@@ -228,7 +229,7 @@ export async function RA_CountCharTokens() {
         const value = String(input.val());
 
         if (input.length === 0) {
-            counter.text('Invalid input reference');
+            counter.text(translate('Invalid input reference'));
             continue;
         }
 
@@ -336,8 +337,8 @@ function ensureFavoritesCarouselShell() {
         leftArrow.id = 'favorites_carousel_left';
         leftArrow.type = 'button';
         leftArrow.className = 'carousel-arrow';
-        leftArrow.title = 'Scroll left';
-        leftArrow.setAttribute('aria-label', 'Scroll left');
+        leftArrow.title = translate('Scroll left');
+        leftArrow.setAttribute('aria-label', translate('Scroll left'));
         leftArrow.innerHTML = '<i class="fa-solid fa-chevron-left" aria-hidden="true"></i>';
 
         const carousel = document.createElement('div');
@@ -350,8 +351,8 @@ function ensureFavoritesCarouselShell() {
         rightArrow.id = 'favorites_carousel_right';
         rightArrow.type = 'button';
         rightArrow.className = 'carousel-arrow';
-        rightArrow.title = 'Scroll right';
-        rightArrow.setAttribute('aria-label', 'Scroll right');
+        rightArrow.title = translate('Scroll right');
+        rightArrow.setAttribute('aria-label', translate('Scroll right'));
         rightArrow.innerHTML = '<i class="fa-solid fa-chevron-right" aria-hidden="true"></i>';
 
         wrapper.append(leftArrow, carousel, rightArrow);
@@ -681,12 +682,12 @@ function hasUnrestorableComposerContent() {
  */
 async function refreshPageFromPullGesture() {
     if (Popup.util.isPopupOpen() || isGenerating() || hasActiveMessageEditSession()) {
-        toastr.warning('Finish the current operation before refreshing.');
+        toastr.warning(translate('Finish the current operation before refreshing.'));
         return;
     }
 
     if (hasUnrestorableComposerContent()) {
-        toastr.warning('Send or clear the unsaved input or attachment before refreshing.');
+        toastr.warning(translate('Send or clear the unsaved input or attachment before refreshing.'));
         return;
     }
 
@@ -694,17 +695,17 @@ async function refreshPageFromPullGesture() {
         saveUserInput();
     }
 
-    toastr.info('Refreshing...');
+    toastr.info(translate('Refreshing...'));
 
     try {
         const saveResult = await flushDebouncedChatSave();
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            toastr.error('Could not safely refresh because pending chat changes were not saved.');
+            toastr.error(translate('Could not safely refresh because pending chat changes were not saved.'));
             return;
         }
     } catch {
         console.error('[Pull to refresh] Pending chat changes could not be saved.');
-        toastr.error('Could not safely refresh because pending chat changes were not saved.');
+        toastr.error(translate('Could not safely refresh because pending chat changes were not saved.'));
         return;
     }
 
@@ -771,7 +772,7 @@ function initPullToRefresh() {
         const wasArmed = gesture.armed;
         gesture.armed = deltaY >= PULL_TO_REFRESH_THRESHOLD;
         if (gesture.armed && !wasArmed) {
-            toastr.info('Release to refresh', '', { timeOut: 1200, preventDuplicates: true });
+            toastr.info(translate('Release to refresh'), '', { timeOut: 1200, preventDuplicates: true });
         }
     }, { passive: true, capture: true });
 
@@ -1417,7 +1418,7 @@ export function initRossMods() {
                 $('#chat').animate({
                     scrollTop: contextLine.offset().top - $('#chat').offset().top + $('#chat').scrollTop(),
                 }, 300);
-            } else { toastr.warning('Context line not found, send a message first!'); }
+            } else { toastr.warning(translate('Context line not found, send a message first!')); }
             return;
         }
         //ctrl+shift+down to scroll to bottom of chat
@@ -1478,7 +1479,7 @@ export function initRossMods() {
                     doRegenerate();
                 } else {
                     let regenerateWithCtrlEnter = false;
-                    const result = await Popup.show.confirm('Regenerate Message', 'Are you sure you want to regenerate the latest message?', {
+                    const result = await Popup.show.confirm(t`Regenerate Message`, t`Are you sure you want to regenerate the latest message?`, {
                         customInputs: [{ id: 'regenerateWithCtrlEnter', label: 'Don\'t ask again' }],
                         onClose: (popup) => {
                             regenerateWithCtrlEnter = Boolean(popup.inputResults.get('regenerateWithCtrlEnter') ?? false);

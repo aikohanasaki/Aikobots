@@ -31,7 +31,7 @@ import { debounce_timeout } from './constants.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
 import { groups, selected_group } from './group-chats.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { openWorldInfoEditor, world_names } from './world-info.js';
 import { renderTemplateAsync } from './templates.js';
 import { saveMetadataDebounced } from './extensions.js';
@@ -1813,7 +1813,7 @@ async function duplicatePersona(avatarId) {
     const personaName = power_user.personas[avatarId];
 
     if (!personaName) {
-        toastr.warning('Chosen avatar is not a persona', t`Persona Management`);
+        toastr.warning(translate('Chosen avatar is not a persona'), t`Persona Management`);
         return;
     }
 
@@ -1901,12 +1901,12 @@ async function lockPersonaCallback(_args, value) {
  */
 async function setNameCallback({ mode = 'all' }, name) {
     if (!name) {
-        toastr.warning('You must specify a name to change to');
+        toastr.warning(translate('You must specify a name to change to'));
         return '';
     }
 
     if (!['lookup', 'temp', 'all'].includes(mode)) {
-        toastr.warning('Mode must be one of "lookup", "temp" or "all"');
+        toastr.warning(translate('Mode must be one of "lookup", "temp" or "all"'));
         return '';
     }
 
@@ -1920,7 +1920,7 @@ async function setNameCallback({ mode = 'all' }, name) {
             await autoSelectPersona(persona);
             return '';
         } else if (mode === 'lookup') {
-            toastr.warning(`Persona ${name} not found`);
+            toastr.warning(t`Persona ${name} not found`);
             return '';
         }
     }

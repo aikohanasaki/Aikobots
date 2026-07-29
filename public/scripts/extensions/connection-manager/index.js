@@ -12,7 +12,7 @@ import { enumTypes, SlashCommandEnumValue } from '../../slash-commands/SlashComm
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommandScope } from '../../slash-commands/SlashCommandScope.js';
 import { collapseSpaces, getUniqueName, isFalseBoolean, uuidv4, waitUntilCondition } from '../../utils.js';
-import { t } from '../../i18n.js';
+import { t, translate } from '../../i18n.js';
 import { getSecretLabelById } from '../../secrets.js';
 import { checkOpenAIStatus, oai_settings, waitForCurrentOpenAIConnection } from '../../openai.js';
 
@@ -340,12 +340,12 @@ async function createConnectionProfile(forceName = null) {
     }
     name = DOMPurify.sanitize(String(name));
     if (!name) {
-        toastr.error('Name cannot be empty.');
+        toastr.error(translate('Name cannot be empty.'));
         return null;
     }
 
     if (isNameTaken(name) || name === NONE) {
-        toastr.error('A profile with the same name already exists.');
+        toastr.error(translate('A profile with the same name already exists.'));
         return null;
     }
 
@@ -671,7 +671,7 @@ async function renderDetailsContent(detailsContent) {
         await applyConnectionProfile(profile);
         await renderDetailsContent(detailsContent);
         await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, profile.name);
-        toastr.success('Connection profile reloaded', '', { timeOut: 1500 });
+        toastr.success(translate('Connection profile reloaded'), '', { timeOut: 1500 });
     });
 
     const createButton = document.getElementById('create_connection_profile');
@@ -703,7 +703,7 @@ async function renderDetailsContent(detailsContent) {
         saveSettingsDebounced();
         await eventSource.emit(event_types.CONNECTION_PROFILE_UPDATED, oldProfile, profile);
         await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, profile.name);
-        toastr.success('Connection profile updated', '', { timeOut: 1500 });
+        toastr.success(translate('Connection profile updated'), '', { timeOut: 1500 });
     });
 
     const deleteButton = document.getElementById('delete_connection_profile');
@@ -753,12 +753,12 @@ async function renderDetailsContent(detailsContent) {
         }
         newName = DOMPurify.sanitize(String(newName));
         if (!newName) {
-            toastr.error('Name cannot be empty.');
+            toastr.error(translate('Name cannot be empty.'));
             return;
         }
 
         if (profile.name !== newName && extension_settings.connectionManager.profiles.some(p => p.name === newName)) {
-            toastr.error('A profile with the same name already exists.');
+            toastr.error(translate('A profile with the same name already exists.'));
             return;
         }
 
@@ -775,12 +775,12 @@ async function renderDetailsContent(detailsContent) {
             if (saveChanges) {
                 await updateConnectionProfile(profile);
             } else {
-                toastr.info('Press "Update" to record them into the profile.', 'Included settings list updated');
+                toastr.info(translate('Press "Update" to record them into the profile.'), translate('Included settings list updated'));
             }
         }
 
         if (profile.name !== newName) {
-            toastr.success('Connection profile renamed.');
+            toastr.success(translate('Connection profile renamed.'));
             profile.name = newName;
         }
 
@@ -890,7 +890,7 @@ async function renderDetailsContent(detailsContent) {
         ],
         callback: async (_args, name) => {
             if (!name || typeof name !== 'string') {
-                toastr.warning('Please provide a name for the new connection profile.');
+                toastr.warning(translate('Please provide a name for the new connection profile.'));
                 return '';
             }
             const profile = await createConnectionProfile(name);
@@ -914,7 +914,7 @@ async function renderDetailsContent(detailsContent) {
             const selectedProfile = extension_settings.connectionManager.selectedProfile;
             const profile = extension_settings.connectionManager.profiles.find(p => p.id === selectedProfile);
             if (!profile) {
-                toastr.warning('No profile selected.');
+                toastr.warning(translate('No profile selected.'));
                 return '';
             }
             const oldProfile = structuredClone(profile);

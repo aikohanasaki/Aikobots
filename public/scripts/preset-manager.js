@@ -671,11 +671,11 @@ export async function initPresetManager() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Sets a preset by name for the current API. Gets the current preset if no name is provided.">
                 Sets a preset by name for the current API. Gets the current preset if no name is provided.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code>/preset myPreset</code></pre>
@@ -856,8 +856,8 @@ export async function initPresetManager() {
             }
 
             const confirmText = !presetManager.isAdvancedFormatting()
-                ? t`Resetting a <b>default preset</b> will restore the default settings.`
-                : t`Resetting a <b>default template</b> will restore the default settings.`;
+                ? t`Resetting a <b data-i18n="default preset">default preset</b> will restore the default settings.`
+                : t`Resetting a <b data-i18n="default template">default template</b> will restore the default settings.`;
             const confirm = await Popup.show.confirm(t`Are you sure?`, confirmText);
             if (!confirm) {
                 return;
@@ -871,8 +871,8 @@ export async function initPresetManager() {
             toastr.success(successToast);
         } else {
             const confirmText = !presetManager.isAdvancedFormatting()
-                ? t`Resetting a <b>custom preset</b> will restore to the last saved state.`
-                : t`Resetting a <b>custom template</b> will restore to the last saved state.`;
+                ? t`Resetting a <b data-i18n="custom preset">custom preset</b> will restore to the last saved state.`
+                : t`Resetting a <b data-i18n="custom template">custom template</b> will restore to the last saved state.`;
             const confirm = await Popup.show.confirm(t`Are you sure?`, confirmText);
             if (!confirm) {
                 return;

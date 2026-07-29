@@ -1,3 +1,4 @@
+import { t, translate } from './i18n.js';
 import { getRequestHeaders, messageFormatting, refreshCsrfToken, sanitizeMessageHtml } from '../script.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { renderTemplateAsync } from './templates.js';
@@ -201,7 +202,7 @@ function renderMessageThread(container, messages = [], currentHandle = '') {
     container.empty();
 
     if (!messages.length) {
-        container.append('<div class="userMessagesThreadEmpty">No messages yet.</div>');
+        container.append('<div class="userMessagesThreadEmpty" data-i18n="No messages yet.">No messages yet.</div>');
         return;
     }
 
@@ -424,7 +425,7 @@ async function submitCharacterSubmission({
         return data;
     } catch (error) {
         console.error('Error submitting character:', error);
-        toastr.error(error.message || 'Unknown error', 'Failed to submit character');
+        toastr.error(error.message || 'Unknown error', translate('Failed to submit character'));
         return null;
     }
 }
@@ -450,7 +451,7 @@ async function reviewCharacterSubmission(payload) {
         return data;
     } catch (error) {
         console.error('Error reviewing submission:', error);
-        toastr.error(error.message || 'Unknown error', 'Admin distribution failed');
+        toastr.error(error.message || 'Unknown error', translate('Admin distribution failed'));
         return null;
     }
 }
@@ -516,7 +517,7 @@ async function cleanupCharacterSubmission(payload) {
         return data;
     } catch (error) {
         console.error('Error cleaning up submission:', error);
-        toastr.error(error.message || 'Unknown error', 'Submission cleanup failed');
+        toastr.error(error.message || 'Unknown error', translate('Submission cleanup failed'));
         return null;
     }
 }
@@ -601,18 +602,18 @@ function getSubmissionDistributionSettings(distributionMode) {
 function buildSubmissionCard(submission, { admin = false, onReview = null } = {}) {
     const card = $(`
         <div class="submission_card flex-container flexGap10 alignItemsFlexStart">
-            <img class="submission_preview" alt="Character preview">
+            <img class="submission_preview" alt="Character preview" data-i18n="[alt]Character preview">
             <div class="flex1 flex-container flexFlowColumn flexNoGap">
                 <div class="flex-container alignItemsCenter flexGap10">
                     <h3 class="submission_name margin0"></h3>
                     <small class="submission_status opacity50p"></small>
                 </div>
                 <div class="submission_meta">
-                    <div><span>Owner:</span> <span class="submission_owner"></span></div>
-                    <div><span>Submitted:</span> <span class="submission_submitted"></span></div>
-                    <div class="submission_reviewed_row"><span>Admin Action:</span> <span class="submission_reviewed"></span></div>
-                    <div class="submission_publish_row"><span>Published As:</span> <span class="submission_published"></span></div>
-                    <div class="submission_targets_row"><span>Targets:</span> <span class="submission_targets"></span></div>
+                    <div><span data-i18n="Owner:">Owner:</span> <span class="submission_owner"></span></div>
+                    <div><span data-i18n="Submitted:">Submitted:</span> <span class="submission_submitted"></span></div>
+                    <div class="submission_reviewed_row"><span data-i18n="Admin Action:">Admin Action:</span> <span class="submission_reviewed"></span></div>
+                    <div class="submission_publish_row"><span data-i18n="Published As:">Published As:</span> <span class="submission_published"></span></div>
+                    <div class="submission_targets_row"><span data-i18n="Targets:">Targets:</span> <span class="submission_targets"></span></div>
                 </div>
                 <div class="submission_notes"></div>
                 <div class="submission_tags opacity50p"></div>
@@ -647,13 +648,13 @@ function buildSubmissionCard(submission, { admin = false, onReview = null } = {}
         .append(Boolean(primaryNote)
             ? $('<div class="submission_review_note"></div>').text(admin ? `Inbox reason: ${primaryNote}` : primaryNote)
             : '')
-        .append(Boolean(submission.reviewNote) ? $('<div class="submission_review_note opacity50p"></div>').text(`Admin note: ${submission.reviewNote}`) : '');
+        .append(Boolean(submission.reviewNote) ? $('<div class="submission_review_note opacity50p"></div>').text(t`Admin note: ${submission.reviewNote}`) : '');
     card.find('.submission_tags').toggle(Array.isArray(submission.tags) && submission.tags.length > 0).text(Array.isArray(submission.tags) ? submission.tags.join(', ') : '');
 
     if (admin && typeof onReview === 'function') {
         const actionButton = submission.status === 'pending' && submission.hasStoredCard !== false
-            ? $('<div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-gavel"></i><span>Admin Distribution</span></div>')
-            : $('<div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-box-archive"></i><span>Manage</span></div>');
+            ? $('<div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-gavel"></i><span data-i18n="Admin Distribution">Admin Distribution</span></div>')
+            : $('<div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-box-archive"></i><span data-i18n="Manage">Manage</span></div>');
         actionButton.on('click', () => onReview(submission));
         card.find('.submission_actions').append(actionButton);
     }
@@ -673,7 +674,7 @@ function renderSubmissionCards(container, submissions, { admin = false, onReview
     container.empty();
 
     if (!submissions.length) {
-        container.append('<div class="opacity50p">No submissions found.</div>');
+        container.append('<div class="opacity50p" data-i18n="No submissions found.">No submissions found.</div>');
         return;
     }
 
@@ -689,12 +690,12 @@ function renderSubmissionCards(container, submissions, { admin = false, onReview
 async function openMySubmissionsPopup() {
     const submissions = await getCharacterSubmissions();
     const container = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
-    container.append('<h3 class="margin0">My Submissions</h3>');
-    container.append('<div class="opacity50p">Approved entries in this list are already published.</div>');
+    container.append('<h3 class="margin0" data-i18n="My Submissions">My Submissions</h3>');
+    container.append('<div class="opacity50p" data-i18n="Approved entries in this list are already published.">Approved entries in this list are already published.</div>');
     const list = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
     container.append(list);
     renderSubmissionCards(list, submissions);
-    callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: 'Close', wide: true, allowVerticalScrolling: true });
+    callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: translate('Close'), wide: true, allowVerticalScrolling: true });
 }
 
 /**
@@ -705,7 +706,7 @@ async function openMySubmissionsPopup() {
 export async function submitSelectedCharacterForReview(character) {
     const avatar = String(character?.avatar || '').trim();
     if (!avatar || avatar === 'none') {
-        toastr.error('Choose a saved character first.', 'Submission unavailable');
+        toastr.error(translate('Choose a saved character first.'), translate('Submission unavailable'));
         return null;
     }
 
@@ -713,35 +714,35 @@ export async function submitSelectedCharacterForReview(character) {
     const distributionDefaults = await getCharacterSubmissionDistributionDefaults(avatar);
     let requestedDistributionMode = distributionDefaults.requestedDistributionMode;
     const container = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
-    container.append('<h3 class="margin0">Submit Character</h3>');
+    container.append('<h3 class="margin0" data-i18n="Submit Character">Submit Character</h3>');
     const text = $('<div></div>');
     text.append(document.createTextNode('Choose the requested admin distribution for '));
     text.append($('<strong></strong>').text(displayName));
     text.append(document.createTextNode('.'));
     container.append(text);
-    container.append('<div class="opacity50p">Admins can edit these lists or approve them as-is.</div>');
+    container.append('<div class="opacity50p" data-i18n="Admins can edit these lists or approve them as-is.">Admins can edit these lists or approve them as-is.</div>');
     container.append($(`
         <label class="flex-container flexFlowColumn flexNoGap">
-            <span>Admin Distribution</span>
+            <span data-i18n="Admin Distribution">Admin Distribution</span>
             <select class="text_pole submission-distribution-mode">
-                <option value="${SUBMISSION_DISTRIBUTION_MODES.WHITELIST}">Whitelist</option>
-                <option value="${SUBMISSION_DISTRIBUTION_MODES.GLOBAL}">Global</option>
-                <option value="${SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST}">Global With Blacklist</option>
+                <option value="${SUBMISSION_DISTRIBUTION_MODES.WHITELIST}" data-i18n="Whitelist">Whitelist</option>
+                <option value="${SUBMISSION_DISTRIBUTION_MODES.GLOBAL}" data-i18n="Global">Global</option>
+                <option value="${SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST}" data-i18n="Global With Blacklist">Global With Blacklist</option>
             </select>
         </label>
     `));
     container.append(`
         <label class="submission-whitelist-targets-block flex-container flexFlowColumn flexNoGap">
-            <span>Whitelisted Usernames</span>
-            <small class="opacity50p">Type in the usernames separated by a comma.</small>
-            <textarea class="text_pole submission-whitelist-targets" rows="3" placeholder="Comma or newline separated usernames"></textarea>
+            <span data-i18n="Whitelisted Usernames">Whitelisted Usernames</span>
+            <small class="opacity50p" data-i18n="Type in the usernames separated by a comma.">Type in the usernames separated by a comma.</small>
+            <textarea class="text_pole submission-whitelist-targets" rows="3" placeholder="Comma or newline separated usernames" data-i18n="[placeholder]Comma or newline separated usernames"></textarea>
         </label>
     `);
     container.append(`
         <label class="submission-blacklist-targets-block flex-container flexFlowColumn flexNoGap">
-            <span>Blacklisted Usernames</span>
-            <small class="opacity50p">Type in the usernames separated by a comma.</small>
-            <textarea class="text_pole submission-blacklist-targets" rows="3" placeholder="Comma or newline separated usernames"></textarea>
+            <span data-i18n="Blacklisted Usernames">Blacklisted Usernames</span>
+            <small class="opacity50p" data-i18n="Type in the usernames separated by a comma.">Type in the usernames separated by a comma.</small>
+            <textarea class="text_pole submission-blacklist-targets" rows="3" placeholder="Comma or newline separated usernames" data-i18n="[placeholder]Comma or newline separated usernames"></textarea>
         </label>
     `);
     container.find('.submission-distribution-mode').val(requestedDistributionMode).on('change', function () {
@@ -765,8 +766,8 @@ export async function submitSelectedCharacterForReview(character) {
     syncSubmissionDistributionBlocks();
 
     const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
-        okButton: 'Submit',
-        cancelButton: 'Cancel',
+        okButton: translate('Submit'),
+        cancelButton: translate('Cancel'),
         wide: true,
         allowVerticalScrolling: true,
     });
@@ -781,12 +782,12 @@ export async function submitSelectedCharacterForReview(character) {
         ? parseDistributionHandles(container.find('.submission-blacklist-targets').val())
         : [];
     if (requestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.WHITELIST && requestedTargetHandles.length === 0) {
-        toastr.error('Choose at least one whitelisted user.', 'Submission unavailable');
+        toastr.error(translate('Choose at least one whitelisted user.'), translate('Submission unavailable'));
         return null;
     }
 
     if (requestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST && requestedBlacklistHandles.length === 0) {
-        toastr.error('Choose at least one blacklisted user.', 'Submission unavailable');
+        toastr.error(translate('Choose at least one blacklisted user.'), translate('Submission unavailable'));
         return null;
     }
 
@@ -804,9 +805,9 @@ export async function submitSelectedCharacterForReview(character) {
         const skippedNotice = Array.isArray(submission.skippedHandles) && submission.skippedHandles.length > 0
             ? ` Skipped: ${submission.skippedHandles.join(', ')}`
             : '';
-        toastr.success(`Published ${submission.publishedFilename || submission.submittedFilename}${skippedNotice}`, 'Character auto-approved');
+        toastr.success(t`Published ${submission.publishedFilename || submission.submittedFilename}${skippedNotice}`, translate('Character auto-approved'));
     } else {
-        toastr.success(`Submitted ${submission.submittedFilename}`, 'Character submitted');
+        toastr.success(t`Submitted ${submission.submittedFilename}`, translate('Character submitted'));
     }
     return submission;
 }
@@ -846,7 +847,7 @@ async function openSubmissionReviewPopup(submission, callback) {
     const container = $(`
         <div class="flex-container flexFlowColumn flexGap10">
             <div class="flex-container flexGap10 alignItemsFlexStart">
-                <img class="submission_preview" alt="Character preview">
+                <img class="submission_preview" alt="Character preview" data-i18n="[alt]Character preview">
                 <div class="flex1">
                     <h3 class="margin0 submission-title"></h3>
                     <div class="opacity50p">Owner: <span class="submission-owner"></span></div>
@@ -855,41 +856,41 @@ async function openSubmissionReviewPopup(submission, callback) {
                 </div>
             </div>
             <label class="flex-container flexFlowColumn flexNoGap review-publish-mode-block">
-                <span>Publish Mode</span>
+                <span data-i18n="Publish Mode">Publish Mode</span>
                 <select class="text_pole review-publish-mode">
-                    <option value="selected">Selected Users</option>
-                    <option value="global">Global</option>
+                    <option value="selected" data-i18n="Selected Users">Selected Users</option>
+                    <option value="global" data-i18n="Global">Global</option>
                 </select>
             </label>
             <label class="flex-container flexFlowColumn flexNoGap review-published-filename-block">
-                <span>Published Filename</span>
+                <span data-i18n="Published Filename">Published Filename</span>
                 <input class="text_pole review-published-filename" type="text">
             </label>
             <label class="review-apply-blacklist-block flex-container alignItemsCenter flexGap10">
                 <input type="checkbox" class="review-apply-blacklist">
-                <span>Apply admin blacklist</span>
+                <span data-i18n="Apply admin blacklist">Apply admin blacklist</span>
             </label>
             <div class="review-blacklist-targets-block flex-container flexFlowColumn flexGap5">
-                <span>Blacklisted Usernames</span>
-                <small class="opacity50p review-blacklist-help">Type in the usernames separated by a comma.</small>
-                <textarea class="text_pole review-blacklist-targets" rows="3" placeholder="Comma or newline separated usernames"></textarea>
+                <span data-i18n="Blacklisted Usernames">Blacklisted Usernames</span>
+                <small class="opacity50p review-blacklist-help" data-i18n="Type in the usernames separated by a comma.">Type in the usernames separated by a comma.</small>
+                <textarea class="text_pole review-blacklist-targets" rows="3" placeholder="Comma or newline separated usernames" data-i18n="[placeholder]Comma or newline separated usernames"></textarea>
             </div>
             <div class="review-user-blacklist-targets-block flex-container flexFlowColumn flexGap5">
-                <span>User-Blacklisted Usernames</span>
-                <small class="opacity50p">Self-enrolled opt-outs are always enforced and cannot be edited here.</small>
+                <span data-i18n="User-Blacklisted Usernames">User-Blacklisted Usernames</span>
+                <small class="opacity50p" data-i18n="Self-enrolled opt-outs are always enforced and cannot be edited here.">Self-enrolled opt-outs are always enforced and cannot be edited here.</small>
                 <textarea class="text_pole review-user-blacklist-targets" rows="3" readonly></textarea>
             </div>
             <div class="review-targets-block flex-container flexFlowColumn flexGap5">
-                <span>Recipient Usernames</span>
-                <small class="opacity50p">Type in the usernames separated by a comma.</small>
-                <textarea class="text_pole review-targets" rows="3" placeholder="Comma or newline separated usernames"></textarea>
+                <span data-i18n="Recipient Usernames">Recipient Usernames</span>
+                <small class="opacity50p" data-i18n="Type in the usernames separated by a comma.">Type in the usernames separated by a comma.</small>
+                <textarea class="text_pole review-targets" rows="3" placeholder="Comma or newline separated usernames" data-i18n="[placeholder]Comma or newline separated usernames"></textarea>
             </div>
             <label class="review-persist-whitelist-block flex-container alignItemsCenter flexGap10">
                 <input type="checkbox" class="review-persist-whitelist">
-                <span>Save whitelist for future selected pushes</span>
+                <span data-i18n="Save whitelist for future selected pushes">Save whitelist for future selected pushes</span>
             </label>
             <label class="flex-container flexFlowColumn flexNoGap">
-                <span>Admin Note</span>
+                <span data-i18n="Admin Note">Admin Note</span>
                 <textarea class="text_pole review-note" rows="3"></textarea>
             </label>
         </div>
@@ -938,7 +939,7 @@ async function openSubmissionReviewPopup(submission, callback) {
             container.find('.review-persist-whitelist').prop('checked', persistWhitelist);
             container.find('.review-blacklist-targets').val(formatDistributionHandles(applyBlacklist ? mergedBlacklistHandles : []));
             container.find('.review-targets').val(formatDistributionHandles(initialTargetHandles));
-            container.find('.review-blacklist-help').text('Type in admin-managed blacklisted usernames separated by a comma.');
+            container.find('.review-blacklist-help').text(translate('Type in admin-managed blacklisted usernames separated by a comma.'));
             syncPolicyBlocks();
             return;
         }
@@ -948,7 +949,7 @@ async function openSubmissionReviewPopup(submission, callback) {
         container.find('.review-apply-blacklist').prop('checked', applyBlacklist);
         container.find('.review-persist-whitelist').prop('checked', persistWhitelist);
         container.find('.review-blacklist-targets').val(formatDistributionHandles(applyBlacklist ? policy.adminBlacklistHandles : []));
-        container.find('.review-blacklist-help').text('Type in admin-managed blacklisted usernames separated by a comma.');
+        container.find('.review-blacklist-help').text(translate('Type in admin-managed blacklisted usernames separated by a comma.'));
 
         if (policy.hasWhitelist) {
             container.find('.review-targets').val(formatDistributionHandles(policy.whitelistHandles));
@@ -998,23 +999,23 @@ async function openSubmissionReviewPopup(submission, callback) {
     await loadPolicyForCurrentFilename({ overwriteRecipients: true });
 
     const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
-        okButton: canApprove ? 'Approve & Distribute' : false,
-        cancelButton: 'Cancel',
+        okButton: canApprove ? translate('Approve & Distribute') : false,
+        cancelButton: translate('Cancel'),
         wide: true,
         allowVerticalScrolling: true,
         customButtons: [
             ...(isPending ? [{
-                text: 'Reject',
+                text: translate('Reject'),
                 result: REVIEW_POPUP_RESULT_REJECT,
                 classes: ['warning'],
             }] : []),
             {
-                text: 'Delete Stored Asset',
+                text: translate('Delete Stored Asset'),
                 result: REVIEW_POPUP_RESULT_DELETE_ASSET,
                 classes: ['warning'],
             },
             {
-                text: 'Delete Submission',
+                text: translate('Delete Submission'),
                 result: REVIEW_POPUP_RESULT_DELETE_ALL,
                 classes: ['warning'],
             },
@@ -1034,7 +1035,7 @@ async function openSubmissionReviewPopup(submission, callback) {
         });
 
         if (rejected) {
-            toastr.success('Submission rejected', 'Admin distribution updated');
+            toastr.success(translate('Submission rejected'), translate('Admin distribution updated'));
             callback();
         }
         return;
@@ -1043,13 +1044,13 @@ async function openSubmissionReviewPopup(submission, callback) {
     if (result === REVIEW_POPUP_RESULT_DELETE_ASSET || result === REVIEW_POPUP_RESULT_DELETE_ALL) {
         const deleteMode = result === REVIEW_POPUP_RESULT_DELETE_ASSET ? 'asset' : 'all';
         const confirm = await Popup.show.confirm(
-            deleteMode === 'asset' ? 'Delete Stored Asset' : 'Delete Submission',
+            translate(deleteMode === 'asset' ? 'Delete Stored Asset' : 'Delete Submission'),
             deleteMode === 'asset'
-                ? 'Delete only the stored submission PNG copy? The user source card will not be touched.'
-                : 'Delete this submission record and its stored PNG copy? This cannot be undone.',
+                ? translate('Delete only the stored submission PNG copy? The user source card will not be touched.')
+                : translate('Delete this submission record and its stored PNG copy? This cannot be undone.'),
             {
-                okButton: deleteMode === 'asset' ? 'Delete Asset' : 'Delete Submission',
-                cancelButton: 'Cancel',
+                okButton: translate(deleteMode === 'asset' ? 'Delete Asset' : 'Delete Submission'),
+                cancelButton: translate('Cancel'),
             },
         );
 
@@ -1064,8 +1065,8 @@ async function openSubmissionReviewPopup(submission, callback) {
 
         if (cleaned) {
             toastr.success(
-                deleteMode === 'asset' ? 'Stored submission asset deleted' : 'Submission deleted',
-                'Submission cleanup complete',
+                deleteMode === 'asset' ? translate('Stored submission asset deleted') : translate('Submission deleted'),
+                translate('Submission cleanup complete'),
             );
             callback();
         }
@@ -1077,7 +1078,7 @@ async function openSubmissionReviewPopup(submission, callback) {
         ? parseDistributionHandles(container.find('.review-blacklist-targets').val())
         : [];
     if (publishMode === 'selected' && targetHandles.length === 0) {
-        toastr.error('Choose at least one recipient.', 'Admin distribution cancelled');
+        toastr.error(translate('Choose at least one recipient.'), translate('Admin distribution cancelled'));
         return;
     }
 
@@ -1098,7 +1099,7 @@ async function openSubmissionReviewPopup(submission, callback) {
         const skippedNotice = Array.isArray(approved.skippedHandles) && approved.skippedHandles.length > 0
             ? ` Skipped: ${approved.skippedHandles.join(', ')}`
             : '';
-        toastr.success(`Published ${approved.publishedFilename || approved.characterName}${skippedNotice}`, 'Admin distribution approved');
+        toastr.success(t`Published ${approved.publishedFilename || approved.characterName}${skippedNotice}`, translate('Admin distribution approved'));
         callback();
     }
 }
@@ -1119,7 +1120,7 @@ async function enableUser(handle, callback) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to enable user');
+            toastr.error(data.error || 'Unknown error', translate('Failed to enable user'));
             throw new Error('Failed to enable user');
         }
 
@@ -1139,7 +1140,7 @@ async function disableUser(handle, callback) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data?.error || 'Unknown error', 'Failed to disable user');
+            toastr.error(data?.error || 'Unknown error', translate('Failed to disable user'));
             throw new Error('Failed to disable user');
         }
 
@@ -1165,7 +1166,7 @@ async function promoteUser(handle, callback) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to promote user');
+            toastr.error(data.error || 'Unknown error', translate('Failed to promote user'));
             throw new Error('Failed to promote user');
         }
 
@@ -1190,7 +1191,7 @@ async function demoteUser(handle, callback) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to demote user');
+            toastr.error(data.error || 'Unknown error', translate('Failed to demote user'));
             throw new Error('Failed to demote user');
         }
 
@@ -1217,7 +1218,7 @@ async function createUser(form, callback) {
     }
 
     if (errors.length) {
-        toastr.error(errors.join(', '), 'Failed to create user');
+        toastr.error(errors.join(', '), translate('Failed to create user'));
         return;
     }
 
@@ -1241,7 +1242,7 @@ async function createUser(form, callback) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to create user');
+            toastr.error(data.error || 'Unknown error', translate('Failed to create user'));
             throw new Error('Failed to create user');
         }
 
@@ -1260,7 +1261,7 @@ async function createUser(form, callback) {
  */
 async function backupUserData(handle, callback) {
     try {
-        toastr.info('Please wait for the download to start.', 'Backup Requested');
+        toastr.info(translate('Please wait for the download to start.'), translate('Backup Requested'));
         const response = await fetch('/api/users/backup', {
             method: 'POST',
             headers: getRequestHeaders(),
@@ -1269,7 +1270,7 @@ async function backupUserData(handle, callback) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to backup user data');
+            toastr.error(data.error || 'Unknown error', translate('Failed to backup user data'));
             throw new Error('Failed to backup user data');
         }
 
@@ -1310,13 +1311,13 @@ async function changePassword(handle, callback) {
         template.find('input[name="confirm"]').on('input', function () {
             confirmPassword = String($(this).val());
         });
-        const result = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { okButton: 'Change', cancelButton: 'Cancel', wide: false, large: false });
+        const result = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { okButton: translate('Change'), cancelButton: translate('Cancel'), wide: false, large: false });
         if (result === POPUP_RESULT.CANCELLED || result === POPUP_RESULT.NEGATIVE) {
             throw new Error('Change password cancelled');
         }
 
         if (newPassword !== confirmPassword) {
-            toastr.error('Passwords do not match', 'Failed to change password');
+            toastr.error(translate('Passwords do not match'), translate('Failed to change password'));
             throw new Error('Passwords do not match');
         }
 
@@ -1328,11 +1329,11 @@ async function changePassword(handle, callback) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to change password');
+            toastr.error(data.error || 'Unknown error', translate('Failed to change password'));
             throw new Error('Failed to change password');
         }
 
-        toastr.success('Password changed successfully', 'Password Changed');
+        toastr.success(translate('Password changed successfully'), translate('Password Changed'));
         callback();
     }
     catch (error) {
@@ -1348,7 +1349,7 @@ async function changePassword(handle, callback) {
 async function deleteUser(handle, callback) {
     try {
         if (handle === currentUser.handle) {
-            toastr.error('Cannot delete yourself', 'Failed to delete user');
+            toastr.error(translate('Cannot delete yourself'), translate('Failed to delete user'));
             throw new Error('Cannot delete yourself');
         }
 
@@ -1364,14 +1365,14 @@ async function deleteUser(handle, callback) {
             confirmHandle = String($(this).val());
         });
 
-        const result = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { okButton: 'Delete', cancelButton: 'Cancel', wide: false, large: false });
+        const result = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { okButton: translate('Delete'), cancelButton: translate('Cancel'), wide: false, large: false });
 
         if (result !== POPUP_RESULT.AFFIRMATIVE) {
             throw new Error('Delete user cancelled');
         }
 
         if (handle !== confirmHandle) {
-            toastr.error('Handles do not match', 'Failed to delete user');
+            toastr.error(translate('Handles do not match'), translate('Failed to delete user'));
             throw new Error('Handles do not match');
         }
 
@@ -1383,11 +1384,11 @@ async function deleteUser(handle, callback) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to delete user');
+            toastr.error(data.error || 'Unknown error', translate('Failed to delete user'));
             throw new Error('Failed to delete user');
         }
 
-        toastr.success('User deleted successfully', 'User Deleted');
+        toastr.success(translate('User deleted successfully'), translate('User Deleted'));
         callback();
     } catch (error) {
         console.error('Error deleting user:', error);
@@ -1406,7 +1407,7 @@ async function resetSettings(handle, callback) {
         template.find('input[name="password"]').on('input', function () {
             password = String($(this).val());
         });
-        const result = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { okButton: 'Reset', cancelButton: 'Cancel', wide: false, large: false });
+        const result = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { okButton: translate('Reset'), cancelButton: translate('Cancel'), wide: false, large: false });
 
         if (result !== POPUP_RESULT.AFFIRMATIVE) {
             throw new Error('Reset settings cancelled');
@@ -1420,11 +1421,11 @@ async function resetSettings(handle, callback) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to reset settings');
+            toastr.error(data.error || 'Unknown error', translate('Failed to reset settings'));
             throw new Error('Failed to reset settings');
         }
 
-        toastr.success('Settings reset successfully', 'Settings Reset');
+        toastr.success(translate('Settings reset successfully'), translate('Settings Reset'));
         callback();
     } catch (error) {
         console.error('Error resetting settings:', error);
@@ -1440,7 +1441,7 @@ async function resetSettings(handle, callback) {
 async function changeName(handle, name, callback) {
     try {
         const template = $(await renderTemplateAsync('changeName'));
-        const result = await callGenericPopup(template, POPUP_TYPE.INPUT, name, { okButton: 'Change', cancelButton: 'Cancel', wide: false, large: false });
+        const result = await callGenericPopup(template, POPUP_TYPE.INPUT, name, { okButton: translate('Change'), cancelButton: translate('Cancel'), wide: false, large: false });
 
         if (!result) {
             throw new Error('Change name cancelled');
@@ -1456,11 +1457,11 @@ async function changeName(handle, name, callback) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to change name');
+            toastr.error(data.error || 'Unknown error', translate('Failed to change name'));
             throw new Error('Failed to change name');
         }
 
-        toastr.success('Name changed successfully', 'Name Changed');
+        toastr.success(translate('Name changed successfully'), translate('Name Changed'));
         callback();
 
     } catch (error) {
@@ -1476,10 +1477,10 @@ async function changeName(handle, name, callback) {
 async function restoreSnapshot(name, callback) {
     try {
         const confirm = await callGenericPopup(
-            `Are you sure you want to restore the settings from "${name}"?`,
+            t`Are you sure you want to restore the settings from "${name}"?`,
             POPUP_TYPE.CONFIRM,
             '',
-            { okButton: 'Restore', cancelButton: 'Cancel', wide: false, large: false },
+            { okButton: translate('Restore'), cancelButton: translate('Cancel'), wide: false, large: false },
         );
 
         if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
@@ -1494,7 +1495,7 @@ async function restoreSnapshot(name, callback) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to restore snapshot');
+            toastr.error(data.error || 'Unknown error', translate('Failed to restore snapshot'));
             throw new Error('Failed to restore snapshot');
         }
 
@@ -1520,7 +1521,7 @@ async function loadSnapshotContent(name) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to load snapshot content');
+            toastr.error(data.error || 'Unknown error', translate('Failed to load snapshot content'));
             throw new Error('Failed to load snapshot content');
         }
 
@@ -1547,7 +1548,7 @@ async function getSnapshots() {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to get settings snapshots');
+            toastr.error(data.error || 'Unknown error', translate('Failed to get settings snapshots'));
             throw new Error('Failed to get settings snapshots');
         }
 
@@ -1573,11 +1574,11 @@ async function makeSnapshot(callback) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to make snapshot');
+            toastr.error(data.error || 'Unknown error', translate('Failed to make snapshot'));
             throw new Error('Failed to make snapshot');
         }
 
-        toastr.success('Snapshot created successfully', 'Snapshot Created');
+        toastr.success(translate('Snapshot created successfully'), translate('Snapshot Created'));
         callback();
     } catch (error) {
         console.error('Error making snapshot:', error);
@@ -1614,7 +1615,7 @@ async function viewSettingsSnapshots() {
         }
     }
 
-    callGenericPopup(template, POPUP_TYPE.TEXT, '', { okButton: 'Close', wide: false, large: false, allowVerticalScrolling: true });
+    callGenericPopup(template, POPUP_TYPE.TEXT, '', { okButton: translate('Close'), wide: false, large: false, allowVerticalScrolling: true });
     template.find('.makeSnapshotButton').on('click', () => makeSnapshot(renderSnapshots));
     renderSnapshots();
 }
@@ -1632,7 +1633,7 @@ async function resetEverything(callback) {
 
         if (!step1Response.ok) {
             const data = await step1Response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to reset');
+            toastr.error(data.error || 'Unknown error', translate('Failed to reset'));
             throw new Error('Failed to reset everything');
         }
 
@@ -1650,7 +1651,7 @@ async function resetEverything(callback) {
             template,
             POPUP_TYPE.CONFIRM,
             '',
-            { okButton: 'Reset', cancelButton: 'Cancel', wide: false, large: false },
+            { okButton: translate('Reset'), cancelButton: translate('Cancel'), wide: false, large: false },
         );
 
         if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
@@ -1665,11 +1666,11 @@ async function resetEverything(callback) {
 
         if (!step2Response.ok) {
             const data = await step2Response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to reset');
+            toastr.error(data.error || 'Unknown error', translate('Failed to reset'));
             throw new Error('Failed to reset everything');
         }
 
-        toastr.success('Everything reset successfully', 'Reset Everything');
+        toastr.success(translate('Everything reset successfully'), translate('Reset Everything'));
         callback();
     } catch (error) {
         console.error('Error resetting everything:', error);
@@ -1733,7 +1734,7 @@ async function openUserProfile() {
     }
 
     const popupOptions = {
-        okButton: 'Close',
+        okButton: translate('Close'),
         wide: false,
         large: false,
         allowVerticalScrolling: true,
@@ -1762,7 +1763,7 @@ async function openUserMessagesPopup() {
             await refreshMessagesSummary();
         } catch (error) {
             console.error('Error loading user messages:', error);
-            toastr.error(error.message || 'Unknown error', 'Failed to load messages');
+            toastr.error(error.message || 'Unknown error', translate('Failed to load messages'));
         }
     }
 
@@ -1781,7 +1782,7 @@ async function openUserMessagesPopup() {
             await loadThread();
         } catch (error) {
             console.error('Error sending user message:', error);
-            toastr.error(error.message || 'Unknown error', 'Failed to send message');
+            toastr.error(error.message || 'Unknown error', translate('Failed to send message'));
         } finally {
             isSendingMessage = false;
             setComposerSendingState(false);
@@ -1797,7 +1798,7 @@ async function openUserMessagesPopup() {
     });
 
     callGenericPopup(template, POPUP_TYPE.TEXT, '', {
-        okButton: 'Close',
+        okButton: translate('Close'),
         wide: true,
         large: false,
         allowVerticalScrolling: true,
@@ -1815,7 +1816,7 @@ async function openUserMessagesPopup() {
  */
 async function cropAndUploadAvatar(handle, file) {
     const dataUrl = await getBase64Async(await ensureImageFormatSupported(file));
-    const croppedImage = await callGenericPopup('Set the crop position of the avatar image', POPUP_TYPE.CROP, '', { cropAspect: 1, cropImage: dataUrl });
+    const croppedImage = await callGenericPopup(translate('Set the crop position of the avatar image'), POPUP_TYPE.CROP, '', { cropAspect: 1, cropImage: dataUrl });
     if (!croppedImage) {
         return;
     }
@@ -1841,7 +1842,7 @@ async function changeAvatar(handle, avatar) {
 
         if (!response.ok) {
             const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to change avatar');
+            toastr.error(data.error || 'Unknown error', translate('Failed to change avatar'));
             return;
         }
     } catch (error) {
@@ -2012,7 +2013,7 @@ async function openAdminPanel(initialTab = 'usersList') {
         select.empty();
 
         if (!pushBotSourceCharacters.length) {
-            select.append($('<option></option>').val('').text('No bots available'));
+            select.append($('<option></option>').val('').text(translate('No bots available')));
             select.prop('disabled', true);
             template.find('.pushBotPublishedFilename').val('');
             syncPushBotBlocks();
@@ -2047,7 +2048,7 @@ async function openAdminPanel(initialTab = 'usersList') {
             populatePushBotCharacters();
         } catch (error) {
             console.error('Error loading source bots:', error);
-            toastr.error(error.message || 'Unknown error', 'Failed to load source bots');
+            toastr.error(error.message || 'Unknown error', translate('Failed to load source bots'));
         }
     }
 
@@ -2056,7 +2057,7 @@ async function openAdminPanel(initialTab = 'usersList') {
         const sourceSelect = template.find('.pushBotSourceUser');
         const currentSource = String(sourceSelect.val() || '').trim();
         sourceSelect.empty()
-            .append($('<option></option>').val('').text('Loading users...'))
+            .append($('<option></option>').val('').text(translate('Loading users...')))
             .prop('disabled', true);
         pushBotSourceCharacters = [];
         populatePushBotCharacters();
@@ -2066,7 +2067,7 @@ async function openAdminPanel(initialTab = 'usersList') {
         sourceSelect.empty();
 
         if (!enabledUsers.length) {
-            sourceSelect.append($('<option></option>').val('').text('No enabled users available'));
+            sourceSelect.append($('<option></option>').val('').text(translate('No enabled users available')));
             sourceSelect.prop('disabled', true);
             return;
         }
@@ -2130,11 +2131,11 @@ async function openAdminPanel(initialTab = 'usersList') {
 
     async function submitPushBotBatch({ sourceOwnerHandle, selectedCharacters }) {
         const confirm = await Popup.show.confirm(
-            'Push Bots',
-            `Push ${selectedCharacters.length} bots from ${sourceOwnerHandle}? Each bot will reuse its last push settings. Existing bots with the same published filenames will be overwritten.`,
+            translate('Push Bots'),
+            t`Push ${selectedCharacters.length} bots from ${sourceOwnerHandle}? Each bot will reuse its last push settings. Existing bots with the same published filenames will be overwritten.`,
             {
-                okButton: 'Push Bots',
-                cancelButton: 'Cancel',
+                okButton: translate('Push Bots'),
+                cancelButton: translate('Cancel'),
             },
         );
         if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
@@ -2176,9 +2177,9 @@ async function openAdminPanel(initialTab = 'usersList') {
 
             const message = `Pushed ${pushed.length}, failed ${failed.length}, skipped ${skipped.length}.${details.length ? ` ${details.join(' ')}` : ''}`;
             if (failed.length > 0 || skipped.length > 0) {
-                toastr.warning(message, 'Admin batch push complete');
+                toastr.warning(message, translate('Admin batch push complete'));
             } else {
-                toastr.success(message, 'Admin batch push complete');
+                toastr.success(message, translate('Admin batch push complete'));
             }
 
             await loadPushBotCharacters();
@@ -2200,7 +2201,7 @@ async function openAdminPanel(initialTab = 'usersList') {
             : [];
 
         if (!sourceOwnerHandle || selectedCharacters.length === 0) {
-            toastr.error('Choose a source user and bot.', 'Admin push unavailable');
+            toastr.error(translate('Choose a source user and bot.'), translate('Admin push unavailable'));
             return;
         }
 
@@ -2210,7 +2211,7 @@ async function openAdminPanel(initialTab = 'usersList') {
         }
 
         if (publishMode === 'selected' && targetHandles.length === 0) {
-            toastr.error('Choose at least one recipient.', 'Admin push cancelled');
+            toastr.error(translate('Choose at least one recipient.'), translate('Admin push cancelled'));
             return;
         }
 
@@ -2218,11 +2219,11 @@ async function openAdminPanel(initialTab = 'usersList') {
             ? 'all enabled users'
             : targetHandles.join(', ');
         const confirm = await Popup.show.confirm(
-            'Push Bot',
-            `Push "${character.name || character.avatar}" from ${sourceOwnerHandle} to ${destinationLabel}? Existing bots with the same published filename will be overwritten.`,
+            translate('Push Bot'),
+            t`Push "${character.name || character.avatar}" from ${sourceOwnerHandle} to ${destinationLabel}? Existing bots with the same published filename will be overwritten.`,
             {
-                okButton: 'Push Bot',
-                cancelButton: 'Cancel',
+                okButton: translate('Push Bot'),
+                cancelButton: translate('Cancel'),
             },
         );
         if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
@@ -2246,11 +2247,11 @@ async function openAdminPanel(initialTab = 'usersList') {
             const skippedNotice = Array.isArray(result.skippedHandles) && result.skippedHandles.length > 0
                 ? ` Skipped: ${result.skippedHandles.join(', ')}`
                 : '';
-            toastr.success(`Published ${result.publishedFilename || publishedFilename || character.avatar}${skippedNotice}`, 'Admin push complete');
+            toastr.success(t`Published ${result.publishedFilename || publishedFilename || character.avatar}${skippedNotice}`, translate('Admin push complete'));
             await loadPushBotPolicy({ overwriteRecipients: false });
         } catch (error) {
             console.error('Error pushing bot:', error);
-            toastr.error(error.message || 'Unknown error', 'Admin push failed');
+            toastr.error(error.message || 'Unknown error', translate('Admin push failed'));
         } finally {
             submitButton.prop('disabled', false).removeClass('disabled');
         }
@@ -2271,7 +2272,7 @@ async function openAdminPanel(initialTab = 'usersList') {
         list.empty();
 
         if (!threadSummaries.length) {
-            list.append('<div class="userMessagesThreadEmpty">No user threads available.</div>');
+            list.append('<div class="userMessagesThreadEmpty" data-i18n="No user threads available.">No user threads available.</div>');
             return;
         }
 
@@ -2309,7 +2310,7 @@ async function openAdminPanel(initialTab = 'usersList') {
             await refreshMessagesSummary();
         } catch (error) {
             console.error('Error loading admin message summaries:', error);
-            toastr.error(error.message || 'Unknown error', 'Failed to load messages');
+            toastr.error(error.message || 'Unknown error', translate('Failed to load messages'));
         }
     }
 
@@ -2318,8 +2319,8 @@ async function openAdminPanel(initialTab = 'usersList') {
         const threadContainer = template.find('.adminMessagesThread');
 
         if (!handle) {
-            paneTitle.text('Messages');
-            threadContainer.html('<div class="userMessagesThreadEmpty">Select a user to view messages.</div>');
+            paneTitle.text(translate('Messages'));
+            threadContainer.html('<div class="userMessagesThreadEmpty" data-i18n="Select a user to view messages.">Select a user to view messages.</div>');
             return;
         }
 
@@ -2337,7 +2338,7 @@ async function openAdminPanel(initialTab = 'usersList') {
             }
         } catch (error) {
             console.error('Error loading admin thread:', error);
-            toastr.error(error.message || 'Unknown error', 'Failed to load messages');
+            toastr.error(error.message || 'Unknown error', translate('Failed to load messages'));
         }
     }
 
@@ -2355,7 +2356,7 @@ async function openAdminPanel(initialTab = 'usersList') {
         }
 
         if (!selectedMessageHandle) {
-            toastr.warning('Select a user thread first.', 'No thread selected');
+            toastr.warning(translate('Select a user thread first.'), translate('No thread selected'));
             return;
         }
 
@@ -2371,7 +2372,7 @@ async function openAdminPanel(initialTab = 'usersList') {
             await renderSelectedAdminThread(selectedMessageHandle, false);
         } catch (error) {
             console.error('Error sending admin message:', error);
-            toastr.error(error.message || 'Unknown error', 'Failed to send message');
+            toastr.error(error.message || 'Unknown error', translate('Failed to send message'));
         } finally {
             isSendingAdminMessage = false;
             setAdminComposerSendingState(false);
@@ -2441,7 +2442,7 @@ async function openAdminPanel(initialTab = 'usersList') {
         }
     });
 
-    callGenericPopup(template, POPUP_TYPE.TEXT, '', { okButton: 'Close', wide: true, large: false, allowVerticalScrolling: true, allowHorizontalScrolling: false });
+    callGenericPopup(template, POPUP_TYPE.TEXT, '', { okButton: translate('Close'), wide: true, large: false, allowVerticalScrolling: true, allowHorizontalScrolling: false });
     renderUsers();
     renderSubmissions();
     void renderPushBots();
@@ -2482,12 +2483,12 @@ async function logout() {
         try {
             const sessionResponse = await fetch('/api/users/me');
             if (sessionResponse.status !== 403) {
-                toastr.error('Refresh the page and try again.', 'Logout failed');
+                toastr.error(translate('Refresh the page and try again.'), translate('Logout failed'));
                 return;
             }
         } catch (error) {
             console.error('Failed to verify session state during logout:', error);
-            toastr.error('Refresh the page and try again.', 'Logout failed');
+            toastr.error(translate('Refresh the page and try again.'), translate('Logout failed'));
             return;
         }
     }

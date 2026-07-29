@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { doExtrasFetch, getApiUrl, modules } from '../../extensions.js';
 import { saveTtsProviderSettings } from './index.js';
 
@@ -20,10 +21,10 @@ class SileroTtsProvider {
 
     get settingsHtml() {
         let html = `
-        <label for="silero_tts_endpoint">Provider Endpoint:</label>
+        <label for="silero_tts_endpoint" data-i18n="Provider Endpoint:">Provider Endpoint:</label>
         <input id="silero_tts_endpoint" type="text" class="text_pole" maxlength="250" value="${this.defaultSettings.provider_endpoint}"/>
         <span>
-        <span>Use <a target="_blank" href="https://github.com/SillyTavern/SillyTavern-extras">SillyTavern Extras API</a> or <a target="_blank" href="https://github.com/ouoertheo/silero-api-server">Silero TTS Server</a>.</span>
+        <span>Use <a target="_blank" href="https://github.com/SillyTavern/SillyTavern-extras" data-i18n="SillyTavern Extras API">SillyTavern Extras API</a> or <a target="_blank" href="https://github.com/ouoertheo/silero-api-server" data-i18n="Silero TTS Server">Silero TTS Server</a>.</span>
         `;
         return html;
     }
@@ -137,7 +138,7 @@ class SileroTtsProvider {
             },
         );
         if (!response.ok) {
-            toastr.error(response.statusText, 'TTS Generation Failed');
+            toastr.error(response.statusText, translate('TTS Generation Failed'));
             throw new Error(`HTTP ${response.status}: ${await response.text()}`);
         }
         return response;

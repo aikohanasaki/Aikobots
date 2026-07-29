@@ -71,7 +71,7 @@ import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashComma
 import { renderTemplateAsync } from './templates.js';
 import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { LatestTask } from './util/LatestTask.js';
@@ -1707,18 +1707,18 @@ export function tryParseStreamingError(response, decoded, { quiet = false } = {}
 
     if (data.error) {
         const message = formatProviderErrorMessage(data.error, response.statusText || `HTTP ${response.status}`);
-        !quiet && toastr.error(message, 'Chat Completion API');
+        !quiet && toastr.error(message, translate('Chat Completion API'));
         throw new Error(message);
     }
 
     if (data.message) {
-        !quiet && toastr.error(data.message, 'Chat Completion API');
+        !quiet && toastr.error(data.message, translate('Chat Completion API'));
         throw new Error(data.message);
     }
 
     if (data.detail !== undefined && data.detail !== null) {
         const message = formatProviderDetailMessage(data.detail, response.statusText || `HTTP ${response.status}`);
-        !quiet && toastr.error(message, 'Chat Completion API');
+        !quiet && toastr.error(message, translate('Chat Completion API'));
         throw new Error(message);
     }
 
@@ -1775,7 +1775,7 @@ function checkQuotaError(data, { quiet = false } = {}) {
     }
 
     if (data.quota_error) {
-        !quiet && renderTemplateAsync('quotaError').then((html) => Popup.show.text('Quota Error', html));
+        !quiet && renderTemplateAsync('quotaError').then((html) => Popup.show.text(translate('Quota Error'), html));
 
         // this does not throw correctly (equiv to Error("[object Object]"))
         // if trying to fix "[object Object]" displayed to users, start here
@@ -1860,7 +1860,7 @@ function calculateOpenRouterCost() {
 
     if (oai_settings.enable_web_search) {
         const webSearchCost = (0.02).toFixed(2);
-        cost = t`${cost} + $${webSearchCost}`;
+        cost = `${cost} + $${webSearchCost}`;
     }
 
     $('#openrouter_max_prompt_cost').text(cost);
@@ -1877,10 +1877,10 @@ function getElectronHubModelTemplate(option) {
     const outputPrice = model.pricing?.output;
     const price = inputPrice && outputPrice ? `$${inputPrice}/$${outputPrice} in/out Mtoken` : 'Unknown';
 
-    const visionIcon = model.metadata?.vision ? '<i class="fa-solid fa-eye fa-sm" title="This model supports vision"></i>' : '';
-    const reasoningIcon = model.metadata?.reasoning ? '<i class="fa-solid fa-brain fa-sm" title="This model supports reasoning"></i>' : '';
-    const toolCallsIcon = model.metadata?.function_call ? '<i class="fa-solid fa-wrench fa-sm" title="This model supports function tools"></i>' : '';
-    const premiumIcon = model?.premium_model ? '<i class="fa-solid fa-crown fa-sm" title="This model requires a subscription"></i>' : '';
+    const visionIcon = model.metadata?.vision ? '<i class="fa-solid fa-eye fa-sm" title="This model supports vision" data-i18n="[title]This model supports vision"></i>' : '';
+    const reasoningIcon = model.metadata?.reasoning ? '<i class="fa-solid fa-brain fa-sm" title="This model supports reasoning" data-i18n="[title]This model supports reasoning"></i>' : '';
+    const toolCallsIcon = model.metadata?.function_call ? '<i class="fa-solid fa-wrench fa-sm" title="This model supports function tools" data-i18n="[title]This model supports function tools"></i>' : '';
+    const premiumIcon = model?.premium_model ? '<i class="fa-solid fa-crown fa-sm" title="This model requires a subscription" data-i18n="[title]This model requires a subscription"></i>' : '';
 
     const iconsContainer = document.createElement('span');
     iconsContainer.insertAdjacentHTML('beforeend', visionIcon);
@@ -1936,7 +1936,7 @@ function getNavyModelTemplate(option) {
     }
 
     const multiplier = formatNavyTokenMultiplier(model);
-    const premiumIcon = model?.premium ? '<i class="fa-solid fa-crown fa-sm" title="This model requires a paid plan"></i>' : '';
+    const premiumIcon = model?.premium ? '<i class="fa-solid fa-crown fa-sm" title="This model requires a paid plan" data-i18n="[title]This model requires a paid plan"></i>' : '';
     const planText = model?.premium && model?.required_plan ? ` | <small>${DOMPurify.sanitize(String(model.required_plan))}</small>` : '';
 
     return $((`
@@ -2042,7 +2042,7 @@ function saveModelList(data) {
 
         customModelSelect.empty();
         customModelDatalist.empty();
-        customModelSelect.append('<option value="">None</option>');
+        customModelSelect.append('<option value="" data-i18n="None">None</option>');
 
         model_list.forEach((model) => {
             customModelSelect.append(
@@ -4763,10 +4763,10 @@ async function onPresetImportFileChange(e) {
     const shouldConfirm = fields.length > 0;
 
     if (shouldConfirm) {
-        const textHeader = 'The imported preset contains proxy and/or custom endpoint settings.';
+        const textHeader = translate('The imported preset contains proxy and/or custom endpoint settings.');
         const textMessage = fields.join('<br>');
-        const cancelButton = { text: 'Cancel import', result: POPUP_RESULT.CANCELLED, appendAtEnd: true };
-        const popupOptions = { customButtons: [cancelButton], okButton: 'Remove them', cancelButton: 'Import as-is' };
+        const cancelButton = { text: translate('Cancel import'), result: POPUP_RESULT.CANCELLED, appendAtEnd: true };
+        const popupOptions = { customButtons: [cancelButton], okButton: translate('Remove them'), cancelButton: translate('Import as-is') };
         const popupResult = await Popup.show.confirm(textHeader, textMessage, popupOptions);
 
         if (popupResult === POPUP_RESULT.CANCELLED) {
@@ -4780,7 +4780,7 @@ async function onPresetImportFileChange(e) {
     }
 
     if (name in openai_setting_names) {
-        const confirm = await callGenericPopup('Preset name already exists. Overwrite?', POPUP_TYPE.CONFIRM);
+        const confirm = await callGenericPopup(translate('Preset name already exists. Overwrite?'), POPUP_TYPE.CONFIRM);
 
         if (!confirm) {
             return;
@@ -4835,7 +4835,7 @@ async function onExportPresetClick() {
     if (fieldValues.length > 0) {
         const textHeader = t`Your preset contains proxy and/or custom endpoint settings.`;
         const textMessage = '<div>' + t`Do you want to remove these fields before exporting?` + `</div><br>${DOMPurify.sanitize(fieldValues.join('<br>'))}`;
-        const cancelButton = { text: 'Cancel', result: POPUP_RESULT.CANCELLED, appendAtEnd: true };
+        const cancelButton = { text: translate('Cancel'), result: POPUP_RESULT.CANCELLED, appendAtEnd: true };
         const popupOptions = { customButtons: [cancelButton] };
         const popupResult = await Popup.show.confirm(textHeader, textMessage, popupOptions);
 

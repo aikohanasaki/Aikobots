@@ -1,28 +1,28 @@
 <div class="st-bookmarks-manager flex-container flexFlowColumn flexGap10">
-    <h3 class="margin0">🔖 Bookmarks ({{bookmarks.length}}/{{maxBookmarks}})</h3>
+    <h3 class="margin0">🔖 <span data-i18n="Bookmarks">Bookmarks</span> ({{bookmarks.length}}/{{maxBookmarks}})</h3>
 
     <div class="info-block warning margin0">
-        Click a bookmark to open it in a separate reader window. Older bookmarks may require a temporary chat redraw to prepare that popout.
+        <span data-i18n="Click a bookmark to open it in a separate reader window. Older bookmarks may require a temporary chat redraw to prepare that popout.">Click a bookmark to open it in a separate reader window. Older bookmarks may require a temporary chat redraw to prepare that popout.</span>
     </div>
 
     <div class="flex-container justifyCenter gap10px">
         <button id="named-bookmarks-popout" type="button" class="menu_button menu_button_icon inline-flex interactable">
             <i class="fa-solid fa-up-right-from-square"></i>
-            <span>Pop Out Chat</span>
+            <span data-i18n="Pop Out Chat">Pop Out Chat</span>
         </button>
         <button id="named-bookmarks-sort-toggle" type="button" class="menu_button menu_button_icon inline-flex interactable">
             {{#if sortAscending}}
                 <i class="fa-solid fa-sort-asc"></i>
-                <span>Sort bookmarks in descending order</span>
+                <span data-i18n="Sort bookmarks in descending order">Sort bookmarks in descending order</span>
             {{else}}
                 <i class="fa-solid fa-sort-desc"></i>
-                <span>Sort bookmarks in ascending order</span>
+                <span data-i18n="Sort bookmarks in ascending order">Sort bookmarks in ascending order</span>
             {{/if}}
         </button>
     </div>
 
     <div class="marginBot10">
-        <small>Status indicators: 🟢 = Visible, 🟡 = Jump required, 🔴 = Larger jump</small>
+        <small data-i18n="Status indicators: 🟢 = Visible, 🟡 = Jump required, 🔴 = Larger jump">Status indicators: 🟢 = Visible, 🟡 = Jump required, 🔴 = Larger jump</small>
     </div>
 
     {{#if bookmarks.length}}
@@ -36,22 +36,22 @@
                         <span>{{title}}</span>
                     </button>
                     <div class="named-bookmark-actions flex-container flexNoGap">
-                        <button type="button" class="menu_button fa-solid fa-edit interactable named-bookmark-edit" data-index="{{@index}}" title="Edit bookmark"></button>
-                        <button type="button" class="menu_button fa-solid fa-trash interactable red_button named-bookmark-delete" data-index="{{@index}}" title="Delete bookmark"></button>
+                        <button type="button" class="menu_button fa-solid fa-edit interactable named-bookmark-edit" data-index="{{@index}}" title="Edit bookmark" data-i18n="[title]Edit bookmark"></button>
+                        <button type="button" class="menu_button fa-solid fa-trash interactable red_button named-bookmark-delete" data-index="{{@index}}" title="Delete bookmark" data-i18n="[title]Delete bookmark"></button>
                     </div>
                 </div>
             {{/each}}
         </div>
     {{else}}
         <div class="info-block warning margin0">
-            <span>No bookmarks found. Create your first bookmark to get started!</span>
+            <span data-i18n="No bookmarks found. Create your first bookmark to get started!">No bookmarks found. Create your first bookmark to get started!</span>
         </div>
     {{/if}}
 
     <div class="flex-container justifyCenter marginTop5">
         <button id="named-bookmarks-create" type="button" class="menu_button menu_button_icon inline-flex interactable">
             <i class="fa-solid fa-plus"></i>
-            <span>Create New Bookmark</span>
+            <span data-i18n="Create New Bookmark">Create New Bookmark</span>
         </button>
     </div>
 </div>

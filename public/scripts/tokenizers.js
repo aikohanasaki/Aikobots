@@ -1,3 +1,4 @@
+import { t, translate } from './i18n.js';
 import { localforage } from '../lib.js';
 import { characters, main_api, online_status, this_chid } from '../script.js';
 import { power_user, registerDebugFunction } from './power-user.js';
@@ -167,7 +168,7 @@ async function resetTokenCache() {
         console.debug('Chat Completions: resetting token cache');
         Object.keys(tokenCache).forEach(key => delete tokenCache[key]);
         await objectStore.removeItem('tokenCache');
-        toastr.success('Token cache cleared. Please reload the chat to re-tokenize it.');
+        toastr.success(translate('Token cache cleared. Please reload the chat to re-tokenize it.'));
     } catch (e) {
         console.log('Chat Completions: unable to reset token cache', e);
     }
@@ -205,7 +206,7 @@ export function selectTokenizer(tokenizerId) {
             return;
         }
         $('#tokenizer').val(tokenizer.tokenizerId).trigger('change');
-        toastr.info(`Tokenizer: "${tokenizer.tokenizerName}" selected`);
+        toastr.info(t`Tokenizer: "${tokenizer.tokenizerName}" selected`);
     }
 }
 

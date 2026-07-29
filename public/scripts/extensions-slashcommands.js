@@ -1,3 +1,4 @@
+import { t, translate } from './i18n.js';
 import { disableExtension, enableExtension, extension_settings, extensionNames } from './extensions.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
@@ -17,26 +18,26 @@ function getExtensionActionCallback(action) {
         if (args?.reload instanceof SlashCommandClosure) throw new Error('\'reload\' argument cannot be a closure.');
         if (typeof extensionName !== 'string') throw new Error('Extension name must be a string. Closures or arrays are not allowed.');
         if (!extensionName) {
-            toastr.warning(`Extension name must be provided as an argument to ${action} this extension.`);
+            toastr.warning(t`Extension name must be provided as an argument to ${action} this extension.`);
             return '';
         }
 
         const reload = !isFalseBoolean(args?.reload?.toString());
         const internalExtensionName = findExtension(extensionName);
         if (!internalExtensionName) {
-            toastr.warning(`Extension ${extensionName} does not exist.`);
+            toastr.warning(t`Extension ${extensionName} does not exist.`);
             return '';
         }
 
         const isEnabled = !extension_settings.disabledExtensions.includes(internalExtensionName);
 
         if (action === 'enable' && isEnabled) {
-            toastr.info(`Extension ${extensionName} is already enabled.`);
+            toastr.info(t`Extension ${extensionName} is already enabled.`);
             return internalExtensionName;
         }
 
         if (action === 'disable' && !isEnabled) {
-            toastr.info(`Extension ${extensionName} is already disabled.`);
+            toastr.info(t`Extension ${extensionName} is already disabled.`);
             return internalExtensionName;
         }
 
@@ -45,7 +46,7 @@ function getExtensionActionCallback(action) {
         }
 
         if (reload) {
-            toastr.info(`${action.charAt(0).toUpperCase() + action.slice(1)}ing extension ${extensionName} and reloading...`);
+            toastr.info(t`${action.charAt(0).toUpperCase() + action.slice(1)}ing extension ${extensionName} and reloading...`);
 
             // Clear input, so it doesn't stay because the command didn't "finish",
             // and wait for a bit to both show the toast and let the clear bubble through.
@@ -59,7 +60,7 @@ function getExtensionActionCallback(action) {
             await disableExtension(internalExtensionName, reload);
         }
 
-        toastr.success(`Extension ${extensionName} ${action}d.`);
+        toastr.success(t`Extension ${extensionName} ${action}d.`);
 
 
         console.info(`Extension ${action}ed: ${extensionName}`);
@@ -122,7 +123,7 @@ export function registerExtensionSlashCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Enables a specified extension.">
                 Enables a specified extension.
             </div>
             <div>
@@ -131,7 +132,7 @@ export function registerExtensionSlashCommands() {
                 The page either needs to be refreshed, or <code>/reload-page</code> has to be called.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/extension-enable Summarize</code></pre>
@@ -163,7 +164,7 @@ export function registerExtensionSlashCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Disables a specified extension.">
                 Disables a specified extension.
             </div>
             <div>
@@ -172,7 +173,7 @@ export function registerExtensionSlashCommands() {
                 The page either needs to be refreshed, or <code>/reload-page</code> has to be called.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/extension-disable Summarize</code></pre>
@@ -219,7 +220,7 @@ export function registerExtensionSlashCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Toggles the state of a specified extension.">
                 Toggles the state of a specified extension.
             </div>
             <div>
@@ -228,7 +229,7 @@ export function registerExtensionSlashCommands() {
                 The page either needs to be refreshed, or <code>/reload-page</code> has to be called.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/extension-toggle Summarize</code></pre>
@@ -246,7 +247,7 @@ export function registerExtensionSlashCommands() {
             if (typeof extensionName !== 'string') throw new Error('Extension name must be a string. Closures or arrays are not allowed.');
             const internalExtensionName = findExtension(extensionName);
             if (!internalExtensionName) {
-                toastr.warning(`Extension ${extensionName} does not exist.`);
+                toastr.warning(t`Extension ${extensionName} does not exist.`);
                 return '';
             }
 
@@ -264,11 +265,11 @@ export function registerExtensionSlashCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Returns the state of a specified extension (true if enabled, false if disabled).">
                 Returns the state of a specified extension (true if enabled, false if disabled).
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/extension-state Summarize</code></pre>
@@ -295,11 +296,11 @@ export function registerExtensionSlashCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Checks if a specified extension exists.">
                 Checks if a specified extension exists.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/extension-exists SillyTavern-LALib</code></pre>
@@ -312,7 +313,7 @@ export function registerExtensionSlashCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'reload-page',
         callback: async () => {
-            toastr.info('Reloading the page...');
+            toastr.info(translate('Reloading the page...'));
             location.reload();
             return '';
         },

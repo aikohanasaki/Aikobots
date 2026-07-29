@@ -37,7 +37,7 @@ import {
 } from './stmb-api.js';
 import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showConsolidationPreviewPopup, showFailedAIResponsePopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showRegenerationReviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
-import { applyLocale, translate } from './i18n.js';
+import { applyLocale, t, translate } from './i18n.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
@@ -773,7 +773,7 @@ function createPlannerSidebarJobItem(job) {
         item.dataset.jobId = String(job?.id || '');
         item.setAttribute('role', 'button');
         item.setAttribute('tabindex', '0');
-        item.title = 'Review approval request';
+        item.title = translate('Review approval request');
     }
 
     const nameRow = document.createElement('div');
@@ -862,7 +862,7 @@ function renderPlannerSidebarContent() {
     const rows = getPlannerJobsForUi(visibleJobs);
 
     sidebar.dataset.sidebarMode = 'stmb';
-    title.textContent = 'Memory Books';
+    title.textContent = translate('Memory Books');
     container.innerHTML = '';
     loader.classList.add('displayNone');
 
@@ -921,7 +921,7 @@ function renderPlannerSidebarContent() {
     if (rows.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'top_chat_sidebar_empty';
-        empty.textContent = 'No queued, running, or recent Memory Books jobs.';
+        empty.textContent = translate('No queued, running, or recent Memory Books jobs.');
         container.append(empty);
     } else {
         for (const job of rows) {
@@ -1506,7 +1506,7 @@ async function handlePlannerCompletedJob(job) {
     }
 
     if (result?.type === 'memory' && getModuleSettings().showNotifications) {
-        toastr.success(`Memory saved to "${lorebookName}"`, 'STMB');
+        toastr.success(t`Memory saved to "${lorebookName}"`, 'STMB');
     }
 
     if (result?.type === 'chatAutoHide' && result.applied) {
@@ -1523,7 +1523,7 @@ async function handlePlannerCompletedJob(job) {
     }
 
     if (result?.type === 'sidePrompt' && job?.payload?.trigger === 'onAfterMemory' && result.blank !== true && getModuleSettings().showNotifications) {
-        toastr.success(`SidePrompt "${String(result.title || 'Unknown')}" updated.`, 'STMB');
+        toastr.success(t`SidePrompt "${String(result.title || 'Unknown')}" updated.`, 'STMB');
     }
 
     if (result?.type === 'consolidationCheck' && result.ready) {
@@ -2062,13 +2062,13 @@ function renderManualGroupLorebookBindingsHtml(manualMode) {
     const bindings = getManualCharacterLorebookBindings();
     const canonicalLorebookName = String(getStmbState(sceneContext).manualLorebook || '').trim();
     if (members.length === 0) {
-        return '<small class="opacity50p">No group members are available for manual lorebook setup.</small>';
+        return '<small class="opacity50p" data-i18n="No group members are available for manual lorebook setup.">No group members are available for manual lorebook setup.</small>';
     }
     const rows = members.map(member => {
         const current = String(bindings[member.key] || '');
         const currentConflicts = Boolean(current && current === canonicalLorebookName);
         const options = [
-            `<option value="" ${current ? '' : 'selected'} disabled>None selected</option>`,
+            `<option value="" ${current ? '' : 'selected'} disabled data-i18n="None selected">None selected</option>`,
             ...(currentConflicts ? [`<option value="${escapeHtml(current)}" selected disabled>${escapeHtml(current)} (unavailable: group Memory Book)</option>`] : []),
             ...getStmbSelectableLorebookNames()
                 .filter(name => name !== canonicalLorebookName)
@@ -2077,14 +2077,14 @@ function renderManualGroupLorebookBindingsHtml(manualMode) {
         return `<div class="stmb-manual-group-lorebook-row">
             <label class="stmb-manual-group-lorebook-label" for="stmb-member-lorebook-${escapeHtml(member.key)}">${escapeHtml(member.name)}</label>
             <select id="stmb-member-lorebook-${escapeHtml(member.key)}" class="text_pole stmb-manual-group-lorebook-select" data-member-key="${escapeHtml(member.key)}">${options}</select>
-            <button type="button" class="menu_button stmb-manual-group-lorebook-clear" data-member-key="${escapeHtml(member.key)}" ${current ? '' : 'disabled'}>Clear</button>
+            <button type="button" class="menu_button stmb-manual-group-lorebook-clear" data-member-key="${escapeHtml(member.key)}" ${current ? '' : 'disabled'} data-i18n="Clear">Clear</button>
         </div>`;
     }).join('');
     return `<div id="stmb-settings-manual-group-lorebooks" class="marginTop10">
-        <h4>Group Character Lorebooks</h4>
-        <small class="opacity50p">Select a lorebook for every group member. The same lorebook may be selected more than once.</small>
+        <h4 data-i18n="Group Character Lorebooks">Group Character Lorebooks</h4>
+        <small class="opacity50p" data-i18n="Select a lorebook for every group member. The same lorebook may be selected more than once.">Select a lorebook for every group member. The same lorebook may be selected more than once.</small>
         <div class="stmb-manual-group-lorebook-list">${rows}</div>
-        <label class="checkbox_label marginTop5"><input type="checkbox" id="stmb-settings-auto-accept-group-participants" ${getModuleSettings().autoAcceptGroupParticipants ? 'checked' : ''}> <span>Automatically accept detected memory participants</span></label>
+        <label class="checkbox_label marginTop5"><input type="checkbox" id="stmb-settings-auto-accept-group-participants" ${getModuleSettings().autoAcceptGroupParticipants ? 'checked' : ''}> <span data-i18n="Automatically accept detected memory participants">Automatically accept detected memory participants</span></label>
     </div>`;
 }
 
@@ -2138,8 +2138,8 @@ function buildDefaultSidePromptSetOptionsHtml(sets = [], selectedKey = '') {
     const normalizedKey = String(selectedKey || '').trim();
     const hasSelected = normalizedKey && sets.some(set => set.key === normalizedKey);
     return [
-        `<option value="" ${!normalizedKey ? 'selected' : ''}>Use individually-enabled side prompts</option>`,
-        ...(hasSelected || !normalizedKey ? [] : [`<option value="${escapeHtml(normalizedKey)}" selected>Missing set: ${escapeHtml(normalizedKey)}</option>`]),
+        `<option value="" ${!normalizedKey ? 'selected' : ''} data-i18n="Use individually-enabled side prompts">Use individually-enabled side prompts</option>`,
+        ...(hasSelected || !normalizedKey ? [] : [`<option value="${escapeHtml(normalizedKey)}" selected>${t`Missing set: ${escapeHtml(normalizedKey)}`}</option>`]),
         ...sets.map(set => `<option value="${escapeHtml(set.key)}" ${normalizedKey === set.key ? 'selected' : ''}>${escapeHtml(set.name)}</option>`),
     ].join('');
 }
@@ -2165,212 +2165,212 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
 
     return `
         <div class="stmb-settings-popup">
-            <h2>📕 Memory Books</h2>
+            <h2 data-i18n="📕 Memory Books">📕 Memory Books</h2>
             <div id="stmb-settings-scene-section">${buildSettingsPopupSceneSectionHtml(sceneData)}</div>
 
             <div id="stmb-settings-memory-status" class="info-block marginBot10">${buildSettingsPopupMemoryStatusHtml(sceneData)}</div>
 
             <section class="stmb-settings-subsection" data-stmb-settings-view="general">
-            <h3 class="stmb-section-title">General Settings</h3>
+            <h3 class="stmb-section-title" data-i18n="General Settings">General Settings</h3>
             <div class="world_entry_form_control">
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-always-use-default" ${moduleSettings.alwaysUseDefault ? 'checked' : ''}> <span>Always use default profile (no confirmation prompt)</span></label>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-memory-previews" ${moduleSettings.showMemoryPreviews ? 'checked' : ''}> <span>Show memory previews</span></label>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-consolidation-previews" ${moduleSettings.showConsolidationPreviews ? 'checked' : ''}> <span>Show consolidation previews</span></label>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-notifications" ${moduleSettings.showNotifications ? 'checked' : ''}> <span>Show notifications</span></label>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-floating-clip-button" ${moduleSettings.showFloatingClipButton !== false ? 'checked' : ''}> <span>Show floating Clip button</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-always-use-default" ${moduleSettings.alwaysUseDefault ? 'checked' : ''}> <span data-i18n="Always use default profile (no confirmation prompt)">Always use default profile (no confirmation prompt)</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-memory-previews" ${moduleSettings.showMemoryPreviews ? 'checked' : ''}> <span data-i18n="Show memory previews">Show memory previews</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-consolidation-previews" ${moduleSettings.showConsolidationPreviews ? 'checked' : ''}> <span data-i18n="Show consolidation previews">Show consolidation previews</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-notifications" ${moduleSettings.showNotifications ? 'checked' : ''}> <span data-i18n="Show notifications">Show notifications</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-floating-clip-button" ${moduleSettings.showFloatingClipButton !== false ? 'checked' : ''}> <span data-i18n="Show floating Clip button">Show floating Clip button</span></label>
                 <label for="stmb-settings-memory-boundary-mode">
-                    <span>Memory boundary indicator</span>
-                    <small class="opacity50p">Show a chat divider, a jump button, or both at the Memory Books processed boundary.</small>
+                    <span data-i18n="Memory boundary indicator">Memory boundary indicator</span>
+                    <small class="opacity50p" data-i18n="Show a chat divider, a jump button, or both at the Memory Books processed boundary.">Show a chat divider, a jump button, or both at the Memory Books processed boundary.</small>
                     <select id="stmb-settings-memory-boundary-mode" class="text_pole">
                         ${renderMemoryBoundaryModeOptions(moduleSettings.memoryBoundaryMode)}
                     </select>
                 </label>
-                <label class="checkbox_label" title="Check this box to skip checking for overlapping memories/scenes."><input type="checkbox" id="stmb-settings-allow-scene-overlap" ${moduleSettings.allowSceneOverlap ? 'checked' : ''}> <span title="Check this box to skip checking for overlapping memories/scenes.">Allow scene overlap</span></label>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-refresh-editor" ${moduleSettings.refreshEditor !== false ? 'checked' : ''}> <span>Refresh lorebook editor after adding memories</span></label>
+                <label class="checkbox_label" title="Check this box to skip checking for overlapping memories/scenes." data-i18n="[title]Check this box to skip checking for overlapping memories/scenes."><input type="checkbox" id="stmb-settings-allow-scene-overlap" ${moduleSettings.allowSceneOverlap ? 'checked' : ''}> <span title="Check this box to skip checking for overlapping memories/scenes." data-i18n="[title]Check this box to skip checking for overlapping memories/scenes.;Allow scene overlap">Allow scene overlap</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-refresh-editor" ${moduleSettings.refreshEditor !== false ? 'checked' : ''}> <span data-i18n="Refresh lorebook editor after adding memories">Refresh lorebook editor after adding memories</span></label>
             </div>
 
             <div class="world_entry_form_control">
-                <label for="stmb-settings-max-tokens" title="Maximum number of tokens to use for memory summaries.">Max Response Tokens</label>
-                <input type="number" id="stmb-settings-max-tokens" class="text_pole" min="0" step="1" value="${escapeHtml(String(moduleSettings.maxTokens ?? STMB_DEFAULT_MAX_TOKENS))}" title="Maximum number of tokens to use for memory summaries.">
+                <label for="stmb-settings-max-tokens" title="Maximum number of tokens to use for memory summaries." data-i18n="[title]Maximum number of tokens to use for memory summaries.;Max Response Tokens">Max Response Tokens</label>
+                <input type="number" id="stmb-settings-max-tokens" class="text_pole" min="0" step="1" value="${escapeHtml(String(moduleSettings.maxTokens ?? STMB_DEFAULT_MAX_TOKENS))}" title="Maximum number of tokens to use for memory summaries." data-i18n="[title]Maximum number of tokens to use for memory summaries.">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-token-warning-threshold" title="Show confirmation dialog when estimated input tokens exceed this threshold. Default: 30,000.">Token Warning Threshold</label>
-                <input type="number" id="stmb-settings-token-warning-threshold" class="text_pole" min="1000" max="200000" step="1000" value="${escapeHtml(String(moduleSettings.tokenWarningThreshold ?? 50000))}" title="Show confirmation dialog when estimated input tokens exceed this threshold. Default: 30,000.">
+                <label for="stmb-settings-token-warning-threshold" title="Show confirmation dialog when estimated input tokens exceed this threshold. Default: 30,000." data-i18n="[title]Show confirmation dialog when estimated input tokens exceed this threshold. Default: 30,000.;Token Warning Threshold">Token Warning Threshold</label>
+                <input type="number" id="stmb-settings-token-warning-threshold" class="text_pole" min="1000" max="200000" step="1000" value="${escapeHtml(String(moduleSettings.tokenWarningThreshold ?? 50000))}" title="Show confirmation dialog when estimated input tokens exceed this threshold. Default: 30,000." data-i18n="[title]Show confirmation dialog when estimated input tokens exceed this threshold. Default: 30,000.">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-default-memory-count" title="Default number of previous memories to include as context when creating new memories.">Default Previous Memories Count</label>
-                <input type="number" id="stmb-settings-default-memory-count" class="text_pole" min="0" max="7" step="1" value="${escapeHtml(String(moduleSettings.defaultMemoryCount ?? 0))}" title="Default number of previous memories to include as context when creating new memories.">
+                <label for="stmb-settings-default-memory-count" title="Default number of previous memories to include as context when creating new memories." data-i18n="[title]Default number of previous memories to include as context when creating new memories.;Default Previous Memories Count">Default Previous Memories Count</label>
+                <input type="number" id="stmb-settings-default-memory-count" class="text_pole" min="0" max="7" step="1" value="${escapeHtml(String(moduleSettings.defaultMemoryCount ?? 0))}" title="Default number of previous memories to include as context when creating new memories." data-i18n="[title]Default number of previous memories to include as context when creating new memories.">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-default-solo-sideprompt-set">Default Side Prompt Set for Solo Chats</label>
+                <label for="stmb-settings-default-solo-sideprompt-set" data-i18n="Default Side Prompt Set for Solo Chats">Default Side Prompt Set for Solo Chats</label>
                 <select id="stmb-settings-default-solo-sideprompt-set" class="text_pole">
                     ${buildDefaultSidePromptSetOptionsHtml(sidePromptSets, moduleSettings.defaultSoloSidePromptSetKey)}
                 </select>
-                <small class="opacity50p">Used for after-memory side prompts when a solo chat has no per-chat override.</small>
+                <small class="opacity50p" data-i18n="Used for after-memory side prompts when a solo chat has no per-chat override.">Used for after-memory side prompts when a solo chat has no per-chat override.</small>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-default-group-sideprompt-set">Default Side Prompt Set for Group Chats</label>
+                <label for="stmb-settings-default-group-sideprompt-set" data-i18n="Default Side Prompt Set for Group Chats">Default Side Prompt Set for Group Chats</label>
                 <select id="stmb-settings-default-group-sideprompt-set" class="text_pole">
                     ${buildDefaultSidePromptSetOptionsHtml(sidePromptSets, moduleSettings.defaultGroupSidePromptSetKey)}
                 </select>
-                <small class="opacity50p">Used for after-memory side prompts when a group chat has no per-chat override.</small>
+                <small class="opacity50p" data-i18n="Used for after-memory side prompts when a group chat has no per-chat override.">Used for after-memory side prompts when a group chat has no per-chat override.</small>
             </div>
 
-            <h3 class="stmb-section-title">Token Saving (Hide/Unhide Messages)</h3>
+            <h3 class="stmb-section-title" data-i18n="Token Saving (Hide/Unhide Messages)">Token Saving (Hide/Unhide Messages)</h3>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-auto-hide-mode" title="Choose what messages to automatically hide after creating a memory.">Auto-hide messages after adding memory</label>
-                <select id="stmb-settings-auto-hide-mode" class="text_pole" title="Choose what messages to automatically hide after creating a memory.">
-                    <option value="none" ${String(moduleSettings.autoHideMode || 'all').toLowerCase() === 'none' ? 'selected' : ''}>Do not auto-hide</option>
-                    <option value="all" ${String(moduleSettings.autoHideMode || 'all').toLowerCase() === 'all' ? 'selected' : ''}>Auto-hide all messages up to the last memory</option>
-                    <option value="last" ${String(moduleSettings.autoHideMode || 'all').toLowerCase() === 'last' ? 'selected' : ''}>Auto-hide only messages in the last memory</option>
+                <label for="stmb-settings-auto-hide-mode" title="Choose what messages to automatically hide after creating a memory." data-i18n="[title]Choose what messages to automatically hide after creating a memory.;Auto-hide messages after adding memory">Auto-hide messages after adding memory</label>
+                <select id="stmb-settings-auto-hide-mode" class="text_pole" title="Choose what messages to automatically hide after creating a memory." data-i18n="[title]Choose what messages to automatically hide after creating a memory.">
+                    <option value="none" ${String(moduleSettings.autoHideMode || 'all').toLowerCase() === 'none' ? 'selected' : ''} data-i18n="Do not auto-hide">Do not auto-hide</option>
+                    <option value="all" ${String(moduleSettings.autoHideMode || 'all').toLowerCase() === 'all' ? 'selected' : ''} data-i18n="Auto-hide all messages up to the last memory">Auto-hide all messages up to the last memory</option>
+                    <option value="last" ${String(moduleSettings.autoHideMode || 'all').toLowerCase() === 'last' ? 'selected' : ''} data-i18n="Auto-hide only messages in the last memory">Auto-hide only messages in the last memory</option>
                 </select>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-unhidden-entries-count" title="Number of recent messages to leave visible when auto-hiding (0 = hide all up to scene end).">Messages to leave unhidden</label>
-                <input type="number" id="stmb-settings-unhidden-entries-count" class="text_pole" min="0" max="50" step="1" value="${escapeHtml(String(moduleSettings.unhiddenEntriesCount ?? 2))}" title="Number of recent messages to leave visible when auto-hiding (0 = hide all up to scene end).">
+                <label for="stmb-settings-unhidden-entries-count" title="Number of recent messages to leave visible when auto-hiding (0 = hide all up to scene end)." data-i18n="[title]Number of recent messages to leave visible when auto-hiding (0 = hide all up to scene end).;Messages to leave unhidden">Messages to leave unhidden</label>
+                <input type="number" id="stmb-settings-unhidden-entries-count" class="text_pole" min="0" max="50" step="1" value="${escapeHtml(String(moduleSettings.unhiddenEntriesCount ?? 2))}" title="Number of recent messages to leave visible when auto-hiding (0 = hide all up to scene end)." data-i18n="[title]Number of recent messages to leave visible when auto-hiding (0 = hide all up to scene end).">
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label" title="Include hidden messages when STMB captures a message range."><input type="checkbox" id="stmb-settings-unhide-before-memory" ${moduleSettings.unhideBeforeMemory ? 'checked' : ''}> <span title="Include hidden messages when STMB captures a message range.">Include hidden messages for memory generation</span></label>
+                <label class="checkbox_label" title="Include hidden messages when STMB captures a message range." data-i18n="[title]Include hidden messages when STMB captures a message range."><input type="checkbox" id="stmb-settings-unhide-before-memory" ${moduleSettings.unhideBeforeMemory ? 'checked' : ''}> <span title="Include hidden messages when STMB captures a message range." data-i18n="[title]Include hidden messages when STMB captures a message range.;Include hidden messages for memory generation">Include hidden messages for memory generation</span></label>
             </div>
 
             <div class="world_entry_form_control">
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-use-regex" ${moduleSettings.useRegex ? 'checked' : ''}> <span>Use regex (advanced)</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-use-regex" ${moduleSettings.useRegex ? 'checked' : ''}> <span data-i18n="Use regex (advanced)">Use regex (advanced)</span></label>
             </div>
             <div id="stmb-settings-regex-section" class="world_entry_form_control" style="display:${moduleSettings.useRegex ? 'block' : 'none'}">
                 <div class="buttons_block justifyCenter gap10px whitespacenowrap">
-                    <div id="stmb-settings-configure-regex" class="menu_button interactable">Configure regex…</div>
+                    <div id="stmb-settings-configure-regex" class="menu_button interactable" data-i18n="Configure regex…">Configure regex…</div>
                 </div>
-                <small id="stmb-settings-regex-summary" class="opacity50p">Selected outgoing: ${escapeHtml(String((moduleSettings.selectedRegexOutgoing || []).length))} | selected incoming: ${escapeHtml(String((moduleSettings.selectedRegexIncoming || []).length))}</small>
+                <small id="stmb-settings-regex-summary" class="opacity50p">${t`Selected outgoing: ${escapeHtml(String((moduleSettings.selectedRegexOutgoing || []).length))} | selected incoming: ${escapeHtml(String((moduleSettings.selectedRegexIncoming || []).length))}`}</small>
             </div>
 
             </section>
 
-            <h3 class="stmb-section-title">Current Lorebook Configuration</h3>
+            <h3 class="stmb-section-title" data-i18n="Current Lorebook Configuration">Current Lorebook Configuration</h3>
             <div class="info-block">
-                <small class="opacity50p">Mode</small>
-                <h5 id="stmb-settings-mode-badge">${manualMode ? 'Manual' : 'Automatic (Chat-bound)'}</h5>
-                <small class="opacity50p">Active Lorebook</small>
-                <h5 id="stmb-settings-active-lorebook" class="${activeLorebook ? '' : 'opacity50p'}">${activeLorebook ? escapeHtml(activeLorebook) : 'None selected'}</h5>
+                <small class="opacity50p" data-i18n="Mode">Mode</small>
+                <h5 id="stmb-settings-mode-badge">${translate(manualMode ? 'Manual' : 'Automatic (Chat-bound)')}</h5>
+                <small class="opacity50p" data-i18n="Active Lorebook">Active Lorebook</small>
+                <h5 id="stmb-settings-active-lorebook" class="${activeLorebook ? '' : 'opacity50p'}">${activeLorebook ? escapeHtml(activeLorebook) : translate('None selected')}</h5>
                 <div id="stmb-settings-manual-buttons" class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap" style="display:${manualMode ? 'flex' : 'none'}">
-                    <div id="stmb-settings-select-lorebook" class="menu_button interactable">Select Lorebook</div>
-                    <div id="stmb-settings-clear-lorebook" class="menu_button interactable">Clear Selection</div>
+                    <div id="stmb-settings-select-lorebook" class="menu_button interactable" data-i18n="Select Lorebook">Select Lorebook</div>
+                    <div id="stmb-settings-clear-lorebook" class="menu_button interactable" data-i18n="Clear Selection">Clear Selection</div>
                 </div>
                 <div id="stmb-settings-automatic-info" class="marginTop5 ${manualMode ? 'displayNone' : ''}">
-                    <small class="opacity50p">${activeLorebook ? `Using chat-bound lorebook "${escapeHtml(activeLorebook)}"` : 'No chat-bound lorebook. Memory creation will prompt for recovery when needed.'}</small>
+                    <small class="opacity50p">${activeLorebook ? t`Using chat-bound lorebook "${escapeHtml(activeLorebook)}"` : translate('No chat-bound lorebook. Memory creation will prompt for recovery when needed.')}</small>
                 </div>
             </div>
 
             <div class="world_entry_form_control">
-                <label class="checkbox_label" title="When enabled, you must specify a lorebook for memories instead of using the one bound to the chat."><input type="checkbox" id="stmb-settings-manual-mode-enabled" ${manualMode ? 'checked' : ''} ${moduleSettings.autoCreateLorebook ? 'disabled' : ''}> <span title="When enabled, you must specify a lorebook for memories instead of using the one bound to the chat.">Enable Manual Lorebook Mode</span></label>
+                <label class="checkbox_label" title="When enabled, you must specify a lorebook for memories instead of using the one bound to the chat." data-i18n="[title]When enabled, you must specify a lorebook for memories instead of using the one bound to the chat."><input type="checkbox" id="stmb-settings-manual-mode-enabled" ${manualMode ? 'checked' : ''} ${moduleSettings.autoCreateLorebook ? 'disabled' : ''}> <span title="When enabled, you must specify a lorebook for memories instead of using the one bound to the chat." data-i18n="[title]When enabled, you must specify a lorebook for memories instead of using the one bound to the chat.;Enable Manual Lorebook Mode">Enable Manual Lorebook Mode</span></label>
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label" title="When enabled, automatically creates and binds a lorebook to the chat if none exists."><input type="checkbox" id="stmb-settings-auto-create-lorebook" ${moduleSettings.autoCreateLorebook ? 'checked' : ''} ${manualMode ? 'disabled' : ''}> <span title="When enabled, automatically creates and binds a lorebook to the chat if none exists.">Auto-create lorebook if none exists</span></label>
+                <label class="checkbox_label" title="When enabled, automatically creates and binds a lorebook to the chat if none exists." data-i18n="[title]When enabled, automatically creates and binds a lorebook to the chat if none exists."><input type="checkbox" id="stmb-settings-auto-create-lorebook" ${moduleSettings.autoCreateLorebook ? 'checked' : ''} ${manualMode ? 'disabled' : ''}> <span title="When enabled, automatically creates and binds a lorebook to the chat if none exists." data-i18n="[title]When enabled, automatically creates and binds a lorebook to the chat if none exists.;Auto-create lorebook if none exists">Auto-create lorebook if none exists</span></label>
             </div>
             ${renderManualGroupLorebookBindingsHtml(manualMode)}
             <div class="world_entry_form_control marginTop10 marginBot10">
-                <label for="stmb-settings-lorebook-name-template" title="Template for auto-created lorebook names. Supports {{char}}, {{user}}, {{chat}} placeholders.">Lorebook Name Template</label>
-                <input type="text" id="stmb-settings-lorebook-name-template" class="text_pole" value="${escapeHtml(String(moduleSettings.lorebookNameTemplate || 'LTM - {{char}} - {{chat}}'))}" ${moduleSettings.autoCreateLorebook ? '' : 'disabled'} title="Template for auto-created lorebook names. Supports {{char}}, {{user}}, {{chat}} placeholders.">
+                <label for="stmb-settings-lorebook-name-template" title="Template for auto-created lorebook names. Supports {{char}}, {{user}}, {{chat}} placeholders." data-i18n="[title]STMemoryBooks_LorebookNameTemplateTooltip;Lorebook Name Template">Lorebook Name Template</label>
+                <input type="text" id="stmb-settings-lorebook-name-template" class="text_pole" value="${escapeHtml(String(moduleSettings.lorebookNameTemplate || 'LTM - {{char}} - {{chat}}'))}" ${moduleSettings.autoCreateLorebook ? '' : 'disabled'} title="Template for auto-created lorebook names. Supports {{char}}, {{user}}, {{chat}} placeholders." data-i18n="[title]STMemoryBooks_LorebookNameTemplateTooltip">
             </div>
             <div class="world_entry_form_control">
-                <h4 class="stmb-section-title margin5">Lorebook Order Defaults</h4>
+                <h4 class="stmb-section-title margin5" data-i18n="Lorebook Order Defaults">Lorebook Order Defaults</h4>
                 <div class="buttons_block marginTop10 justifyCenter gap10px whitespacenowrap">
-                    <div id="stmb-settings-configure-lorebook-order-defaults" class="menu_button interactable">Configure Lorebook Order Defaults</div>
+                    <div id="stmb-settings-configure-lorebook-order-defaults" class="menu_button interactable" data-i18n="Configure Lorebook Order Defaults">Configure Lorebook Order Defaults</div>
                 </div>
                 <small id="stmb-settings-lorebook-order-defaults-summary" class="opacity50p">${hasLorebookOrderDefaults ? 'Defaults configured for newly auto-created memory books.' : 'No order defaults configured.'}</small>
             </div>
 
             <section class="stmb-settings-subsection" data-stmb-settings-view="automatic">
-            <h3 class="stmb-section-title">Automatic Memories</h3>
+            <h3 class="stmb-section-title" data-i18n="Automatic Memories">Automatic Memories</h3>
             <div class="world_entry_form_control">
-                <label class="checkbox_label" title="Automatically run /nextmemory after a specified number of messages. Warning: enabling Auto-Summary may create one large memory from the existing backlog. Use /stmb-set-highest &lt;N|none&gt; to control the baseline."><input type="checkbox" id="stmb-settings-auto-summary-enabled" ${moduleSettings.autoSummaryEnabled ? 'checked' : ''}> <span title="Automatically run /nextmemory after a specified number of messages. Warning: enabling Auto-Summary may create one large memory from the existing backlog. Use /stmb-set-highest &lt;N|none&gt; to control the baseline.">Auto-create memory summaries</span></label>
+                <label class="checkbox_label" title="Automatically run /nextmemory after a specified number of messages. Warning: enabling Auto-Summary may create one large memory from the existing backlog. Use /stmb-set-highest &lt;N|none&gt; to control the baseline." data-i18n="[title]STMemoryBooks_AutoSummaryTooltip"><input type="checkbox" id="stmb-settings-auto-summary-enabled" ${moduleSettings.autoSummaryEnabled ? 'checked' : ''}> <span title="Automatically run /nextmemory after a specified number of messages. Warning: enabling Auto-Summary may create one large memory from the existing backlog. Use /stmb-set-highest &lt;N|none&gt; to control the baseline." data-i18n="[title]STMemoryBooks_AutoSummaryTooltip;Auto-create memory summaries">Auto-create memory summaries</span></label>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-auto-summary-interval" title="Number of messages after which to automatically create a memory summary.">Auto-Summary Interval</label>
-                <input type="number" id="stmb-settings-auto-summary-interval" class="text_pole" min="10" max="200" step="1" value="${escapeHtml(String(moduleSettings.autoSummaryInterval ?? 50))}" title="Number of messages after which to automatically create a memory summary.">
+                <label for="stmb-settings-auto-summary-interval" title="Number of messages after which to automatically create a memory summary." data-i18n="[title]Number of messages after which to automatically create a memory summary.;Auto-Summary Interval">Auto-Summary Interval</label>
+                <input type="number" id="stmb-settings-auto-summary-interval" class="text_pole" min="10" max="200" step="1" value="${escapeHtml(String(moduleSettings.autoSummaryInterval ?? 50))}" title="Number of messages after which to automatically create a memory summary." data-i18n="[title]Number of messages after which to automatically create a memory summary.">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-auto-summary-buffer" title="Delay auto-summary by X messages (belated generation). Default 2, max 50.">Auto-Summary Buffer</label>
-                <input type="number" id="stmb-settings-auto-summary-buffer" class="text_pole" min="0" max="50" step="1" value="${escapeHtml(String(moduleSettings.autoSummaryBuffer ?? 2))}" title="Delay auto-summary by X messages (belated generation). Default 2, max 50.">
+                <label for="stmb-settings-auto-summary-buffer" title="Delay auto-summary by X messages (belated generation). Default 2, max 50." data-i18n="[title]Delay auto-summary by X messages (belated generation). Default 2, max 50.;Auto-Summary Buffer">Auto-Summary Buffer</label>
+                <input type="number" id="stmb-settings-auto-summary-buffer" class="text_pole" min="0" max="50" step="1" value="${escapeHtml(String(moduleSettings.autoSummaryBuffer ?? 2))}" title="Delay auto-summary by X messages (belated generation). Default 2, max 50." data-i18n="[title]Delay auto-summary by X messages (belated generation). Default 2, max 50.">
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label" title="Shows a yes/no prompt when any selected summary tier has enough eligible source entries. Uses each tier's saved minimum."><input type="checkbox" id="stmb-settings-auto-consolidation-prompt-enabled" ${moduleSettings.autoConsolidationPromptEnabled ? 'checked' : ''}> <span title="Shows a yes/no prompt when any selected summary tier has enough eligible source entries. Uses each tier's saved minimum.">Prompt for consolidation when a tier is ready</span></label>
+                <label class="checkbox_label" title="Shows a yes/no prompt when any selected summary tier has enough eligible source entries. Uses each tier's saved minimum." data-i18n="[title]Shows a yes/no prompt when any selected summary tier has enough eligible source entries. Uses each tier's saved minimum."><input type="checkbox" id="stmb-settings-auto-consolidation-prompt-enabled" ${moduleSettings.autoConsolidationPromptEnabled ? 'checked' : ''}> <span title="Shows a yes/no prompt when any selected summary tier has enough eligible source entries. Uses each tier's saved minimum." data-i18n="[title]Shows a yes/no prompt when any selected summary tier has enough eligible source entries. Uses each tier's saved minimum.;Prompt for consolidation when a tier is ready">Prompt for consolidation when a tier is ready</span></label>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-auto-consolidation-target-tier" title="Choose which summary tiers should trigger the confirmation prompt.">Auto-Consolidation Tiers</label>
-                <select id="stmb-settings-auto-consolidation-target-tier" class="text_pole" multiple size="6" title="Choose which summary tiers should trigger the confirmation prompt.">${renderSummaryTierOptions(normalizeAutoConsolidationTargetTiers(moduleSettings.autoConsolidationTargetTiers ?? moduleSettings.autoConsolidationTargetTier))}</select>
+                <label for="stmb-settings-auto-consolidation-target-tier" title="Choose which summary tiers should trigger the confirmation prompt." data-i18n="[title]Choose which summary tiers should trigger the confirmation prompt.;Auto-Consolidation Tiers">Auto-Consolidation Tiers</label>
+                <select id="stmb-settings-auto-consolidation-target-tier" class="text_pole" multiple size="6" title="Choose which summary tiers should trigger the confirmation prompt." data-i18n="[title]Choose which summary tiers should trigger the confirmation prompt.">${renderSummaryTierOptions(normalizeAutoConsolidationTargetTiers(moduleSettings.autoConsolidationTargetTiers ?? moduleSettings.autoConsolidationTargetTier))}</select>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-summary-order-mode">Default Summary Entry Order Mode</label>
+                <label for="stmb-settings-summary-order-mode" data-i18n="Default Summary Entry Order Mode">Default Summary Entry Order Mode</label>
                 <select id="stmb-settings-summary-order-mode" class="text_pole">
-                    <option value="auto" ${summaryOrderMode === 'auto' ? 'selected' : ''}>Auto</option>
-                    <option value="manual" ${summaryOrderMode === 'manual' ? 'selected' : ''}>Manual</option>
-                    <option value="reverse" ${summaryOrderMode === 'reverse' ? 'selected' : ''}>Reverse</option>
+                    <option value="auto" ${summaryOrderMode === 'auto' ? 'selected' : ''} data-i18n="Auto">Auto</option>
+                    <option value="manual" ${summaryOrderMode === 'manual' ? 'selected' : ''} data-i18n="Manual">Manual</option>
+                    <option value="reverse" ${summaryOrderMode === 'reverse' ? 'selected' : ''} data-i18n="Reverse">Reverse</option>
                 </select>
             </div>
             <div id="stmb-settings-summary-order-value-row" class="world_entry_form_control" style="display:${summaryOrderMode === 'manual' ? 'block' : 'none'}">
-                <label for="stmb-settings-summary-order-value">Manual Summary Entry Order</label>
+                <label for="stmb-settings-summary-order-value" data-i18n="Manual Summary Entry Order">Manual Summary Entry Order</label>
                 <input type="number" id="stmb-settings-summary-order-value" class="text_pole" min="0" max="9999" step="1" value="${escapeHtml(String(summaryOrderValue))}">
             </div>
             <div id="stmb-settings-summary-reverse-start-row" class="world_entry_form_control" style="display:${summaryOrderMode === 'reverse' ? 'block' : 'none'}">
-                <label for="stmb-settings-summary-reverse-start">Reverse Summary Start Order</label>
+                <label for="stmb-settings-summary-reverse-start" data-i18n="Reverse Summary Start Order">Reverse Summary Start Order</label>
                 <input type="number" id="stmb-settings-summary-reverse-start" class="text_pole" min="100" max="9999" step="1" value="${escapeHtml(String(summaryReverseStart))}">
             </div>
 
             </section>
 
-            <h3 class="stmb-section-title">🧠 Memory Profiles</h3>
+            <h3 class="stmb-section-title" data-i18n="🧠 Memory Profiles">🧠 Memory Profiles</h3>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-title-format-select" title="Use [0], [00], [000] for plain auto-numbering; use [[0]], [[00]], [[000]] to keep square brackets. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}.">Memory Title Format</label>
+                <label for="stmb-settings-title-format-select" title="Use [0], [00], [000] for plain auto-numbering; use [[0]], [[00]], [[000]] to keep square brackets. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}." data-i18n="Memory Title Format">Memory Title Format</label>
                 <select id="stmb-settings-title-format-select" class="text_pole">
                     ${titleFormats.map(format => `<option value="${escapeHtml(format)}" ${!usesCustomTitleFormat && format === currentTitleFormat ? 'selected' : ''}>${escapeHtml(format)}</option>`).join('')}
-                    <option value="custom" ${usesCustomTitleFormat ? 'selected' : ''}>Custom Title Format...</option>
+                    <option value="custom" ${usesCustomTitleFormat ? 'selected' : ''} data-i18n="Custom Title Format...">Custom Title Format...</option>
                 </select>
-                <input type="text" id="stmb-settings-custom-title-format" class="text_pole marginTop5 ${usesCustomTitleFormat ? '' : 'displayNone'}" value="${escapeHtml(currentTitleFormat)}" placeholder="Enter custom format" title="Use [0], [00], [000] for plain auto-numbering; use [[0]], [[00]], [[000]] to keep square brackets. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}.">
+                <input type="text" id="stmb-settings-custom-title-format" class="text_pole marginTop5 ${usesCustomTitleFormat ? '' : 'displayNone'}" value="${escapeHtml(currentTitleFormat)}" placeholder="Enter custom format" title="Use [0], [00], [000] for plain auto-numbering; use [[0]], [[00]], [[000]] to keep square brackets. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}." data-i18n="[placeholder]Enter custom format">
             </div>
 
             <div class="world_entry_form_control">
-                <label for="stmb-settings-profile-select">Profile</label>
+                <label for="stmb-settings-profile-select" data-i18n="Profile">Profile</label>
                 <select id="stmb-settings-profile-select" class="text_pole">
-                    ${(settings.profiles || []).map((profile, index) => `<option value="${index}" ${index === selectedProfileIndex ? 'selected' : ''}>${escapeHtml(getProfileDisplayName(profile))}${index === settings.defaultProfile ? ' (Default)' : ''}</option>`).join('')}
+                    ${(settings.profiles || []).map((profile, index) => `<option value="${index}" ${index === selectedProfileIndex ? 'selected' : ''}>${escapeHtml(getProfileDisplayName(profile))}${index === settings.defaultProfile ? ` ${translate('(Default)')}` : ''}</option>`).join('')}
                 </select>
             </div>
             <div id="stmb-settings-profile-summary" class="info-block marginBot10">
-                <div class="marginBot5">Profile Settings:</div>
+                <div class="marginBot5" data-i18n="Profile Settings:">Profile Settings:</div>
                 <div>Provider: <span id="stmb-settings-summary-api">${escapeHtml(String(selectedProfile?.connection?.api === 'current_st' ? currentUiConnection.api : (selectedProfile?.connection?.api || 'openai')))}</span></div>
                 <div>Model: <span id="stmb-settings-summary-model">${escapeHtml(String(getProfileModelDisplay(selectedProfile) || 'Current SillyTavern model'))}</span></div>
                 <div>Temperature: <span id="stmb-settings-summary-temp">${escapeHtml(String(getProfileTemperatureDisplay(selectedProfile)))}</span></div>
                 <div>Title Format: <span id="stmb-settings-summary-title">${escapeHtml(String(selectedProfile?.titleFormat || settings.titleFormat || STMB_DEFAULT_TITLE_FORMAT))}</span></div>
                 <details class="marginTop10">
-                    <summary>View Prompt</summary>
+                    <summary data-i18n="View Prompt">View Prompt</summary>
                     <div class="padding10 marginTop5 stmb-box">
                         <pre><code id="stmb-settings-summary-prompt">${escapeHtml(String(getEffectivePromptText(selectedProfile) || ''))}</code></pre>
                     </div>
                 </details>
             </div>
             <div class="world_entry_form_control">
-                <div class="marginBot5">👤 Profile Actions</div>
+                <div class="marginBot5" data-i18n="👤 Profile Actions">👤 Profile Actions</div>
                 <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
-                    <div id="stmb-settings-profile-set-default" class="menu_button interactable">Set As Default</div>
-                    <div id="stmb-settings-profile-new" class="menu_button interactable">New Profile</div>
-                    <div id="stmb-settings-profile-edit" class="menu_button interactable">Edit Profile</div>
-                    <div id="stmb-settings-profile-delete" class="menu_button interactable">Delete Profile</div>
+                    <div id="stmb-settings-profile-set-default" class="menu_button interactable" data-i18n="Set As Default">Set As Default</div>
+                    <div id="stmb-settings-profile-new" class="menu_button interactable" data-i18n="New Profile">New Profile</div>
+                    <div id="stmb-settings-profile-edit" class="menu_button interactable" data-i18n="Edit Profile">Edit Profile</div>
+                    <div id="stmb-settings-profile-delete" class="menu_button interactable" data-i18n="Delete Profile">Delete Profile</div>
                 </div>
             </div>
             <input type="file" id="stmb-settings-import-file" accept=".json" class="displayNone">
             <div class="world_entry_form_control">
-                <div class="marginBot5">Import / Export Profiles</div>
+                <div class="marginBot5" data-i18n="Import / Export Profiles">Import / Export Profiles</div>
                 <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
-                    <div id="stmb-settings-profile-export" class="menu_button interactable">Export Profiles</div>
-                    <div id="stmb-settings-profile-import" class="menu_button interactable">Import Profiles</div>
+                    <div id="stmb-settings-profile-export" class="menu_button interactable" data-i18n="Export Profiles">Export Profiles</div>
+                    <div id="stmb-settings-profile-import" class="menu_button interactable" data-i18n="Import Profiles">Import Profiles</div>
                 </div>
             </div>
-            <h3 class="stmb-section-title">⚙️ Settings</h3>
+            <h3 class="stmb-section-title" data-i18n="⚙️ Settings">⚙️ Settings</h3>
             <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
-                <div id="stmb-settings-open-general-settings" class="menu_button interactable">General Settings</div>
-                <div id="stmb-settings-open-automatic-settings" class="menu_button interactable">Automatic Memories</div>
-                <div id="stmb-settings-open-prompt-manager" class="menu_button interactable">Open Summary Prompt Manager</div>
-                <div id="stmb-settings-open-arc-prompt-manager" class="menu_button interactable">Open Consolidation Prompt Manager</div>
-                <div id="stmb-settings-open-sideprompt-manager" class="menu_button interactable">Open Side Prompt Manager</div>
+                <div id="stmb-settings-open-general-settings" class="menu_button interactable" data-i18n="General Settings">General Settings</div>
+                <div id="stmb-settings-open-automatic-settings" class="menu_button interactable" data-i18n="Automatic Memories">Automatic Memories</div>
+                <div id="stmb-settings-open-prompt-manager" class="menu_button interactable" data-i18n="Open Summary Prompt Manager">Open Summary Prompt Manager</div>
+                <div id="stmb-settings-open-arc-prompt-manager" class="menu_button interactable" data-i18n="Open Consolidation Prompt Manager">Open Consolidation Prompt Manager</div>
+                <div id="stmb-settings-open-sideprompt-manager" class="menu_button interactable" data-i18n="Open Side Prompt Manager">Open Side Prompt Manager</div>
             </div>
         </div>
     `;
@@ -2379,7 +2379,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
 function buildSettingsPopupSceneSectionHtml(sceneData) {
     if (!sceneData?.hasScene) {
         return `
-            <div class="info-block warning marginBot10">
+            <div class="info-block warning marginBot10" data-i18n="No scene markers set. Use the inline scene buttons in chat messages to mark a start and end point.">
                 No scene markers set. Use the inline scene buttons in chat messages to mark a start and end point.
             </div>
         `;
@@ -2387,15 +2387,15 @@ function buildSettingsPopupSceneSectionHtml(sceneData) {
 
     return `
         <div class="padding10 marginBot10">
-            <div class="marginBot5">Current Scene:</div>
+            <div class="marginBot5" data-i18n="Current Scene:">Current Scene:</div>
             <div class="padding10 marginTop5 stmb-box">
-                <pre><code>Start: Message #${escapeHtml(String(sceneData.sceneStart))} (${escapeHtml(sceneData.startSpeaker || 'Unknown')})
+                <pre><code><span data-i18n="Start: Message #">Start: Message #</span>${escapeHtml(String(sceneData.sceneStart))} (${escapeHtml(sceneData.startSpeaker || translate('Unknown'))})
 ${escapeHtml(sceneData.startExcerpt || '')}
 
-End: Message #${escapeHtml(String(sceneData.sceneEnd))} (${escapeHtml(sceneData.endSpeaker || 'Unknown')})
+<span data-i18n="End: Message #">End: Message #</span>${escapeHtml(String(sceneData.sceneEnd))} (${escapeHtml(sceneData.endSpeaker || translate('Unknown'))})
 ${escapeHtml(sceneData.endExcerpt || '')}
 
-Messages: ${escapeHtml(String(sceneData.messageCount || 0))} | Estimated tokens: ${escapeHtml(String(sceneData.estimatedTokens ?? '?'))}</code></pre>
+<span data-i18n="Messages:">Messages:</span> ${escapeHtml(String(sceneData.messageCount || 0))} | <span data-i18n="Estimated tokens:">Estimated tokens:</span> ${escapeHtml(String(sceneData.estimatedTokens ?? '?'))}</code></pre>
             </div>
         </div>
     `;
@@ -2403,8 +2403,8 @@ Messages: ${escapeHtml(String(sceneData.messageCount || 0))} | Estimated tokens:
 
 function buildSettingsPopupMemoryStatusHtml(sceneData) {
     return Number.isInteger(sceneData?.highestProcessed)
-        ? `Memory Status: ${sceneData.highestProcessedManuallySet ? 'last processed message manually set to' : 'processed up to message'} #${escapeHtml(String(sceneData.highestProcessed))}.`
-        : 'Memory Status: no memories have been processed for this chat yet.';
+        ? t`Memory Status: ${translate(sceneData.highestProcessedManuallySet ? 'last processed message manually set to' : 'processed up to message')} #${escapeHtml(String(sceneData.highestProcessed))}.`
+        : translate('Memory Status: no memories have been processed for this chat yet.');
 }
 
 function syncSummaryOrderModuleSettings(moduleSettings, overrides = {}) {
@@ -2487,8 +2487,8 @@ function updateSettingsPopupDynamicState(dialog, currentUiConnection) {
         automaticInfo.innerHTML = `<small class="opacity50p">${manualMode
             ? ''
             : (activeLorebook
-                ? `Using chat-bound lorebook "${escapeHtml(activeLorebook)}"`
-                : 'No chat-bound lorebook. Memory creation will prompt for recovery when needed.')}</small>`;
+                ? t`Using chat-bound lorebook "${escapeHtml(activeLorebook)}"`
+                : translate('No chat-bound lorebook. Memory creation will prompt for recovery when needed.'))}</small>`;
     }
 
     const manualModeCheckbox = dialog.querySelector('#stmb-settings-manual-mode-enabled');
@@ -2536,7 +2536,7 @@ function updateSettingsPopupDynamicState(dialog, currentUiConnection) {
     }
     const regexSummary = dialog.querySelector('#stmb-settings-regex-summary');
     if (regexSummary) {
-        regexSummary.textContent = `Selected outgoing: ${(moduleSettings.selectedRegexOutgoing || []).length} | selected incoming: ${(moduleSettings.selectedRegexIncoming || []).length}`;
+        regexSummary.textContent = t`Selected outgoing: ${(moduleSettings.selectedRegexOutgoing || []).length} | selected incoming: ${(moduleSettings.selectedRegexIncoming || []).length}`;
     }
 
     const maxTokensInput = dialog.querySelector('#stmb-settings-max-tokens');
@@ -2553,7 +2553,7 @@ function updateSettingsPopupDynamicState(dialog, currentUiConnection) {
         Array.from(profileSelect.options).forEach(option => {
             const optionIndex = Number(option.value);
             const profile = stmbSettings.profiles?.[optionIndex];
-            option.textContent = `${getProfileDisplayName(profile)}${optionIndex === currentDefaultProfile ? ' (Default)' : ''}`;
+            option.textContent = t`${getProfileDisplayName(profile)}${optionIndex === currentDefaultProfile ? ` ${translate('(Default)')}` : ''}`;
         });
     }
 
@@ -2588,18 +2588,18 @@ async function showRegexSelectionPopup() {
     const moduleSettings = getModuleSettings();
     const popup = new Popup(DOMPurify.sanitize(`
         <div class="stmb-regex-selection-popup">
-            <h3>Regex selection</h3>
+            <h3 data-i18n="Regex selection">Regex selection</h3>
             <div class="world_entry_form_control">
-                <small class="opacity70p">Selecting a regex here will run it REGARDLESS of whether it is enabled or disabled.</small>
+                <small class="opacity70p" data-i18n="Selecting a regex here will run it REGARDLESS of whether it is enabled or disabled.">Selecting a regex here will run it REGARDLESS of whether it is enabled or disabled.</small>
             </div>
             <div class="world_entry_form_control">
-                <h4>Run regex before sending to AI</h4>
+                <h4 data-i18n="Run regex before sending to AI">Run regex before sending to AI</h4>
                 <select id="stmb-regex-popup-outgoing" class="text_pole" multiple size="${Math.max(4, Math.min(10, regexOptions.length || 4))}" style="width:100%">
                     ${renderSettingsMultiOptions(regexOptions, moduleSettings.selectedRegexOutgoing)}
                 </select>
             </div>
             <div class="world_entry_form_control">
-                <h4>Run regex before adding to lorebook (before previews)</h4>
+                <h4 data-i18n="Run regex before adding to lorebook (before previews)">Run regex before adding to lorebook (before previews)</h4>
                 <select id="stmb-regex-popup-incoming" class="text_pole" multiple size="${Math.max(4, Math.min(10, regexOptions.length || 4))}" style="width:100%">
                     ${renderSettingsMultiOptions(regexOptions, moduleSettings.selectedRegexIncoming)}
                 </select>
@@ -2609,8 +2609,8 @@ async function showRegexSelectionPopup() {
         wide: true,
         large: true,
         allowVerticalScrolling: true,
-        okButton: 'Save',
-        cancelButton: 'Close',
+        okButton: translate('Save'),
+        cancelButton: translate('Close'),
     });
 
     setTimeout(() => {
@@ -2645,11 +2645,11 @@ async function showRegexSelectionPopup() {
         moduleSettings.selectedRegexIncoming = readSelectedValues(popup.dlg?.querySelector('#stmb-regex-popup-incoming'));
         stmbSettings = normalizeStmbSettings(stmbSettings);
         saveSettingsDebounced();
-        toastr.success('Regex selections saved', 'STMB');
+        toastr.success(translate('Regex selections saved'), 'STMB');
         return true;
     } catch (error) {
         console.warn('STMB regex selection save failed', error);
-        toastr.error('Failed to save regex selections', 'STMB');
+        toastr.error(translate('Failed to save regex selections'), 'STMB');
         return false;
     }
 }
@@ -2896,7 +2896,7 @@ function buildSummaryPromptManagerRowsHtml(presets, selectedPresetKey = null) {
                                 <i class="fa-solid fa-trash"></i>
                             </button>
                             </span>
-                            ${preset.regenerationOnly ? '<small class="opacity70p" style="display:block;margin-top:4px;">Used only by the lorebook editor Regenerate action.</small>' : ''}
+                            ${preset.regenerationOnly ? '<small class="opacity70p" style="display:block;margin-top:4px;" data-i18n="Used only by the lorebook editor Regenerate action.">Used only by the lorebook editor Regenerate action.</small>' : ''}
                         </td>
                     </tr>
                 `).join('')}
@@ -2942,7 +2942,7 @@ function refreshSummaryPromptManagerList(dialog, selectedPresetKey = null, targe
         if (resolvedTarget) {
             applyButton.removeAttribute('title');
         } else {
-            applyButton.title = 'Save the profile first to apply a preset';
+            applyButton.title = translate('Save the profile first to apply a preset');
         }
     }
 }
@@ -3007,17 +3007,17 @@ async function openArcPromptEditPopup({ presetKey = null, duplicate = false } = 
         <div class="stmb-arc-prompt-editor">
             <h3>${sourceKey ? (duplicate ? 'Duplicate Consolidation Preset' : 'Edit Consolidation Preset') : 'Create New Consolidation Preset'}</h3>
             <div class="world_entry_form_control">
-                <label for="stmb-apm-edit-display-name">Display Name</label>
+                <label for="stmb-apm-edit-display-name" data-i18n="Display Name">Display Name</label>
                 <input id="stmb-apm-edit-display-name" class="text_pole" value="${escapeHtml(defaultDisplayName)}">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-apm-edit-prompt">Prompt</label>
+                <label for="stmb-apm-edit-prompt" data-i18n="Prompt">Prompt</label>
                 <textarea id="stmb-apm-edit-prompt" class="text_pole textarea_compact" rows="12">${escapeHtml(sourcePrompt)}</textarea>
             </div>
         </div>
     `), POPUP_TYPE.TEXT, '', withGoBackButton({
-        okButton: sourceKey && !duplicate ? 'Save' : 'Create',
-        cancelButton: 'Cancel',
+        okButton: sourceKey && !duplicate ? translate('Save') : translate('Create'),
+        cancelButton: translate('Cancel'),
         wide: true,
         large: true,
         allowVerticalScrolling: true,
@@ -3112,19 +3112,19 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
                     if (actionButton.classList.contains('stmb-action-edit')) {
                         const savedKey = await openSummaryPromptEditPopup({ presetKey: selectedPresetKey });
                         if (savedKey) {
-                            toastr.success(translate('Preset updated successfully', 'STMemoryBooks_PresetUpdatedSuccessfully'), 'Memory Books');
+                            toastr.success(translate('Preset updated successfully', 'STMemoryBooks_PresetUpdatedSuccessfully'), translate('Memory Books'));
                             await notifyChange();
                             await reopenManager();
                         }
                     } else if (actionButton.classList.contains('stmb-action-duplicate')) {
                         await duplicateSummaryPromptPreset(selectedPresetKey);
-                        toastr.success(translate('Preset duplicated successfully', 'STMemoryBooks_PresetDuplicatedSuccessfully'), 'Memory Books');
+                        toastr.success(translate('Preset duplicated successfully', 'STMemoryBooks_PresetDuplicatedSuccessfully'), translate('Memory Books'));
                         await notifyChange();
                         await reopenManager();
                     } else if (actionButton.classList.contains('stmb-action-delete')) {
                         const displayName = getSummaryPromptDisplayName(selectedPresetKey);
                         const confirmPopup = new Popup(
-                            `<h3 data-i18n="STMemoryBooks_DeletePresetTitle">${escapeHtml(translate('Delete Preset', 'STMemoryBooks_DeletePresetTitle'))}</h3><p>${escapeHtml(translate('Are you sure you want to delete "{{name}}"?', 'STMemoryBooks_DeletePresetConfirm').replace('{{name}}', displayName))}</p>`,
+                            t`<h3 data-i18n="STMemoryBooks_DeletePresetTitle">${escapeHtml(translate('Delete Preset', 'STMemoryBooks_DeletePresetTitle'))}</h3><p>${escapeHtml(translate('Are you sure you want to delete "{{name}}"?', 'STMemoryBooks_DeletePresetConfirm').replace('{{name}}', displayName))}</p>`,
                             POPUP_TYPE.CONFIRM,
                             '',
                             {
@@ -3142,12 +3142,12 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
                             return;
                         }
                         await removeSummaryPromptPreset(selectedPresetKey);
-                        toastr.success(translate('Preset deleted successfully', 'STMemoryBooks_PresetDeletedSuccessfully'), 'Memory Books');
+                        toastr.success(translate('Preset deleted successfully', 'STMemoryBooks_PresetDeletedSuccessfully'), translate('Memory Books'));
                         await notifyChange();
                         await reopenManager();
                     }
                 } catch (error) {
-                    toastr.error(error?.message || translate('Prompt manager action failed', 'STMemoryBooks_PromptManagerActionFailed'), 'Memory Books');
+                    toastr.error(error?.message || translate('Prompt manager action failed', 'STMemoryBooks_PromptManagerActionFailed'), translate('Memory Books'));
                 }
                 return;
             }
@@ -3163,12 +3163,12 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
                 try {
                     selectedPresetKey = await openSummaryPromptEditPopup({});
                     if (selectedPresetKey) {
-                        toastr.success(translate('Preset created successfully', 'STMemoryBooks_PresetCreatedSuccessfully'), 'Memory Books');
+                        toastr.success(translate('Preset created successfully', 'STMemoryBooks_PresetCreatedSuccessfully'), translate('Memory Books'));
                         await notifyChange();
                         await reopenManager();
                     }
                 } catch (error) {
-                    toastr.error(error?.message || translate('Failed to create preset', 'STMemoryBooks_FailedToCreatePreset'), 'Memory Books');
+                    toastr.error(error?.message || translate('Failed to create preset', 'STMemoryBooks_FailedToCreatePreset'), translate('Memory Books'));
                 }
                 return;
             }
@@ -3182,9 +3182,9 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
                     link.download = 'stmb-summary-prompts.json';
                     link.click();
                     URL.revokeObjectURL(url);
-                    toastr.success(translate('Prompts exported successfully', 'STMemoryBooks_PromptsExportedSuccessfully'), 'Memory Books');
+                    toastr.success(translate('Prompts exported successfully', 'STMemoryBooks_PromptsExportedSuccessfully'), translate('Memory Books'));
                 } catch (error) {
-                    toastr.error(error?.message || translate('Failed to export prompts', 'STMemoryBooks_FailedToExportPrompts'), 'Memory Books');
+                    toastr.error(error?.message || translate('Failed to export prompts', 'STMemoryBooks_FailedToExportPrompts'), translate('Memory Books'));
                 }
                 return;
             }
@@ -3196,7 +3196,7 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
 
             if (event.target.closest('#stmb-pm-recreate-builtins')) {
                 try {
-                    const confirmPopup = new Popup(`
+                    const confirmPopup = new Popup(t`
                     <h3>${escapeHtml(translate('Recreate Built-in Prompts', 'STMemoryBooks_RecreateBuiltinsTitle'))}</h3>
                     <div class="info-block warning">
                         ${escapeHtml(translate('This will remove overrides for all built-in presets (summary, summarize, synopsis, sumup, minimal, northgate, aelemar, comprehensive). Any customizations to these built-ins will be lost. After this, built-ins will follow the current app locale.', 'STMemoryBooks_RecreateBuiltinsWarning'))}
@@ -3216,11 +3216,11 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
                         return;
                     }
                     const result = await recreateBuiltInSummaryPromptOverrides();
-                    toastr.success(`Recreated ${result.replaced || 0} built-in prompt overrides`, 'Memory Books');
+                    toastr.success(t`Recreated ${result.replaced || 0} built-in prompt overrides`, translate('Memory Books'));
                     await notifyChange();
                     await reopenManager();
                 } catch (error) {
-                    toastr.error(error?.message || translate('Failed to recreate built-in prompts', 'STMemoryBooks_FailedToRecreateBuiltins'), 'Memory Books');
+                    toastr.error(error?.message || translate('Failed to recreate built-in prompts', 'STMemoryBooks_FailedToRecreateBuiltins'), translate('Memory Books'));
                 }
                 return;
             }
@@ -3229,7 +3229,7 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
                 try {
                     const applied = await applySummaryPromptPresetToSelectedProfile(selectedPresetKey, targetProfileIndex);
                     if (applied) {
-                        toastr.success(translate('Preset applied to profile', 'STMemoryBooks_PresetAppliedToProfile'), 'Memory Books');
+                        toastr.success(translate('Preset applied to profile', 'STMemoryBooks_PresetAppliedToProfile'), translate('Memory Books'));
                         await notifyChange({
                             type: 'apply',
                             presetKey: selectedPresetKey,
@@ -3237,7 +3237,7 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
                         });
                     }
                 } catch (error) {
-                    toastr.error(error?.message || translate('Failed to apply preset', 'STMemoryBooks_FailedToApplyPreset'), 'Memory Books');
+                    toastr.error(error?.message || translate('Failed to apply preset', 'STMemoryBooks_FailedToApplyPreset'), translate('Memory Books'));
                 }
             }
         });
@@ -3254,11 +3254,11 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
             }
             try {
                 await importSummaryPromptPresetsJson(await file.text());
-                toastr.success(translate('Prompts imported successfully', 'STMemoryBooks_PromptsImportedSuccessfully'), 'Memory Books');
+                toastr.success(translate('Prompts imported successfully', 'STMemoryBooks_PromptsImportedSuccessfully'), translate('Memory Books'));
                 await notifyChange();
                 await reopenManager();
             } catch (error) {
-                toastr.error(error?.message ? `${translate('Failed to import prompts', 'STMemoryBooks_FailedToImportPrompts')}: ${error.message}` : translate('Failed to import prompts', 'STMemoryBooks_FailedToImportPrompts'), 'Memory Books');
+                toastr.error(error?.message ? `${translate('Failed to import prompts', 'STMemoryBooks_FailedToImportPrompts')}: ${error.message}` : translate('Failed to import prompts', 'STMemoryBooks_FailedToImportPrompts'), translate('Memory Books'));
             }
         });
 
@@ -3271,7 +3271,7 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
         await popup.show();
     } catch (error) {
         console.error('Memory Books: Error showing prompt manager:', error);
-        toastr.error(translate('Failed to open Summary Prompt Manager', 'STMemoryBooks_FailedToOpenSummaryPromptManager'), 'Memory Books');
+        toastr.error(translate('Failed to open Summary Prompt Manager', 'STMemoryBooks_FailedToOpenSummaryPromptManager'), translate('Memory Books'));
     }
 }
 
@@ -3292,28 +3292,28 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
     let selectedPresetKey = null;
     const popup = new Popup(DOMPurify.sanitize(`
         <div class="stmb-arc-prompt-manager">
-            <h3>Consolidation Prompt Manager</h3>
+            <h3 data-i18n="Consolidation Prompt Manager">Consolidation Prompt Manager</h3>
             <div class="world_entry_form_control">
-                <p>Manage your consolidation analysis prompts. All presets are editable.</p>
+                <p data-i18n="Manage your consolidation analysis prompts. All presets are editable.">Manage your consolidation analysis prompts. All presets are editable.</p>
             </div>
             <div class="world_entry_form_control">
-                <input type="text" id="stmb-apm-search" class="text_pole" placeholder="Search consolidation presets..." aria-label="Search consolidation presets">
+                <input type="text" id="stmb-apm-search" class="text_pole" placeholder="Search consolidation presets..." aria-label="Search consolidation presets" data-i18n="[placeholder]Search consolidation presets...;[aria-label]Search consolidation presets">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-apm-default-preset">Set Default</label>
+                <label for="stmb-apm-default-preset" data-i18n="Set Default">Set Default</label>
                 <select id="stmb-apm-default-preset" class="text_pole" style="width:100%">
                     ${buildArcPromptDefaultOptionsHtml()}
                 </select>
-                <small>Used as the default preset for Consolidate Memories and auto-consolidation.</small>
+                <small data-i18n="Used as the default preset for Consolidate Memories and auto-consolidation.">Used as the default preset for Consolidate Memories and auto-consolidation.</small>
             </div>
             <div id="stmb-apm-list" class="padding10 marginBot10" style="max-height: 400px; overflow-y: auto;"></div>
             <div class="buttons_block justifyCenter gap10px whitespacenowrap">
-                <button id="stmb-apm-new" class="menu_button whitespacenowrap">New Consolidation Preset</button>
-                <button id="stmb-apm-export" class="menu_button whitespacenowrap">Export JSON</button>
-                <button id="stmb-apm-import" class="menu_button whitespacenowrap">Import JSON</button>
-                <button id="stmb-apm-recreate-builtins" class="menu_button whitespacenowrap">Recreate Built-in Consolidation Prompts</button>
+                <button id="stmb-apm-new" class="menu_button whitespacenowrap" data-i18n="New Consolidation Preset">New Consolidation Preset</button>
+                <button id="stmb-apm-export" class="menu_button whitespacenowrap" data-i18n="Export JSON">Export JSON</button>
+                <button id="stmb-apm-import" class="menu_button whitespacenowrap" data-i18n="Import JSON">Import JSON</button>
+                <button id="stmb-apm-recreate-builtins" class="menu_button whitespacenowrap" data-i18n="Recreate Built-in Consolidation Prompts">Recreate Built-in Consolidation Prompts</button>
             </div>
-            <small>These presets are used by Consolidate Memories and auto-consolidation.</small>
+            <small data-i18n="These presets are used by Consolidate Memories and auto-consolidation.">These presets are used by Consolidate Memories and auto-consolidation.</small>
             <input type="file" id="stmb-apm-import-file" accept=".json" style="display:none">
         </div>
     `), POPUP_TYPE.TEXT, '', withGoBackButton({
@@ -3321,7 +3321,7 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
         large: true,
         allowVerticalScrolling: true,
         okButton: false,
-        cancelButton: 'Close',
+        cancelButton: translate('Close'),
     }));
 
     const notifyChange = async () => {
@@ -3346,12 +3346,12 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
                     if (!savedKey) {
                         return;
                     }
-                    toastr.success('Consolidation preset updated successfully', 'STMB');
+                    toastr.success(translate('Consolidation preset updated successfully'), 'STMB');
                 } else if (actionButton.classList.contains('stmb-action-duplicate')) {
                     await duplicateArcPromptPreset(selectedPresetKey);
-                    toastr.success('Consolidation preset duplicated successfully', 'STMB');
+                    toastr.success(translate('Consolidation preset duplicated successfully'), 'STMB');
                 } else if (actionButton.classList.contains('stmb-action-delete')) {
-                    const confirm = await Popup.show.confirm('Delete Consolidation Preset', `Are you sure you want to delete "${escapeHtml(getArcPromptDisplayName(selectedPresetKey))}"?`);
+                    const confirm = await Popup.show.confirm(t`Delete Consolidation Preset`, t`Are you sure you want to delete "${escapeHtml(getArcPromptDisplayName(selectedPresetKey))}"?`);
                     if (!confirm) {
                         return;
                     }
@@ -3360,7 +3360,7 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
                     if (wasDefault && !listArcPromptPresets().some(preset => preset.key === selectedPresetKey)) {
                         setDefaultArcPromptKey(DEFAULT_ARC_PROMPT_KEY);
                     }
-                    toastr.success('Consolidation preset deleted successfully', 'STMB');
+                    toastr.success(translate('Consolidation preset deleted successfully'), 'STMB');
                     selectedPresetKey = null;
                 }
                 refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
@@ -3383,7 +3383,7 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
             try {
                 selectedPresetKey = await openArcPromptEditPopup({});
                 if (selectedPresetKey) {
-                    toastr.success('Consolidation preset created successfully', 'STMB');
+                    toastr.success(translate('Consolidation preset created successfully'), 'STMB');
                     refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
                     refreshArcPromptDefaultSelect(popup.dlg);
                     await notifyChange();
@@ -3403,7 +3403,7 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
                 link.download = 'stmb-arc-prompts.json';
                 link.click();
                 URL.revokeObjectURL(url);
-                toastr.success('Consolidation prompts exported successfully', 'STMB');
+                toastr.success(translate('Consolidation prompts exported successfully'), 'STMB');
             } catch (error) {
                 toastr.error(error?.message || 'Failed to export consolidation prompts', 'STMB');
             }
@@ -3417,8 +3417,8 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
 
         if (event.target.closest('#stmb-apm-recreate-builtins')) {
             const confirm = await Popup.show.confirm(
-                'Recreate Built-in Consolidation Prompts',
-                'This overwrites all built-in consolidation presets in your prompt file. Custom presets are not affected.',
+                translate('Recreate Built-in Consolidation Prompts'),
+                t`This overwrites all built-in consolidation presets in your prompt file. Custom presets are not affected.`,
             );
             if (!confirm) {
                 return;
@@ -3427,7 +3427,7 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
             selectedPresetKey = null;
             refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
             refreshArcPromptDefaultSelect(popup.dlg);
-            toastr.success(`Recreated ${result.replaced} built-in consolidation prompt overrides`, 'STMB');
+            toastr.success(t`Recreated ${result.replaced} built-in consolidation prompt overrides`, 'STMB');
             await notifyChange();
         }
     });
@@ -3436,7 +3436,7 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
         try {
             const selectedKey = setDefaultArcPromptKey(event.target?.value);
             refreshArcPromptDefaultSelect(popup.dlg);
-            toastr.success(`Default consolidation preset set to "${getArcPromptDisplayName(selectedKey)}"`, 'STMB');
+            toastr.success(t`Default consolidation preset set to "${getArcPromptDisplayName(selectedKey)}"`, 'STMB');
             await notifyChange();
         } catch (error) {
             refreshArcPromptDefaultSelect(popup.dlg);
@@ -3459,7 +3459,7 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
             selectedPresetKey = null;
             refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
             refreshArcPromptDefaultSelect(popup.dlg);
-            toastr.success('Consolidation prompts imported successfully', 'STMB');
+            toastr.success(translate('Consolidation prompts imported successfully'), 'STMB');
             await notifyChange();
         } catch (error) {
             toastr.error(error?.message || 'Failed to import consolidation prompts', 'STMB');
@@ -3516,7 +3516,7 @@ function showSidePromptRuntimeMacroImportNormalizationToast(strippedDetails) {
         .join('; ');
 
     toastr.warning(
-        `Stripped automatic triggers from imported side prompts because they contain custom runtime macros: ${details}.`,
+        t`Stripped automatic triggers from imported side prompts because they contain custom runtime macros: ${details}.`,
         'STMB',
         getSidePromptMacroToastOptions(),
     );
@@ -3543,7 +3543,7 @@ function validateSidePromptKeywordsMacroConfig({ prompt, responseFormat, keyword
     }
 
     toastr.error(
-        `Lorebook Entry Keywords may only use ST standard macros or macros already defined in Prompt or Response Format: ${disallowedMacros.join(', ')}.`,
+        t`Lorebook Entry Keywords may only use ST standard macros or macros already defined in Prompt or Response Format: ${disallowedMacros.join(', ')}.`,
         'STMB',
     );
     return { ok: false, disallowedMacros };
@@ -3570,7 +3570,7 @@ function validateSidePromptRuntimeMacroTriggerConfig({ name, prompt, responseFor
         const displayName = String(name || 'Untitled Side Prompt');
         const usage = `/sideprompt "${displayName}" ${runtimeMacros.map(token => `${token}="value"`).join(' ')}`;
         toastr.warning(
-            `Stripped ${strippedAutoTriggers.join(', ')} from "${displayName}" because it contains custom runtime macros: ${runtimeMacros.join(', ')}. Run it manually with ${usage}.`,
+            t`Stripped ${strippedAutoTriggers.join(', ')} from "${displayName}" because it contains custom runtime macros: ${runtimeMacros.join(', ')}. Run it manually with ${usage}.`,
             'STMB',
             getSidePromptMacroToastOptions(),
         );
@@ -3589,15 +3589,15 @@ function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
             <table style="width: 100%; border-collapse: collapse;">
                 <thead>
                     <tr>
-                        <th style="text-align:center;">Name</th>
-                        <th style="width: 240px; text-align:center;">Triggers</th>
-                        <th style="width: 120px; text-align:center;">Actions</th>
+                        <th style="text-align:center;" data-i18n="Name">Name</th>
+                        <th style="width: 240px; text-align:center;" data-i18n="Triggers">Triggers</th>
+                        <th style="width: 120px; text-align:center;" data-i18n="Actions">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
                         <td colspan="3">
-                            <div class="opacity50p">No side prompts available</div>
+                            <div class="opacity50p" data-i18n="No side prompts available">No side prompts available</div>
                         </td>
                     </tr>
                 </tbody>
@@ -3609,9 +3609,9 @@ function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
         <table style="width: 100%; border-collapse: collapse;">
             <thead>
                 <tr>
-                    <th style="text-align:center;">Name</th>
-                    <th style="width: 240px; text-align:center;">Triggers</th>
-                    <th style="width: 120px; text-align:center;">Actions</th>
+                    <th style="text-align:center;" data-i18n="Name">Name</th>
+                    <th style="width: 240px; text-align:center;" data-i18n="Triggers">Triggers</th>
+                    <th style="width: 120px; text-align:center;" data-i18n="Actions">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -3621,17 +3621,17 @@ function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
                         <td style="padding: 8px;">
                             ${getSidePromptTriggerBadges(template).length > 0
             ? getSidePromptTriggerBadges(template).map(badge => `<span class="badge" style="margin-right:6px;">${escapeHtml(badge)}</span>`).join('')
-            : '<span class="opacity50p">None</span>'}
+            : '<span class="opacity50p" data-i18n="None">None</span>'}
                         </td>
                         <td style="padding: 8px; text-align:right;">
                             <span class="stmb-sp-inline-actions whitespacenowrap" style="display: inline-flex; gap: 10px;">
-                            <button class="menu_button stmb-sp-action stmb-sp-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
+                            <button class="menu_button stmb-sp-action stmb-sp-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;" data-i18n="[title]Edit;[aria-label]Edit">
                                 <i class="fa-solid fa-pen"></i>
                             </button>
-                            <button class="menu_button stmb-sp-action stmb-sp-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
+                            <button class="menu_button stmb-sp-action stmb-sp-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;" data-i18n="[title]Duplicate;[aria-label]Duplicate">
                                 <i class="fa-solid fa-copy"></i>
                             </button>
-                            <button class="menu_button stmb-sp-action stmb-sp-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0; color:var(--redColor);">
+                            <button class="menu_button stmb-sp-action stmb-sp-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0; color:var(--redColor);" data-i18n="[title]Delete;[aria-label]Delete">
                                 <i class="fa-solid fa-trash"></i>
                             </button>
                             </span>
@@ -3677,22 +3677,22 @@ function buildAfterMemorySetModeHtml(sets = []) {
         : getModuleSettings().defaultSoloSidePromptSetKey) || '').trim();
     const defaultSet = sets.find(set => set.key === defaultKey);
     const defaultLabel = defaultKey
-        ? (defaultSet?.name || `Missing set: ${defaultKey}`)
-        : 'individually-enabled side prompts';
+        ? (defaultSet?.name || t`Missing set: ${defaultKey}`)
+        : translate('individually-enabled side prompts');
     const options = [
-        `<option value="inherit" ${!hasOverride ? 'selected' : ''}>Use ${selected_group ? 'group' : 'solo'} default (${escapeHtml(defaultLabel)})</option>`,
-        `<option value="individual" ${hasOverride && !selectedKey ? 'selected' : ''}>Use individually-enabled side prompts</option>`,
-        ...(hasSelected || !selectedKey ? [] : [`<option value="set:${escapeHtml(selectedKey)}" selected>Missing set: ${escapeHtml(selectedKey)}</option>`]),
+        `<option value="inherit" ${!hasOverride ? 'selected' : ''}>${t`Use ${translate(selected_group ? 'group' : 'solo')} default (${escapeHtml(defaultLabel)})`}</option>`,
+        `<option value="individual" ${hasOverride && !selectedKey ? 'selected' : ''} data-i18n="Use individually-enabled side prompts">Use individually-enabled side prompts</option>`,
+        ...(hasSelected || !selectedKey ? [] : [`<option value="set:${escapeHtml(selectedKey)}" selected>${t`Missing set: ${escapeHtml(selectedKey)}`}</option>`]),
         ...sets.map(set => `<option value="set:${escapeHtml(set.key)}" ${hasOverride && selectedKey === set.key ? 'selected' : ''}>${escapeHtml(set.name)}</option>`),
     ].join('');
 
     return `
         <div class="world_entry_form_control">
             <label for="stmb-sp-after-memory-set-mode">
-                <h4>After-memory side prompt mode for this chat</h4>
+                <h4 data-i18n="After-memory side prompt mode for this chat">After-memory side prompt mode for this chat</h4>
                 <select id="stmb-sp-after-memory-set-mode" class="text_pole">${options}</select>
             </label>
-            <small class="opacity70p">A per-chat selection overrides the default configured in General Settings.</small>
+            <small class="opacity70p" data-i18n="A per-chat selection overrides the default configured in General Settings.">A per-chat selection overrides the default configured in General Settings.</small>
         </div>
     `;
 }
@@ -3704,9 +3704,9 @@ function buildSidePromptSetsRowsHtml(sets = []) {
             <td style="padding: 8px; width: 80px;">${Number(set.items?.length || 0)}</td>
             <td style="padding: 8px; text-align:right; width: 140px;">
                 <span class="stmb-sp-inline-actions whitespacenowrap" style="display: inline-flex; gap: 10px;">
-                    <button class="menu_button stmb-sp-set-action stmb-sp-set-action-edit whitespacenowrap" title="Edit" aria-label="Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;"><i class="fa-solid fa-pen"></i></button>
-                    <button class="menu_button stmb-sp-set-action stmb-sp-set-action-duplicate whitespacenowrap" title="Duplicate" aria-label="Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;"><i class="fa-solid fa-copy"></i></button>
-                    <button class="menu_button stmb-sp-set-action stmb-sp-set-action-delete whitespacenowrap" title="Delete" aria-label="Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0; color:var(--redColor);"><i class="fa-solid fa-trash"></i></button>
+                    <button class="menu_button stmb-sp-set-action stmb-sp-set-action-edit whitespacenowrap" title="Edit" aria-label="Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;" data-i18n="[title]Edit;[aria-label]Edit"><i class="fa-solid fa-pen"></i></button>
+                    <button class="menu_button stmb-sp-set-action stmb-sp-set-action-duplicate whitespacenowrap" title="Duplicate" aria-label="Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;" data-i18n="[title]Duplicate;[aria-label]Duplicate"><i class="fa-solid fa-copy"></i></button>
+                    <button class="menu_button stmb-sp-set-action stmb-sp-set-action-delete whitespacenowrap" title="Delete" aria-label="Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0; color:var(--redColor);" data-i18n="[title]Delete;[aria-label]Delete"><i class="fa-solid fa-trash"></i></button>
                 </span>
             </td>
         </tr>
@@ -3714,24 +3714,24 @@ function buildSidePromptSetsRowsHtml(sets = []) {
 
     return `
         <div class="world_entry_form_control">
-            <h4>Side Prompt Sets</h4>
-            <small class="opacity70p">Sets run grouped side prompts manually or as the after-memory mode for this chat.</small>
+            <h4 data-i18n="Side Prompt Sets">Side Prompt Sets</h4>
+            <small class="opacity70p" data-i18n="Sets run grouped side prompts manually or as the after-memory mode for this chat.">Sets run grouped side prompts manually or as the after-memory mode for this chat.</small>
             <div style="max-height: 220px; overflow-y: auto; margin-top: 8px;">
                 <table style="width: 100%; border-collapse: collapse;">
                     <thead>
                         <tr>
-                            <th style="text-align:left;">Name</th>
-                            <th style="width: 80px; text-align:left;">Items</th>
-                            <th style="width: 140px; text-align:right;">Actions</th>
+                            <th style="text-align:left;" data-i18n="Name">Name</th>
+                            <th style="width: 80px; text-align:left;" data-i18n="Items">Items</th>
+                            <th style="width: 140px; text-align:right;" data-i18n="Actions">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${rows || '<tr><td colspan="3"><div class="opacity50p">No side prompt sets available</div></td></tr>'}
+                        ${rows || '<tr><td colspan="3"><div class="opacity50p" data-i18n="No side prompt sets available">No side prompt sets available</div></td></tr>'}
                     </tbody>
                 </table>
             </div>
             <div class="buttons_block justifyCenter gap10px whitespacenowrap" style="margin-top: 8px;">
-                <button id="stmb-sp-new-set" class="menu_button whitespacenowrap">New Set</button>
+                <button id="stmb-sp-new-set" class="menu_button whitespacenowrap" data-i18n="New Set">New Set</button>
             </div>
         </div>
     `;
@@ -3758,10 +3758,10 @@ function buildSetEditorRowHtml(templates = [], item = {}) {
         ? templates.some(template => template.key === currentPromptKey)
         : false;
     const options = [
-        '<option value="">Select side prompt...</option>',
+        '<option value="" data-i18n="Select side prompt...">Select side prompt...</option>',
         ...(hasCurrentTemplate || !currentPromptKey
             ? []
-            : [`<option value="${escapeHtml(currentPromptKey)}" selected>[Missing] ${escapeHtml(currentPromptKey)}</option>`]),
+            : [`<option value="${escapeHtml(currentPromptKey)}" selected>${t`[Missing] ${escapeHtml(currentPromptKey)}`}</option>`]),
         ...templates.map(template => `<option value="${escapeHtml(template.key)}" ${currentPromptKey === template.key ? 'selected' : ''}>${escapeHtml(template.name || template.key)}</option>`),
     ].join('');
     const macros = JSON.stringify(item.runtimeMacros || {}, null, 2);
@@ -3772,13 +3772,13 @@ function buildSetEditorRowHtml(templates = [], item = {}) {
                 <select class="text_pole stmb-sp-set-item-prompt">${options}</select>
             </td>
             <td style="padding: 6px; vertical-align: top;">
-                <input class="text_pole stmb-sp-set-item-label" value="${escapeHtml(String(item.label || ''))}" placeholder="Optional entry title label">
+                <input class="text_pole stmb-sp-set-item-label" value="${escapeHtml(String(item.label || ''))}" placeholder="Optional entry title label" data-i18n="[placeholder]Optional entry title label">
             </td>
             <td style="padding: 6px; vertical-align: top;">
                 <textarea class="text_pole stmb-sp-set-item-macros" rows="3" placeholder='{"{{topic}}":"value"}'>${escapeHtml(macros)}</textarea>
             </td>
             <td style="padding: 6px; vertical-align: top; text-align:right;">
-                <button type="button" class="menu_button stmb-sp-set-item-remove" title="Remove" aria-label="Remove" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0; color:var(--redColor);"><i class="fa-solid fa-trash"></i></button>
+                <button type="button" class="menu_button stmb-sp-set-item-remove" title="Remove" aria-label="Remove" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0; color:var(--redColor);" data-i18n="[title]Remove;[aria-label]Remove"><i class="fa-solid fa-trash"></i></button>
             </td>
         </tr>
     `;
@@ -3807,20 +3807,20 @@ function buildSidePromptSetEditorHtml(set = null, templates = []) {
             ${set?.key ? `<div class="world_entry_form_control"><small class="opacity50p">Key: <code>${escapeHtml(set.key)}</code></small></div>` : ''}
             <div class="world_entry_form_control">
                 <label for="stmb-sp-set-editor-name">
-                    <h4>Name:</h4>
-                    <input id="stmb-sp-set-editor-name" class="text_pole" value="${escapeHtml(String(set?.name || ''))}" placeholder="My Side Prompt Set">
+                    <h4 data-i18n="Name:">Name:</h4>
+                    <input id="stmb-sp-set-editor-name" class="text_pole" value="${escapeHtml(String(set?.name || ''))}" placeholder="My Side Prompt Set" data-i18n="[placeholder]My Side Prompt Set">
                 </label>
             </div>
             <div class="world_entry_form_control">
-                <h4>Set Items</h4>
+                <h4 data-i18n="Set Items">Set Items</h4>
                 <small class="opacity70p">Each row runs one side prompt. Runtime macros are JSON maps such as <code>{"{{topic}}":"trust"}</code>; values may reference macroset inputs.</small>
                 <div style="overflow-x:auto; margin-top: 8px;">
                     <table style="width: 100%; border-collapse: collapse;">
                         <thead>
                             <tr>
-                                <th style="text-align:left; min-width: 180px;">Side Prompt</th>
-                                <th style="text-align:left; min-width: 180px;">Label</th>
-                                <th style="text-align:left; min-width: 220px;">Runtime Macros JSON</th>
+                                <th style="text-align:left; min-width: 180px;" data-i18n="Side Prompt">Side Prompt</th>
+                                <th style="text-align:left; min-width: 180px;" data-i18n="Label">Label</th>
+                                <th style="text-align:left; min-width: 220px;" data-i18n="Runtime Macros JSON">Runtime Macros JSON</th>
                                 <th style="width: 60px;"></th>
                             </tr>
                         </thead>
@@ -3828,7 +3828,7 @@ function buildSidePromptSetEditorHtml(set = null, templates = []) {
                     </table>
                 </div>
                 <div class="buttons_block justifyCenter gap10px whitespacenowrap" style="margin-top: 8px;">
-                    <button type="button" id="stmb-sp-set-add-row" class="menu_button whitespacenowrap">Add Row</button>
+                    <button type="button" id="stmb-sp-set-add-row" class="menu_button whitespacenowrap" data-i18n="Add Row">Add Row</button>
                 </div>
             </div>
         </div>
@@ -3908,8 +3908,8 @@ export async function openSidePromptSetEditorPopup({ setKey = null } = {}) {
 
     const templates = await listTemplates();
     const popup = new Popup(DOMPurify.sanitize(buildSidePromptSetEditorHtml(set, templates)), POPUP_TYPE.TEXT, '', withGoBackButton({
-        okButton: set ? 'Save' : 'Create',
-        cancelButton: 'Cancel',
+        okButton: set ? translate('Save') : translate('Create'),
+        cancelButton: translate('Cancel'),
         wide: true,
         large: true,
         allowVerticalScrolling: false,
@@ -4087,34 +4087,34 @@ function buildSidePromptLorebookTargetHtml(template = null) {
 
     return `
         <div class="world_entry_form_control">
-            <h4>Lorebook Target</h4>
+            <h4 data-i18n="Lorebook Target">Lorebook Target</h4>
             <div class="info-block">
-                <small class="opacity50p">Current Target:</small>
+                <small class="opacity50p" data-i18n="Current Target:">Current Target:</small>
                 <h5>${escapeHtml(targetInfo.value || 'None selected')}</h5>
-                <small class="opacity50p">Source:</small>
+                <small class="opacity50p" data-i18n="Source:">Source:</small>
                 <h5>${escapeHtml(targetInfo.sourceLabel)}</h5>
             </div>
             <label for="stmb-sp-editor-lorebook-target">
-                <h5 style="margin: 8px 0 4px 0;">Save side prompt entry to:</h5>
+                <h5 style="margin: 8px 0 4px 0;" data-i18n="Save side prompt entry to:">Save side prompt entry to:</h5>
                 <select id="stmb-sp-editor-lorebook-target" class="text_pole" data-original-value="${escapeHtml(selectedValue)}">
                     ${options}
                 </select>
             </label>
-            <small class="opacity70p">Changing this target will ask whether to save it for this chat only or for this side prompt going forward.</small>
+            <small class="opacity70p" data-i18n="Changing this target will ask whether to save it for this chat only or for this side prompt going forward.">Changing this target will ask whether to save it for this chat only or for this side prompt going forward.</small>
         </div>
     `;
 }
 
 async function promptSidePromptLorebookTargetScope() {
     const popup = new Popup(DOMPurify.sanitize(`
-        <h3>Save Lorebook Target</h3>
-        <p>Save this side prompt lorebook target for this chat only, or for this side prompt going forward?</p>
+        <h3 data-i18n="Save Lorebook Target">Save Lorebook Target</h3>
+        <p data-i18n="Save this side prompt lorebook target for this chat only, or for this side prompt going forward?">Save this side prompt lorebook target for this chat only, or for this side prompt going forward?</p>
     `), POPUP_TYPE.TEXT, '', {
         okButton: false,
-        cancelButton: 'Cancel',
+        cancelButton: translate('Cancel'),
         customButtons: [
-            { text: 'This chat only', result: POPUP_RESULT.CUSTOM1, appendAtEnd: true },
-            { text: 'This side prompt going forward', result: POPUP_RESULT.CUSTOM2, appendAtEnd: true },
+            { text: translate('This chat only'), result: POPUP_RESULT.CUSTOM1, appendAtEnd: true },
+            { text: translate('This side prompt going forward'), result: POPUP_RESULT.CUSTOM2, appendAtEnd: true },
         ],
     });
     const result = await popup.show();
@@ -4153,121 +4153,121 @@ function buildSidePromptEditorHtml(template = null, options = {}) {
             ${template?.key ? `<div class="world_entry_form_control"><small class="opacity50p">Key: <code>${escapeHtml(template.key)}</code></small></div>` : ''}
             <div class="world_entry_form_control">
                 <label for="stmb-sp-editor-name">
-                    <h4>Name:</h4>
+                    <h4 data-i18n="Name:">Name:</h4>
                     <input id="stmb-sp-editor-name" class="text_pole" value="${escapeHtml(String(template?.name || ''))}" placeholder="${template ? '' : 'My Side Prompt'}">
                 </label>
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-enabled" ${template?.enabled ? 'checked' : ''}> <span>Enabled</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-enabled" ${template?.enabled ? 'checked' : ''}> <span data-i18n="Enabled">Enabled</span></label>
             </div>
             <div class="world_entry_form_control">
-                <h4>Triggers:</h4>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-trigger-interval" ${intervalEnabled ? 'checked' : ''}> <span>Run on visible message interval</span></label>
+                <h4 data-i18n="Triggers:">Triggers:</h4>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-trigger-interval" ${intervalEnabled ? 'checked' : ''}> <span data-i18n="Run on visible message interval">Run on visible message interval</span></label>
                 <div id="stmb-sp-editor-interval-container" style="display:${intervalEnabled ? 'block' : 'none'}; margin-left: 28px;">
                     <label for="stmb-sp-editor-interval">
-                        <h4 style="margin: 0 0 4px 0;">Interval (visible messages):</h4>
+                        <h4 style="margin: 0 0 4px 0;" data-i18n="Interval (visible messages):">Interval (visible messages):</h4>
                         <input id="stmb-sp-editor-interval" type="number" min="1" step="1" class="text_pole" value="${escapeHtml(String(intervalValue))}">
                     </label>
                 </div>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-trigger-after-memory" ${afterMemoryEnabled ? 'checked' : ''}> <span>Run automatically after memory</span></label>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-trigger-manual" ${manualEnabled ? 'checked' : ''}> <span>Allow manual run via /sideprompt</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-trigger-after-memory" ${afterMemoryEnabled ? 'checked' : ''}> <span data-i18n="Run automatically after memory">Run automatically after memory</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-trigger-manual" ${manualEnabled ? 'checked' : ''}> <span data-i18n="Allow manual run via /sideprompt">Allow manual run via /sideprompt</span></label>
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-sp-editor-prompt">
-                    <h4>Prompt:</h4>
-                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="stmb-sp-editor-prompt" title="Expand the editor"></i>
+                    <h4 data-i18n="Prompt:">Prompt:</h4>
+                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="stmb-sp-editor-prompt" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
                     <textarea id="stmb-sp-editor-prompt" class="text_pole textarea_compact" rows="10">${escapeHtml(String(template?.prompt || ''))}</textarea>
                 </label>
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-sp-editor-response-format">
-                    <h4>Response Format (optional):</h4>
-                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="stmb-sp-editor-response-format" title="Expand the editor"></i>
+                    <h4 data-i18n="Response Format (optional):">Response Format (optional):</h4>
+                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="stmb-sp-editor-response-format" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
                     <textarea id="stmb-sp-editor-response-format" class="text_pole textarea_compact" rows="6">${escapeHtml(String(template?.responseFormat || ''))}</textarea>
                 </label>
             </div>
             <div class="world_entry_form_control">
-                <h4 class="stmb-section-title">Lorebook Entry Settings</h4>
+                <h4 class="stmb-section-title" data-i18n="Lorebook Entry Settings">Lorebook Entry Settings</h4>
                 <label for="stmb-sp-editor-title-override">
-                    <h5 style="margin: 8px 0 4px 0;">Lorebook Entry Title Override</h5>
-                    <small class="opacity70p">Optional. Standard ST macros and required runtime macros are resolved here, and STMB still appends (STMB SidePrompt).</small>
+                    <h5 style="margin: 8px 0 4px 0;" data-i18n="Lorebook Entry Title Override">Lorebook Entry Title Override</h5>
+                    <small class="opacity70p" data-i18n="Optional. Standard ST macros and required runtime macros are resolved here, and STMB still appends (STMB SidePrompt).">Optional. Standard ST macros and required runtime macros are resolved here, and STMB still appends (STMB SidePrompt).</small>
                     <input id="stmb-sp-editor-title-override" class="text_pole" value="${escapeHtml(String(lorebook.entryTitleOverride || ''))}" placeholder="Optional title template (e.g., NPC {{npcname}})">
                 </label>
                 <label for="stmb-sp-editor-keywords" class="marginTop5">
-                    <h5 style="margin: 8px 0 4px 0;">Lorebook Entry Keywords</h5>
-                    <small class="opacity70p">Optional. If filled in, these keywords are applied to the upserted lorebook entry. You may only use macros already present in Prompt or Response Format.</small>
-                    <input id="stmb-sp-editor-keywords" class="text_pole" value="${escapeHtml(String(lorebook.entryKeywords || ''))}" placeholder="Optional comma-separated keywords" title="You can only use ST standard macros or macros already defined in Prompt or Response Format.">
+                    <h5 style="margin: 8px 0 4px 0;" data-i18n="Lorebook Entry Keywords">Lorebook Entry Keywords</h5>
+                    <small class="opacity70p" data-i18n="Optional. If filled in, these keywords are applied to the upserted lorebook entry. You may only use macros already present in Prompt or Response Format.">Optional. If filled in, these keywords are applied to the upserted lorebook entry. You may only use macros already present in Prompt or Response Format.</small>
+                    <input id="stmb-sp-editor-keywords" class="text_pole" value="${escapeHtml(String(lorebook.entryKeywords || ''))}" placeholder="Optional comma-separated keywords" title="You can only use ST standard macros or macros already defined in Prompt or Response Format." data-i18n="[title]You can only use ST standard macros or macros already defined in Prompt or Response Format.;[placeholder]Optional comma-separated keywords">
                 </label>
             </div>
             ${buildSidePromptLorebookTargetHtml(template)}
             <div class="world_entry_form_control">
                 <div class="flex-container" style="gap:12px; flex-wrap: wrap;">
                     <label>
-                        <h5 style="margin: 0 0 4px 0;">Activation Mode</h5>
+                        <h5 style="margin: 0 0 4px 0;" data-i18n="Activation Mode">Activation Mode</h5>
                         <select id="stmb-sp-editor-lorebook-mode" class="text_pole">
-                            <option value="link" ${lorebookMode === 'link' ? 'selected' : ''}>Vectorized</option>
-                            <option value="green" ${lorebookMode === 'green' ? 'selected' : ''}>Normal</option>
-                            <option value="blue" ${lorebookMode === 'blue' ? 'selected' : ''}>Constant</option>
+                            <option value="link" ${lorebookMode === 'link' ? 'selected' : ''} data-i18n="Vectorized">Vectorized</option>
+                            <option value="green" ${lorebookMode === 'green' ? 'selected' : ''} data-i18n="Normal">Normal</option>
+                            <option value="blue" ${lorebookMode === 'blue' ? 'selected' : ''} data-i18n="Constant">Constant</option>
                         </select>
                     </label>
                     <label>
-                        <h5 style="margin: 0 0 4px 0;">Insertion Position:</h5>
+                        <h5 style="margin: 0 0 4px 0;" data-i18n="Insertion Position:">Insertion Position:</h5>
                         <select id="stmb-sp-editor-lorebook-position" class="text_pole">
-                            <option value="0" ${lorebookPosition === 0 ? 'selected' : ''}>↑Char</option>
-                            <option value="1" ${lorebookPosition === 1 ? 'selected' : ''}>↓Char</option>
-                            <option value="5" ${lorebookPosition === 5 ? 'selected' : ''}>↑EM</option>
-                            <option value="6" ${lorebookPosition === 6 ? 'selected' : ''}>↓EM</option>
-                            <option value="2" ${lorebookPosition === 2 ? 'selected' : ''}>↑AN</option>
-                            <option value="3" ${lorebookPosition === 3 ? 'selected' : ''}>↓AN</option>
-                            <option value="7" ${lorebookPosition === 7 ? 'selected' : ''}>Outlet</option>
+                            <option value="0" ${lorebookPosition === 0 ? 'selected' : ''} data-i18n="↑Char">↑Char</option>
+                            <option value="1" ${lorebookPosition === 1 ? 'selected' : ''} data-i18n="↓Char">↓Char</option>
+                            <option value="5" ${lorebookPosition === 5 ? 'selected' : ''} data-i18n="↑EM">↑EM</option>
+                            <option value="6" ${lorebookPosition === 6 ? 'selected' : ''} data-i18n="↓EM">↓EM</option>
+                            <option value="2" ${lorebookPosition === 2 ? 'selected' : ''} data-i18n="↑AN">↑AN</option>
+                            <option value="3" ${lorebookPosition === 3 ? 'selected' : ''} data-i18n="↓AN">↓AN</option>
+                            <option value="7" ${lorebookPosition === 7 ? 'selected' : ''} data-i18n="Outlet">Outlet</option>
                         </select>
                         <div id="stmb-sp-editor-outlet-container" style="display:${lorebookPosition === 7 ? 'block' : 'none'}; margin-top: 8px;">
                             <label for="stmb-sp-editor-outlet-name">
-                                <h5 style="margin: 0 0 4px 0;">Outlet Name:</h5>
-                                <input id="stmb-sp-editor-outlet-name" class="text_pole" value="${escapeHtml(String(lorebook.outletName || ''))}" placeholder="Outlet name">
+                                <h5 style="margin: 0 0 4px 0;" data-i18n="Outlet Name:">Outlet Name:</h5>
+                                <input id="stmb-sp-editor-outlet-name" class="text_pole" value="${escapeHtml(String(lorebook.outletName || ''))}" placeholder="Outlet name" data-i18n="[placeholder]Outlet name">
                             </label>
                         </div>
                     </label>
                 </div>
             </div>
             <div class="world_entry_form_control">
-                <h5>Insertion Order:</h5>
-                <label class="radio_label"><input type="radio" name="stmb-sp-editor-order-mode" id="stmb-sp-editor-order-auto" value="auto" ${manualOrder ? '' : 'checked'}> <span>Auto (uses memory #)</span></label>
-                <label class="radio_label"><input type="radio" name="stmb-sp-editor-order-mode" id="stmb-sp-editor-order-manual" value="manual" ${manualOrder ? 'checked' : ''}> <span>Manual</span></label>
+                <h5 data-i18n="Insertion Order:">Insertion Order:</h5>
+                <label class="radio_label"><input type="radio" name="stmb-sp-editor-order-mode" id="stmb-sp-editor-order-auto" value="auto" ${manualOrder ? '' : 'checked'}> <span data-i18n="Auto (uses memory #)">Auto (uses memory #)</span></label>
+                <label class="radio_label"><input type="radio" name="stmb-sp-editor-order-mode" id="stmb-sp-editor-order-manual" value="manual" ${manualOrder ? 'checked' : ''}> <span data-i18n="Manual">Manual</span></label>
             </div>
             <div id="stmb-sp-editor-order-value-container" class="world_entry_form_control" style="display:${manualOrder ? 'block' : 'none'}">
                 <label for="stmb-sp-editor-order-value">
-                    <h5>Order Value:</h5>
+                    <h5 data-i18n="Order Value:">Order Value:</h5>
                     <input id="stmb-sp-editor-order-value" type="number" step="1" class="text_pole" value="${escapeHtml(String(orderValue))}">
                 </label>
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-prevent-recursion" ${lorebook.preventRecursion !== false ? 'checked' : ''}> <span>Prevent Recursion</span></label>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-delay-recursion" ${lorebook.delayUntilRecursion ? 'checked' : ''}> <span>Delay Until Recursion</span></label>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-ignore-budget" ${lorebook.ignoreBudget ? 'checked' : ''}> <span>Ignore Budget</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-prevent-recursion" ${lorebook.preventRecursion !== false ? 'checked' : ''}> <span data-i18n="Prevent Recursion">Prevent Recursion</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-delay-recursion" ${lorebook.delayUntilRecursion ? 'checked' : ''}> <span data-i18n="Delay Until Recursion">Delay Until Recursion</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-ignore-budget" ${lorebook.ignoreBudget ? 'checked' : ''}> <span data-i18n="Ignore Budget">Ignore Budget</span></label>
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-sp-editor-previous-memories">
-                    <h5>Previous memories for context:</h5>
+                    <h5 data-i18n="Previous memories for context:">Previous memories for context:</h5>
                     <input id="stmb-sp-editor-previous-memories" type="number" min="0" max="7" step="1" class="text_pole" value="${escapeHtml(String(previousMemoriesCount))}">
                 </label>
-                <small class="opacity70p">Number of previous memory entries to include before scene text (0 = none).</small>
+                <small class="opacity70p" data-i18n="Number of previous memory entries to include before scene text (0 = none).">Number of previous memory entries to include before scene text (0 = none).</small>
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-sp-editor-additional-context">
-                    <h5>Additional Context Source:</h5>
+                    <h5 data-i18n="Additional Context Source:">Additional Context Source:</h5>
                     <select id="stmb-sp-editor-additional-context" class="text_pole">
                         ${buildAdditionalContextSourceOptionsHtml(contextSettings, settings.additionalContext)}
                     </select>
                 </label>
             </div>
             <div class="world_entry_form_control">
-                <h5>Overrides:</h5>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-override-profile-enabled" ${overrideProfileEnabled ? 'checked' : ''}> <span>Override default memory profile</span></label>
+                <h5 data-i18n="Overrides:">Overrides:</h5>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-override-profile-enabled" ${overrideProfileEnabled ? 'checked' : ''}> <span data-i18n="Override default memory profile">Override default memory profile</span></label>
             </div>
             <div id="stmb-sp-editor-override-profile-container" class="world_entry_form_control" style="display:${overrideProfileEnabled ? 'block' : 'none'}">
                 <label for="stmb-sp-editor-override-profile-index">
-                    <h4>Connection Profile:</h4>
+                    <h4 data-i18n="Connection Profile:">Connection Profile:</h4>
                     <select id="stmb-sp-editor-override-profile-index" class="text_pole">
                         ${buildSidePromptProfileOptionsHtml(overrideProfileIndex)}
                     </select>
@@ -4456,8 +4456,8 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
         mode: template ? 'edit' : 'new',
         contextSettings,
     })), POPUP_TYPE.TEXT, '', withGoBackButton({
-        okButton: template ? 'Save' : 'Create',
-        cancelButton: 'Cancel',
+        okButton: template ? translate('Save') : translate('Create'),
+        cancelButton: translate('Cancel'),
         wide: true,
         large: true,
         allowVerticalScrolling: false,
@@ -4479,10 +4479,10 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
                 await refreshSidePromptCache();
                 window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
                 if (!template && payload.name.trim() === '') {
-                    toastr.info('No name provided. Using "Untitled Side Prompt".', 'STMB');
+                    toastr.info(translate('No name provided. Using "Untitled Side Prompt".'), 'STMB');
                 }
                 if (template && payload.name.trim() === '') {
-                    toastr.info('Name was empty. Keeping previous name.', 'STMB');
+                    toastr.info(translate('Name was empty. Keeping previous name.'), 'STMB');
                 }
                 return true;
             } catch (error) {
@@ -4512,32 +4512,32 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
         : 1;
     const popup = new Popup(DOMPurify.sanitize(`
         <div class="stmb-sideprompt-manager-popup">
-            <h3>Trackers & Side Prompts</h3>
+            <h3 data-i18n="Trackers & Side Prompts">Trackers & Side Prompts</h3>
             <div class="world_entry_form_control">
-                <p>Create and manage side prompts for trackers and other behind-the-scenes functions.</p>
+                <p data-i18n="Create and manage side prompts for trackers and other behind-the-scenes functions.">Create and manage side prompts for trackers and other behind-the-scenes functions.</p>
             </div>
             <div id="stmb-sp-set-controls"></div>
             <div class="world_entry_form_control">
-                <input type="text" id="stmb-sp-search" class="text_pole" placeholder="Search side prompts..." aria-label="Search side prompts">
+                <input type="text" id="stmb-sp-search" class="text_pole" placeholder="Search side prompts..." aria-label="Search side prompts" data-i18n="[placeholder]Search side prompts...;[aria-label]Search side prompts">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-sp-max-concurrent"><h4>How many concurrent prompts to run at once</h4></label>
+                <label for="stmb-sp-max-concurrent"><h4 data-i18n="How many concurrent prompts to run at once">How many concurrent prompts to run at once</h4></label>
                 <input type="number" id="stmb-sp-max-concurrent" class="text_pole" min="1" max="5" step="1" value="${escapeHtml(String(maxConcurrent))}">
-                <small class="opacity70p">Range 1-5. Defaults to 1. Runtime generation is capped at 2.</small>
+                <small class="opacity70p" data-i18n="Range 1-5. Defaults to 1. Runtime generation is capped at 2.">Range 1-5. Defaults to 1. Runtime generation is capped at 2.</small>
             </div>
             <div id="stmb-sp-list" class="padding10 marginBot10" style="max-height: 400px; overflow-y: auto;"></div>
             <div class="buttons_block justifyCenter gap10px whitespacenowrap">
-                <button id="stmb-sp-new" class="menu_button whitespacenowrap">New</button>
-                <button id="stmb-sp-export" class="menu_button whitespacenowrap">Export JSON</button>
-                <button id="stmb-sp-import" class="menu_button whitespacenowrap">Import JSON</button>
-                <button id="stmb-sp-compact-review" class="menu_button whitespacenowrap">Compaction</button>
-                <button id="stmb-sp-recreate-builtins" class="menu_button whitespacenowrap">Recreate Built-in Side Prompts</button>
+                <button id="stmb-sp-new" class="menu_button whitespacenowrap" data-i18n="New">New</button>
+                <button id="stmb-sp-export" class="menu_button whitespacenowrap" data-i18n="Export JSON">Export JSON</button>
+                <button id="stmb-sp-import" class="menu_button whitespacenowrap" data-i18n="Import JSON">Import JSON</button>
+                <button id="stmb-sp-compact-review" class="menu_button whitespacenowrap" data-i18n="Compaction">Compaction</button>
+                <button id="stmb-sp-recreate-builtins" class="menu_button whitespacenowrap" data-i18n="Recreate Built-in Side Prompts">Recreate Built-in Side Prompts</button>
             </div>
             <input type="file" id="stmb-sp-import-file" accept=".json" style="display:none">
         </div>
     `), POPUP_TYPE.TEXT, '', withGoBackButton({
         okButton: false,
-        cancelButton: 'Close',
+        cancelButton: translate('Close'),
         wide: true,
         large: true,
         allowVerticalScrolling: true,
@@ -4579,19 +4579,19 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                 if (setActionButton.classList.contains('stmb-sp-set-action-edit')) {
                     const savedKey = await openSidePromptSetEditorPopup({ setKey });
                     if (!savedKey) return;
-                    toastr.success('Side prompt set updated successfully', 'STMB');
+                    toastr.success(translate('Side prompt set updated successfully'), 'STMB');
                 } else if (setActionButton.classList.contains('stmb-sp-set-action-duplicate')) {
                     await duplicateSet(setKey);
                     await refreshSidePromptCache();
                     window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
-                    toastr.success('Side prompt set duplicated successfully', 'STMB');
+                    toastr.success(translate('Side prompt set duplicated successfully'), 'STMB');
                 } else if (setActionButton.classList.contains('stmb-sp-set-action-delete')) {
                     const set = await getSet(setKey);
                     const confirmPopup = new Popup(
-                        `<h3>Delete Side Prompt Set</h3><p>Delete "${escapeHtml(set?.name || setKey)}"? Chats using this set will run no after-memory side prompts until a new mode is selected.</p>`,
+                        t`<h3 data-i18n="Delete Side Prompt Set">Delete Side Prompt Set</h3><p>${t`Delete "${escapeHtml(set?.name || setKey)}"? Chats using this set will run no after-memory side prompts until a new mode is selected.`}</p>`,
                         POPUP_TYPE.CONFIRM,
                         '',
-                        { okButton: 'Delete', cancelButton: 'Cancel' },
+                        { okButton: translate('Delete'), cancelButton: translate('Cancel') },
                     );
                     const confirmed = await confirmPopup.show();
                     if (confirmed !== POPUP_RESULT.AFFIRMATIVE) {
@@ -4614,7 +4614,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                     }
                     await refreshSidePromptCache();
                     window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
-                    toastr.success('Side prompt set deleted successfully', 'STMB');
+                    toastr.success(translate('Side prompt set deleted successfully'), 'STMB');
                 }
                 await refreshSidePromptSetControls(popup.dlg);
                 await notifyChange();
@@ -4628,7 +4628,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             try {
                 const savedKey = await openSidePromptSetEditorPopup({});
                 if (savedKey) {
-                    toastr.success('Side prompt set created successfully', 'STMB');
+                    toastr.success(translate('Side prompt set created successfully'), 'STMB');
                     await refreshSidePromptSetControls(popup.dlg);
                     await notifyChange();
                 }
@@ -4648,19 +4648,19 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                     if (!savedKey) {
                         return;
                     }
-                    toastr.success('Side prompt updated successfully', 'STMB');
+                    toastr.success(translate('Side prompt updated successfully'), 'STMB');
                 } else if (actionButton.classList.contains('stmb-sp-action-duplicate')) {
                     selectedTemplateKey = await duplicateTemplate(selectedTemplateKey);
                     await refreshSidePromptCache();
                     window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
-                    toastr.success('Side prompt duplicated successfully', 'STMB');
+                    toastr.success(translate('Side prompt duplicated successfully'), 'STMB');
                 } else if (actionButton.classList.contains('stmb-sp-action-delete')) {
                     const templateName = String(row?.querySelector('td')?.textContent || '').trim() || 'this template';
                     const confirmPopup = new Popup(
-                        `<h3>Delete Side Prompt</h3><p>Are you sure you want to delete "${escapeHtml(templateName)}"?</p>`,
+                        t`<h3 data-i18n="Delete Side Prompt">Delete Side Prompt</h3><p>${t`Are you sure you want to delete "${escapeHtml(templateName)}"?`}</p>`,
                         POPUP_TYPE.CONFIRM,
                         '',
-                        { okButton: 'Delete', cancelButton: 'Cancel' },
+                        { okButton: translate('Delete'), cancelButton: translate('Cancel') },
                     );
                     const confirmed = await confirmPopup.show();
                     if (confirmed !== POPUP_RESULT.AFFIRMATIVE) {
@@ -4670,7 +4670,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                     await refreshSidePromptCache();
                     window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
                     selectedTemplateKey = null;
-                    toastr.success('Side prompt deleted successfully', 'STMB');
+                    toastr.success(translate('Side prompt deleted successfully'), 'STMB');
                 }
                 await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
                 await notifyChange();
@@ -4691,7 +4691,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             try {
                 selectedTemplateKey = await openSidePromptEditorPopup({});
                 if (selectedTemplateKey) {
-                    toastr.success('Side prompt created successfully', 'STMB');
+                    toastr.success(translate('Side prompt created successfully'), 'STMB');
                     await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
                     await notifyChange();
                 }
@@ -4710,7 +4710,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                 link.download = 'stmb-side-prompts.json';
                 link.click();
                 URL.revokeObjectURL(url);
-                toastr.success('Side prompts exported successfully', 'STMB');
+                toastr.success(translate('Side prompts exported successfully'), 'STMB');
             } catch (error) {
                 toastr.error(error?.message || 'Failed to export side prompts', 'STMB');
             }
@@ -4734,13 +4734,13 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
         if (target.closest('#stmb-sp-recreate-builtins')) {
             try {
                 const confirmPopup = new Popup(
-                    `
-                        <h3>Recreate Built-in Side Prompts</h3>
-                        <div class="info-block warning">This will overwrite the built-in Side Prompts with the current local defaults. Custom prompts are not touched. This action cannot be undone.</div>
+                    t`
+                        <h3 data-i18n="Recreate Built-in Side Prompts">Recreate Built-in Side Prompts</h3>
+                        <div class="info-block warning" data-i18n="This will overwrite the built-in Side Prompts with the current local defaults. Custom prompts are not touched. This action cannot be undone.">This will overwrite the built-in Side Prompts with the current local defaults. Custom prompts are not touched. This action cannot be undone.</div>
                     `,
                     POPUP_TYPE.CONFIRM,
                     '',
-                    { okButton: 'Recreate', cancelButton: 'Cancel' },
+                    { okButton: translate('Recreate'), cancelButton: translate('Cancel') },
                 );
                 const confirmed = await confirmPopup.show();
                 if (confirmed !== POPUP_RESULT.AFFIRMATIVE) {
@@ -4751,7 +4751,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                 window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
                 selectedTemplateKey = null;
                 await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
-                toastr.success(`Recreated ${result.replaced} built-in side prompts`, 'STMB');
+                toastr.success(t`Recreated ${result.replaced} built-in side prompts`, 'STMB');
                 await notifyChange();
             } catch (error) {
                 toastr.error(error?.message || 'Failed to recreate built-in side prompts', 'STMB');
@@ -4775,11 +4775,11 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             const setDetail = result.setsAdded
                 ? `; sets: ${result.setsAdded} added${result.setsRenamed ? ` (${result.setsRenamed} renamed due to key conflicts)` : ''}`
                 : '';
-            toastr.success(`Imported side prompts: ${result.added} added${result.renamed ? ` (${result.renamed} renamed due to key conflicts)` : ''}${setDetail}`, 'STMB');
+            toastr.success(t`Imported side prompts: ${result.added} added${result.renamed ? ` (${result.renamed} renamed due to key conflicts)` : ''}${setDetail}`, 'STMB');
             showSidePromptRuntimeMacroImportNormalizationToast(result.strippedDetails);
             await notifyChange();
         } catch (error) {
-            toastr.error(error?.message ? `Failed to import side prompts: ${error.message}` : 'Failed to import side prompts', 'STMB');
+            toastr.error(error?.message ? t`Failed to import side prompts: ${error.message}` : translate('Failed to import side prompts'), 'STMB');
         }
     });
 
@@ -4797,7 +4797,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             } else if (value.startsWith('set:')) {
                 setChatAfterMemorySetKey(value.slice(4));
             }
-            toastr.success('After-memory side prompt mode saved for this chat.', 'STMB');
+            toastr.success(translate('After-memory side prompt mode saved for this chat.'), 'STMB');
             await notifyChange();
         }
     });
@@ -4844,7 +4844,7 @@ function buildProfileEditorHtml(profile, options = {}) {
         <div class="stmb-profile-editor-popup">
             <h3>${mode === 'new' ? 'New Profile' : 'Edit Profile'}</h3>
             <div class="world_entry_form_control">
-                <label for="stmb-profile-editor-name">Profile Name</label>
+                <label for="stmb-profile-editor-name" data-i18n="Profile Name">Profile Name</label>
                 <input id="stmb-profile-editor-name" class="text_pole" value="${escapeHtml(String(profile?.name || 'New Profile'))}" ${isBuiltin ? 'disabled' : ''}>
             </div>
             <div class="world_entry_form_control">
@@ -4854,109 +4854,109 @@ function buildProfileEditorHtml(profile, options = {}) {
                 </select>
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label"><input id="stmb-profile-editor-skip-structured-output" type="checkbox" ${profile?.skipStructuredOutput ? 'checked' : ''}> <span>Skip structured-output and use plain-text completion</span></label>
+                <label class="checkbox_label"><input id="stmb-profile-editor-skip-structured-output" type="checkbox" ${profile?.skipStructuredOutput ? 'checked' : ''}> <span data-i18n="Skip structured-output and use plain-text completion">Skip structured-output and use plain-text completion</span></label>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-profile-editor-model">Model</label>
+                <label for="stmb-profile-editor-model" data-i18n="Model">Model</label>
                 <input id="stmb-profile-editor-model" class="text_pole" value="${escapeHtml(String(connection.model || ''))}" ${String(connection.api || 'current_st') === 'current_st' ? 'disabled' : ''}>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-profile-editor-temperature">Temperature</label>
+                <label for="stmb-profile-editor-temperature" data-i18n="Temperature">Temperature</label>
                 <input id="stmb-profile-editor-temperature" type="number" min="0" max="2" step="0.1" class="text_pole" value="${escapeHtml(String(connection.temperature ?? 0.7))}" ${String(connection.api || 'current_st') === 'current_st' ? 'disabled' : ''}>
             </div>
             <div id="stmb-profile-editor-manual-section" class="${String(connection.api || 'current_st') === 'full-manual' ? '' : 'displayNone'}">
                 <div class="world_entry_form_control">
-                    <label for="stmb-profile-editor-endpoint">API Base URL</label>
+                    <label for="stmb-profile-editor-endpoint" data-i18n="API Base URL">API Base URL</label>
                     <input id="stmb-profile-editor-endpoint" class="text_pole" value="${escapeHtml(String(connection.endpoint || ''))}">
                     <small>Use the provider base URL, for example <code>https://hanasaki.ai/v1</code>. <code>/chat/completions</code> is added automatically.</small>
                 </div>
                 <div class="world_entry_form_control">
-                    <label for="stmb-profile-editor-apikey">API Key</label>
+                    <label for="stmb-profile-editor-apikey" data-i18n="API Key">API Key</label>
                     <input id="stmb-profile-editor-apikey" class="text_pole" type="password" value="${escapeHtml(String(connection.apiKey || ''))}">
                 </div>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-profile-editor-preset">Memory Creation Method</label>
+                <label for="stmb-profile-editor-preset" data-i18n="Memory Creation Method">Memory Creation Method</label>
                 <select id="stmb-profile-editor-preset" class="text_pole">
                     ${presetKeys.map(key => `<option value="${escapeHtml(key)}" ${key === selectedPreset ? 'selected' : ''}>${escapeHtml(getSummaryPromptDisplayName(key))}</option>`).join('')}
                 </select>
             </div>
             <div class="buttons_block justifyCenter gap10px whitespacenowrap marginTop5">
-                <div id="stmb-profile-editor-open-prompt-manager" class="menu_button interactable">Open Summary Prompt Manager</div>
-                <div id="stmb-profile-editor-refresh-presets" class="menu_button interactable">Refresh Presets</div>
+                <div id="stmb-profile-editor-open-prompt-manager" class="menu_button interactable" data-i18n="Open Summary Prompt Manager">Open Summary Prompt Manager</div>
+                <div id="stmb-profile-editor-refresh-presets" class="menu_button interactable" data-i18n="Refresh Presets">Refresh Presets</div>
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label"><input id="stmb-profile-editor-use-group-specific-prompts" type="checkbox" ${profile?.useGroupSpecificPrompts ? 'checked' : ''}> <span>Use separate group and character prompts in group chats</span></label>
+                <label class="checkbox_label"><input id="stmb-profile-editor-use-group-specific-prompts" type="checkbox" ${profile?.useGroupSpecificPrompts ? 'checked' : ''}> <span data-i18n="Use separate group and character prompts in group chats">Use separate group and character prompts in group chats</span></label>
                 <small>Group lorebooks use the group prompt; single-character target lorebooks use the character prompt.</small>
             </div>
             <div id="stmb-profile-editor-group-prompt-section" class="${profile?.useGroupSpecificPrompts ? '' : 'displayNone'}">
                 <div class="world_entry_form_control">
-                    <label for="stmb-profile-editor-group-preset">Group Summary Prompt</label>
+                    <label for="stmb-profile-editor-group-preset" data-i18n="Group Summary Prompt">Group Summary Prompt</label>
                     <select id="stmb-profile-editor-group-preset" class="text_pole">
                         ${presetKeys.map(key => `<option value="${escapeHtml(key)}" ${key === String(profile?.groupPreset || 'group') ? 'selected' : ''}>${escapeHtml(getSummaryPromptDisplayName(key))}</option>`).join('')}
                     </select>
                 </div>
                 <div class="world_entry_form_control">
-                    <label for="stmb-profile-editor-character-preset">Character Summary Prompt</label>
+                    <label for="stmb-profile-editor-character-preset" data-i18n="Character Summary Prompt">Character Summary Prompt</label>
                     <select id="stmb-profile-editor-character-preset" class="text_pole">
                         ${presetKeys.map(key => `<option value="${escapeHtml(key)}" ${key === String(profile?.characterPreset || 'char') ? 'selected' : ''}>${escapeHtml(getSummaryPromptDisplayName(key))}</option>`).join('')}
                     </select>
                 </div>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-profile-editor-title-format-select">Memory Title Format</label>
+                <label for="stmb-profile-editor-title-format-select" data-i18n="Memory Title Format">Memory Title Format</label>
                 <select id="stmb-profile-editor-title-format-select" class="text_pole">
                     ${titleFormats.map(format => `<option value="${escapeHtml(format)}" ${!usesCustomTitleFormat && format === currentTitleFormat ? 'selected' : ''}>${escapeHtml(format)}</option>`).join('')}
-                    <option value="custom" ${usesCustomTitleFormat ? 'selected' : ''}>Custom Title Format...</option>
+                    <option value="custom" ${usesCustomTitleFormat ? 'selected' : ''} data-i18n="Custom Title Format...">Custom Title Format...</option>
                 </select>
-                <input id="stmb-profile-editor-custom-title-format" class="text_pole marginTop5 ${usesCustomTitleFormat ? '' : 'displayNone'}" value="${escapeHtml(currentTitleFormat)}" placeholder="Enter custom format">
+                <input id="stmb-profile-editor-custom-title-format" class="text_pole marginTop5 ${usesCustomTitleFormat ? '' : 'displayNone'}" value="${escapeHtml(currentTitleFormat)}" placeholder="Enter custom format" data-i18n="[placeholder]Enter custom format">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-profile-editor-const-vect">Activation Mode</label>
+                <label for="stmb-profile-editor-const-vect" data-i18n="Activation Mode">Activation Mode</label>
                 <select id="stmb-profile-editor-const-vect" class="text_pole">
-                    <option value="link" ${String(profile?.constVectMode || 'link') === 'link' ? 'selected' : ''}>Vectorized (Default)</option>
-                    <option value="blue" ${String(profile?.constVectMode || 'link') === 'blue' ? 'selected' : ''}>Constant</option>
-                    <option value="green" ${String(profile?.constVectMode || 'link') === 'green' ? 'selected' : ''}>Normal</option>
+                    <option value="link" ${String(profile?.constVectMode || 'link') === 'link' ? 'selected' : ''} data-i18n="Vectorized (Default)">Vectorized (Default)</option>
+                    <option value="blue" ${String(profile?.constVectMode || 'link') === 'blue' ? 'selected' : ''} data-i18n="Constant">Constant</option>
+                    <option value="green" ${String(profile?.constVectMode || 'link') === 'green' ? 'selected' : ''} data-i18n="Normal">Normal</option>
                 </select>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-profile-editor-position">Insertion Position</label>
+                <label for="stmb-profile-editor-position" data-i18n="Insertion Position">Insertion Position</label>
                 <select id="stmb-profile-editor-position" class="text_pole">
-                    <option value="0" ${position === 0 ? 'selected' : ''}>↑Char</option>
-                    <option value="1" ${position === 1 ? 'selected' : ''}>↓Char</option>
-                    <option value="5" ${position === 5 ? 'selected' : ''}>↑EM</option>
-                    <option value="6" ${position === 6 ? 'selected' : ''}>↓EM</option>
-                    <option value="2" ${position === 2 ? 'selected' : ''}>↑AN</option>
-                    <option value="3" ${position === 3 ? 'selected' : ''}>↓AN</option>
-                    <option value="7" ${position === 7 ? 'selected' : ''}>Outlet</option>
+                    <option value="0" ${position === 0 ? 'selected' : ''} data-i18n="↑Char">↑Char</option>
+                    <option value="1" ${position === 1 ? 'selected' : ''} data-i18n="↓Char">↓Char</option>
+                    <option value="5" ${position === 5 ? 'selected' : ''} data-i18n="↑EM">↑EM</option>
+                    <option value="6" ${position === 6 ? 'selected' : ''} data-i18n="↓EM">↓EM</option>
+                    <option value="2" ${position === 2 ? 'selected' : ''} data-i18n="↑AN">↑AN</option>
+                    <option value="3" ${position === 3 ? 'selected' : ''} data-i18n="↓AN">↓AN</option>
+                    <option value="7" ${position === 7 ? 'selected' : ''} data-i18n="Outlet">Outlet</option>
                 </select>
             </div>
             <div id="stmb-profile-editor-outlet-container" class="world_entry_form_control ${position === 7 ? '' : 'displayNone'}">
-                <label for="stmb-profile-editor-outlet-name">Outlet Name</label>
+                <label for="stmb-profile-editor-outlet-name" data-i18n="Outlet Name">Outlet Name</label>
                 <input id="stmb-profile-editor-outlet-name" class="text_pole" value="${escapeHtml(String(profile?.outletName || ''))}">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-profile-editor-order-mode">Insertion Order</label>
+                <label for="stmb-profile-editor-order-mode" data-i18n="Insertion Order">Insertion Order</label>
                 <select id="stmb-profile-editor-order-mode" class="text_pole">
-                    <option value="auto" ${orderMode === 'auto' ? 'selected' : ''}>Auto</option>
-                    <option value="reverse" ${orderMode === 'reverse' ? 'selected' : ''}>Reverse</option>
-                    <option value="manual" ${orderMode === 'manual' ? 'selected' : ''}>Manual</option>
+                    <option value="auto" ${orderMode === 'auto' ? 'selected' : ''} data-i18n="Auto">Auto</option>
+                    <option value="reverse" ${orderMode === 'reverse' ? 'selected' : ''} data-i18n="Reverse">Reverse</option>
+                    <option value="manual" ${orderMode === 'manual' ? 'selected' : ''} data-i18n="Manual">Manual</option>
                 </select>
             </div>
             <div id="stmb-profile-editor-order-value-container" class="world_entry_form_control ${orderMode === 'manual' ? '' : 'displayNone'}">
-                <label for="stmb-profile-editor-order-value">Manual Order Value</label>
+                <label for="stmb-profile-editor-order-value" data-i18n="Manual Order Value">Manual Order Value</label>
                 <input id="stmb-profile-editor-order-value" type="number" min="1" max="9999" step="1" class="text_pole" value="${escapeHtml(String(profile?.orderValue ?? 100))}">
             </div>
             <div id="stmb-profile-editor-reverse-start-container" class="world_entry_form_control ${orderMode === 'reverse' ? '' : 'displayNone'}">
-                <label for="stmb-profile-editor-reverse-start">Reverse Start</label>
+                <label for="stmb-profile-editor-reverse-start" data-i18n="Reverse Start">Reverse Start</label>
                 <input id="stmb-profile-editor-reverse-start" type="number" min="100" max="9999" step="1" class="text_pole" value="${escapeHtml(String(profile?.reverseStart ?? 9999))}">
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label"><input id="stmb-profile-editor-prevent-recursion" type="checkbox" ${profile?.preventRecursion ? 'checked' : ''}> <span>Prevent Recursion</span></label>
-                <label class="checkbox_label"><input id="stmb-profile-editor-delay-recursion" type="checkbox" ${profile?.delayUntilRecursion ? 'checked' : ''}> <span>Delay Until Recursion</span></label>
+                <label class="checkbox_label"><input id="stmb-profile-editor-prevent-recursion" type="checkbox" ${profile?.preventRecursion ? 'checked' : ''}> <span data-i18n="Prevent Recursion">Prevent Recursion</span></label>
+                <label class="checkbox_label"><input id="stmb-profile-editor-delay-recursion" type="checkbox" ${profile?.delayUntilRecursion ? 'checked' : ''}> <span data-i18n="Delay Until Recursion">Delay Until Recursion</span></label>
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label"><input id="stmb-profile-editor-convert-existing-recursion" type="checkbox" ${stmbSettings.moduleSettings?.convertExistingRecursion ? 'checked' : ''}> <span>Also convert recursion settings on existing entries</span></label>
+                <label class="checkbox_label"><input id="stmb-profile-editor-convert-existing-recursion" type="checkbox" ${stmbSettings.moduleSettings?.convertExistingRecursion ? 'checked' : ''}> <span data-i18n="Also convert recursion settings on existing entries">Also convert recursion settings on existing entries</span></label>
             </div>
         </div>
     `;
@@ -5085,8 +5085,8 @@ async function openProfileEditor(profileIndex = null) {
         }
         : structuredClone(stmbSettings.profiles[profileIndex] || getActiveStmbProfile(stmbSettings));
     const popup = new Popup(DOMPurify.sanitize(buildProfileEditorHtml(baseProfile, { mode: isNew ? 'new' : 'edit' })), POPUP_TYPE.TEXT, '', {
-        okButton: isNew ? 'Create' : 'Save',
-        cancelButton: 'Cancel',
+        okButton: isNew ? translate('Create') : translate('Save'),
+        cancelButton: translate('Cancel'),
         wide: true,
         large: true,
         allowVerticalScrolling: true,
@@ -5098,19 +5098,19 @@ async function openProfileEditor(profileIndex = null) {
             const dialog = popupInstance.dlg;
             const nextProfile = buildProfileFromEditor(dialog, baseProfile);
             if (!nextProfile.name.trim()) {
-                toastr.error('Profile name is required', 'STMB');
+                toastr.error(translate('Profile name is required'), 'STMB');
                 return false;
             }
             if (nextProfile.connection?.api !== 'current_st' && !String(nextProfile.connection?.model || '').trim()) {
-                toastr.error('Model is required for non-current-st profiles', 'STMB');
+                toastr.error(translate('Model is required for non-current-st profiles'), 'STMB');
                 return false;
             }
             if (nextProfile.connection?.api === 'full-manual' && !String(nextProfile.connection?.endpoint || '').trim()) {
-                toastr.error('Endpoint is required for full-manual profiles', 'STMB');
+                toastr.error(translate('Endpoint is required for full-manual profiles'), 'STMB');
                 return false;
             }
             if (Number(nextProfile.position) === 7 && !String(nextProfile.outletName || '').trim()) {
-                toastr.error('Outlet Name is required when Insertion Position is Outlet', 'STMB');
+                toastr.error(translate('Outlet Name is required when Insertion Position is Outlet'), 'STMB');
                 return false;
             }
             return true;
@@ -5182,7 +5182,7 @@ async function openProfileEditor(profileIndex = null) {
         }
         if (target.closest('#stmb-profile-editor-refresh-presets')) {
             refreshProfileEditorPresetOptions(popup.dlg);
-            toastr.success('Preset list refreshed', 'STMB');
+            toastr.success(translate('Preset list refreshed'), 'STMB');
             return;
         }
     });
@@ -5217,16 +5217,16 @@ async function deleteSelectedProfile(profileIndex) {
         return false;
     }
     if (stmbSettings.profiles.length <= 1) {
-        toastr.error('Cannot delete the last profile', 'STMB');
+        toastr.error(translate('Cannot delete the last profile'), 'STMB');
         return false;
     }
     if (stmbSettings.profiles[profileIndex]?.isBuiltinCurrentST) {
-        toastr.error('Cannot delete the "Current SillyTavern Settings" profile - it is required for Memory Books to work', 'STMB');
+        toastr.error(translate('Cannot delete the "Current SillyTavern Settings" profile - it is required for Memory Books to work'), 'STMB');
         return false;
     }
 
     const profileName = String(stmbSettings.profiles[profileIndex]?.name || 'Profile');
-    const result = await Popup.show.confirm('Delete Profile', `Delete profile "${escapeHtml(profileName)}"?`);
+    const result = await Popup.show.confirm(t`Delete Profile`, t`Delete profile "${escapeHtml(profileName)}"?`);
     if (!result) {
         return false;
     }
@@ -5339,7 +5339,7 @@ function refreshSettingsPopupProfileSection(dialog, currentUiConnection, selecte
             ? Number(selectedProfileIndex)
             : (Number.isFinite(currentSelectedIndex) ? currentSelectedIndex : Number(stmbSettings.defaultProfile ?? 0));
         profileSelect.innerHTML = (stmbSettings.profiles || []).map((profile, index) => (
-            `<option value="${index}">${escapeHtml(getProfileDisplayName(profile))}${index === stmbSettings.defaultProfile ? ' (Default)' : ''}</option>`
+            `<option value="${index}">${escapeHtml(getProfileDisplayName(profile))}${index === stmbSettings.defaultProfile ? ` ${translate('(Default)')}` : ''}</option>`
         )).join('');
         const maxIndex = Math.max(0, (stmbSettings.profiles?.length || 1) - 1);
         profileSelect.value = String(Math.max(0, Math.min(maxIndex, preferredIndex)));
@@ -5379,7 +5379,7 @@ function createMainEntryUi() {
     const menuItem = $(`
         <div id="stmb-menu-item" class="list-group-item flex-container flexGap5 interactable" tabindex="0">
             <div class="fa-fw fa-solid fa-book extensionsMenuExtensionButton"></div>
-            <span>Memory Books</span>
+            <span data-i18n="Memory Books">Memory Books</span>
         </div>
     `);
     const memoryBooksWandContainer = $('#memory_books_wand_container');
@@ -5428,13 +5428,13 @@ async function showMainEntryPopup(view = 'main') {
     const regexOptions = getSettingsRegexOptions();
     const popup = new Popup(selectSettingsPopupView(buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, sidePromptSets), view), POPUP_TYPE.TEXT, '', {
         okButton: false,
-        cancelButton: 'Close',
+        cancelButton: translate('Close'),
         wide: true,
         large: true,
         allowVerticalScrolling: true,
         customButtons: view === 'main' ? [
             {
-                text: 'Create Memory',
+                text: translate('Create Memory'),
                 result: null,
                 classes: ['menu_button'],
                 action: async () => {
@@ -5447,7 +5447,7 @@ async function showMainEntryPopup(view = 'main') {
                 },
             },
             {
-                text: 'Consolidate Memories',
+                text: translate('Consolidate Memories'),
                 classes: ['menu_button'],
                 action: async () => {
                     const initialTargetTier = Number(readSelectedValues(popup.dlg?.querySelector('#stmb-settings-auto-consolidation-target-tier')).at(0) || 1);
@@ -5455,21 +5455,21 @@ async function showMainEntryPopup(view = 'main') {
                 },
             },
             {
-                text: 'Compaction',
+                text: translate('Compaction'),
                 classes: ['menu_button'],
                 action: async () => {
                     await showStmbEntryReviewPopup({ showGoBack: true });
                 },
             },
             {
-                text: 'Topical Clip',
+                text: translate('Topical Clip'),
                 classes: ['menu_button'],
                 action: async () => {
                     await showTopicalClipPopup({ showGoBack: true });
                 },
             },
             {
-                text: 'Additional Context',
+                text: translate('Additional Context'),
                 classes: ['menu_button'],
                 action: async () => {
                     await showStmbContextSettingsPopup({
@@ -5481,7 +5481,7 @@ async function showMainEntryPopup(view = 'main') {
                 },
             },
             {
-                text: 'Clear Scene',
+                text: translate('Clear Scene'),
                 result: null,
                 classes: ['menu_button'],
                 action: () => {
@@ -5661,13 +5661,13 @@ async function showMainEntryPopup(view = 'main') {
                     if (chatBoundLorebook && !isReservedTemplateWorldName(chatBoundLorebook)) {
                         const setupPopup = new Popup(DOMPurify.sanitize(`
                             <div class="stmb-manual-lorebook-setup">
-                                <h4>Manual Lorebook Setup</h4>
-                                <p>You have a chat-bound lorebook "${escapeHtml(chatBoundLorebook)}".</p>
-                                <p>Would you like to use it for manual mode or select a different one?</p>
+                                <h4 data-i18n="Manual Lorebook Setup">Manual Lorebook Setup</h4>
+                                <p>${t`You have a chat-bound lorebook "${escapeHtml(chatBoundLorebook)}".`}</p>
+                                <p data-i18n="Would you like to use it for manual mode or select a different one?">Would you like to use it for manual mode or select a different one?</p>
                             </div>
                         `), POPUP_TYPE.TEXT, '', {
-                            okButton: 'Use Chat-bound',
-                            cancelButton: 'Select Different',
+                            okButton: translate('Use Chat-bound'),
+                            cancelButton: translate('Select Different'),
                         });
                         const setupResult = await setupPopup.show();
                         if (setupResult === POPUP_RESULT.AFFIRMATIVE) {
@@ -5713,7 +5713,7 @@ async function showMainEntryPopup(view = 'main') {
             const memberKey = String(target.dataset.memberKey || '').trim();
             const lorebookName = String(target.value || '').trim();
             if (lorebookName && lorebookName === String(getStmbState().manualLorebook || '').trim()) {
-                toastr.error('A character lorebook cannot be the group Memory Book.', 'STMB');
+                toastr.error(translate('A character lorebook cannot be the group Memory Book.'), 'STMB');
                 target.value = '';
                 return;
             }
@@ -5812,9 +5812,9 @@ async function showMainEntryPopup(view = 'main') {
                     const duplicateText = result.skippedCount > 0
                         ? ` (${result.skippedCount} duplicate${result.skippedCount === 1 ? '' : 's'} skipped)`
                         : '';
-                    toastr.success(`Imported ${result.importedCount} profile${result.importedCount === 1 ? '' : 's'}${duplicateText}`, 'STMB profile import completed');
+                    toastr.success(t`Imported ${result.importedCount} profile${result.importedCount === 1 ? '' : 's'}${duplicateText}`, translate('STMB profile import completed'));
                 } else {
-                    toastr.warning('No new profiles imported - all profiles already exist', 'STMB');
+                    toastr.warning(translate('No new profiles imported - all profiles already exist'), 'STMB');
                 }
             } catch (error) {
                 target.value = '';
@@ -5866,7 +5866,7 @@ async function showMainEntryPopup(view = 'main') {
                 const select = popup.dlg.querySelector(`.stmb-manual-group-lorebook-select[data-member-key="${CSS.escape(memberKey)}"]`);
                 if (select) select.value = '';
                 groupLorebookClear.disabled = true;
-                toastr.warning('Character lorebook cleared. Its STLO character filter was retained; remove it in STLO if it is no longer needed.', 'STMB');
+                toastr.warning(translate('Character lorebook cleared. Its STLO character filter was retained; remove it in STLO if it is no longer needed.'), 'STMB');
             }
             return;
         }
@@ -5945,33 +5945,33 @@ async function showMainEntryPopup(view = 'main') {
             stmbSettings = normalizeStmbSettings(stmbSettings);
             saveSettingsDebounced();
             refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection, selectedProfileIndex);
-            toastr.success(`Set "${getProfileDisplayName(stmbSettings.profiles?.[selectedProfileIndex])}" as default profile`, 'STMB');
+            toastr.success(t`Set "${getProfileDisplayName(stmbSettings.profiles?.[selectedProfileIndex])}" as default profile`, 'STMB');
             return;
         }
         if (target.closest('#stmb-settings-profile-new')) {
             if (await openProfileEditor(null)) {
                 refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection, (stmbSettings.profiles?.length || 1) - 1);
-                toastr.success('Profile created successfully', 'STMB');
+                toastr.success(translate('Profile created successfully'), 'STMB');
             }
             return;
         }
         if (target.closest('#stmb-settings-profile-edit')) {
             if (await openProfileEditor(selectedProfileIndex)) {
                 refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection, selectedProfileIndex);
-                toastr.success('Profile updated successfully', 'STMB');
+                toastr.success(translate('Profile updated successfully'), 'STMB');
             }
             return;
         }
         if (target.closest('#stmb-settings-profile-delete')) {
             if (await deleteSelectedProfile(selectedProfileIndex)) {
                 refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection, Math.max(0, selectedProfileIndex - 1));
-                toastr.success('Profile deleted successfully', 'STMB');
+                toastr.success(translate('Profile deleted successfully'), 'STMB');
             }
             return;
         }
         if (target.closest('#stmb-settings-profile-export')) {
             exportProfilesToFile();
-            toastr.success('Profiles exported successfully', 'STMB');
+            toastr.success(translate('Profiles exported successfully'), 'STMB');
             return;
         }
         if (target.closest('#stmb-settings-profile-import')) {
@@ -6198,7 +6198,7 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
             throw new Error('Please enter a profile name');
         }
         const saved = saveAdvancedProfile(selectedProfile, advanced, currentUiConnection);
-        toastr.success(`Profile "${saved.name}" saved successfully`, 'STMB');
+        toastr.success(t`Profile "${saved.name}" saved successfully`, 'STMB');
         return null;
     }
     if (advanced.action === 'save_and_confirm') {
@@ -6209,7 +6209,7 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
         if (!validateConnectionProfilePreflight(saved)) {
             return null;
         }
-        toastr.success(`Profile "${saved.name}" saved successfully`, 'STMB');
+        toastr.success(t`Profile "${saved.name}" saved successfully`, 'STMB');
         const effectiveSavedProfile = buildEffectiveMemoryProfile(saved);
         const savedPromptText = String(advanced.promptText || '').trim();
         if (savedPromptText) {
@@ -6496,7 +6496,7 @@ function refreshMemoryBoundaryDivider() {
 
     const divider = document.createElement('div');
     divider.classList.add('stmb_memory_boundary_divider');
-    divider.textContent = 'Memory Books boundary';
+    divider.textContent = translate('Memory Books boundary');
     targetElement.classList.add('stmb_memory_boundary_target');
     targetElement.prepend(divider);
 }
@@ -6612,11 +6612,11 @@ async function confirmGroupMemoryParticipants(compiledScene, snapshot) {
             <span>${escapeHtml(member.name)}</span>
         </label>`).join('');
     const popup = new Popup(DOMPurify.sanitize(`
-        <h3>Confirm memory participants</h3>
-        <p>Select the characters this memory applies to. If none are selected, it will apply to every group character.</p>
+        <h3 data-i18n="Confirm memory participants">Confirm memory participants</h3>
+        <p data-i18n="Select the characters this memory applies to. If none are selected, it will apply to every group character.">Select the characters this memory applies to. If none are selected, it will apply to every group character.</p>
         <div class="world_entry_form_control flex-container flexFlowColumn">${rows}</div>
-        <label class="checkbox_label"><input type="checkbox" id="stmb-group-participants-auto"> <span>Automatically accept detected participants in future</span></label>
-    `), POPUP_TYPE.CONFIRM, '', { okButton: 'Save', cancelButton: 'Cancel' });
+        <label class="checkbox_label"><input type="checkbox" id="stmb-group-participants-auto"> <span data-i18n="Automatically accept detected participants in future">Automatically accept detected participants in future</span></label>
+    `), POPUP_TYPE.CONFIRM, '', { okButton: translate('Save'), cancelButton: translate('Cancel') });
     const result = await popup.show();
     if (result !== POPUP_RESULT.AFFIRMATIVE) return null;
     const chosen = Array.from(popup.dlg.querySelectorAll('.stmb-group-participant'))
@@ -6708,7 +6708,7 @@ function saveChatEndButtonPosition(position) {
 }
 
 function showNoMemoryBoundaryToast() {
-    toastr.info('No memories have been processed for this chat yet.', 'STMB');
+    toastr.info(translate('No memories have been processed for this chat yet.'), 'STMB');
 }
 
 async function scrollToMemoryBoundaryTarget() {
@@ -6728,12 +6728,12 @@ async function scrollToMemoryBoundaryTarget() {
     }
 
     const highestProcessed = getHighestProcessedMessageId();
-    toastr.info(`Highest memory is #${highestProcessed}. The target message could not be rendered.`, 'STMB');
+    toastr.info(t`Highest memory is #${highestProcessed}. The target message could not be rendered.`, 'STMB');
 }
 
 async function scrollToChatEndTarget() {
     if (!chat.length) {
-        toastr.info('No chat messages are available yet.', 'STMB');
+        toastr.info(translate('No chat messages are available yet.'), 'STMB');
         return;
     }
 
@@ -6748,7 +6748,7 @@ async function scrollToChatEndTarget() {
         return;
     }
 
-    toastr.info('The end of chat could not be rendered.', 'STMB');
+    toastr.info(translate('The end of chat could not be rendered.'), 'STMB');
 }
 
 function handleFloatingJumpButtonPointerMove(event) {
@@ -6863,7 +6863,7 @@ function createMemoryBoundaryButton() {
         savePosition: saveMemoryBoundaryButtonPosition,
         onClick: () => scrollToMemoryBoundaryTarget().catch(error => {
             console.warn('STMB memory boundary jump failed', error);
-            toastr.error('Failed to jump to the Memory Books boundary.', 'STMB');
+            toastr.error(translate('Failed to jump to the Memory Books boundary.'), 'STMB');
         }),
     });
 }
@@ -6877,7 +6877,7 @@ function createChatEndButton() {
         savePosition: saveChatEndButtonPosition,
         onClick: () => scrollToChatEndTarget().catch(error => {
             console.warn('STMB chat end jump failed', error);
-            toastr.error('Failed to jump to the end of chat.', 'STMB');
+            toastr.error(translate('Failed to jump to the end of chat.'), 'STMB');
         }),
     });
 }
@@ -7114,14 +7114,14 @@ function validateMemoryCreationContext() {
         const activeCharacter = context?.characters?.[context.characterId];
         if (!activeCharacter && !String(name2 || '').trim()) {
             toastr.error(
-                'SillyTavern is still loading character data, please wait a few seconds and try again.',
+                translate('SillyTavern is still loading character data, please wait a few seconds and try again.'),
                 'STMB',
             );
             return null;
         }
     } else if (!group?.name) {
         toastr.error(
-            'Group chat data not available, please wait a few seconds and try again.',
+            translate('Group chat data not available, please wait a few seconds and try again.'),
             'STMB',
         );
         return null;
@@ -7468,7 +7468,7 @@ async function validateLorebookPreflight() {
             return false;
         }
 
-        toastr.error(`No lorebook available: ${String(error?.message || 'Unknown lorebook error')}`, 'STMB');
+        toastr.error(t`No lorebook available: ${String(error?.message || 'Unknown lorebook error')}`, 'STMB');
         return false;
     }
 }
@@ -8061,7 +8061,7 @@ function showOrderClampNotifications(notifications = []) {
         seen.add(key);
 
         toastr.info(
-            `Order range is limited to 0-9999. Current ${source} is ${requested}; clamped to ${clamped}.`,
+            t`Order range is limited to 0-9999. Current ${source} is ${requested}; clamped to ${clamped}.`,
             'STMB',
         );
     }
@@ -8442,7 +8442,7 @@ async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, c
     }
 
     if (showSuccessToast && getModuleSettings().showNotifications) {
-        toastr.success(`Memory saved to "${lorebookName}"`, 'STMB');
+        toastr.success(t`Memory saved to "${lorebookName}"`, 'STMB');
     }
 
     return {
@@ -8519,7 +8519,7 @@ async function showSummaryConsolidationPopup({ initialTargetTier = 1, showGoBack
     await firstRunInitArcPromptPresets(stmbSettings);
     const lorebookName = resolveLorebookName();
     if (!lorebookName) {
-        toastr.info('No memory lorebook currently assigned, no memories found.', 'STMB');
+        toastr.info(translate('No memory lorebook currently assigned, no memories found.'), 'STMB');
     }
 
     const lorebookData = lorebookName ? (await loadWorldInfo(lorebookName) || { entries: {} }) : { entries: {} };
@@ -8570,7 +8570,7 @@ async function showSummaryConsolidationPopup({ initialTargetTier = 1, showGoBack
         showGoBack,
         onPresetRebuild: async () => {
             const result = await recreateBuiltInArcPromptOverridesFile();
-            toastr.success(`Recreated ${result.replaced} built-in consolidation prompt overrides`, 'STMB');
+            toastr.success(t`Recreated ${result.replaced} built-in consolidation prompt overrides`, 'STMB');
             return listSummaryConsolidationPresets();
         },
         onPersist: persistSummaryConsolidationPopupSettings,
@@ -8580,7 +8580,7 @@ async function showSummaryConsolidationPopup({ initialTargetTier = 1, showGoBack
         return null;
     }
     if (!lorebookName) {
-        toastr.info('Summary consolidation requires a memory lorebook. No lorebook assigned.', 'STMB');
+        toastr.info(translate('Summary consolidation requires a memory lorebook. No lorebook assigned.'), 'STMB');
         return null;
     }
 
@@ -8764,7 +8764,7 @@ async function commitSummaryCandidates(summaryCandidates, {
 
     if (showSuccessToast && getModuleSettings().showNotifications) {
         toastr.success(
-            `${getSummaryTierLabel(normalizedTargetTier)} summary saved to "${lorebookName}"`,
+            t`${getSummaryTierLabel(normalizedTargetTier)} summary saved to "${lorebookName}"`,
             'STMB',
         );
     }
@@ -9037,7 +9037,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
                 `STMemoryBooks: Scene overlap detected with memory: ${overlappingMemory.title} [${existingRange.start}-${existingRange.end}] vs new [${range.sceneStart}-${range.sceneEnd}]`,
             );
             toastr.error(
-                `Scene overlaps with existing memory: "${overlappingMemory.title}" (messages ${existingRange.start}-${existingRange.end})`,
+                t`Scene overlaps with existing memory: "${overlappingMemory.title}" (messages ${existingRange.start}-${existingRange.end})`,
                 'STMB',
             );
             return null;
@@ -9126,7 +9126,7 @@ async function initiateMemoryCreation(options = {}) {
 
     if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(sceneContext))) {
         if (notifyIfBusy) {
-            toastr.info('Memory creation is already in progress', 'STMB');
+            toastr.info(translate('Memory creation is already in progress'), 'STMB');
         }
         return null;
     }
@@ -9200,11 +9200,11 @@ async function buildGroupConsolidationWorkItems(primaryItem, targetTier, require
     }
     if (skipped.length > 0) {
         const popup = new Popup(DOMPurify.sanitize(`
-            <h3>Some lorebooks are below the threshold</h3>
-            <p>Continue with the ready lorebooks?</p>
-            <strong>Ready</strong><ul>${ready.map(item => `<li>${escapeHtml(item.lorebookName)} (${item.sourceEntries.length})</li>`).join('')}</ul>
-            <strong>Skipped</strong><ul>${skipped.map(item => `<li>${escapeHtml(item.lorebookName)} (${item.sourceEntries.length}/${requiredMinimum})</li>`).join('')}</ul>
-        `), POPUP_TYPE.CONFIRM, '', { okButton: 'Continue', cancelButton: 'Cancel' });
+            <h3 data-i18n="Some lorebooks are below the threshold">Some lorebooks are below the threshold</h3>
+            <p data-i18n="Continue with the ready lorebooks?">Continue with the ready lorebooks?</p>
+            <strong data-i18n="Ready">Ready</strong><ul>${ready.map(item => `<li>${escapeHtml(item.lorebookName)} (${item.sourceEntries.length})</li>`).join('')}</ul>
+            <strong data-i18n="Skipped">Skipped</strong><ul>${skipped.map(item => `<li>${escapeHtml(item.lorebookName)} (${item.sourceEntries.length}/${requiredMinimum})</li>`).join('')}</ul>
+        `), POPUP_TYPE.CONFIRM, '', { okButton: translate('Continue'), cancelButton: translate('Cancel') });
         if (await popup.show() !== POPUP_RESULT.AFFIRMATIVE) return [];
     }
     return ready;
@@ -9560,7 +9560,7 @@ function showSlashCommandError(message, error) {
         return;
     }
     if (isStmbAbortError(error)) {
-        toastr.info('STMB generation stopped', 'STMB');
+        toastr.info(translate('STMB generation stopped'), 'STMB');
         return;
     }
     if (error) {
@@ -9657,7 +9657,7 @@ async function createMemoryCommand() {
     const markers = getSceneMarkers() || {};
     if (markers.sceneStart == null || markers.sceneEnd == null) {
         console.error('STMemoryBooks: No scene markers set for createMemory command');
-        toastr.error('No scene markers set. Use chevron buttons to mark start and end points first.', 'STMB');
+        toastr.error(translate('No scene markers set. Use chevron buttons to mark start and end points first.'), 'STMB');
         return '';
     }
 
@@ -9682,16 +9682,16 @@ async function sceneMemoryCommand(_, rangeText) {
         });
         const lastAvailableMessageId = Number(rangeInfo?.lastAvailableMessageId);
         if (!Number.isInteger(lastAvailableMessageId) || lastAvailableMessageId < 0) {
-            toastr.error('There are no messages in this chat yet.', 'STMB');
+            toastr.error(translate('There are no messages in this chat yet.'), 'STMB');
             return '';
         }
         if (range.sceneStart > lastAvailableMessageId || range.sceneEnd > lastAvailableMessageId) {
-            toastr.error(`Message IDs out of range. Valid range: 0-${lastAvailableMessageId}`, 'STMB');
+            toastr.error(t`Message IDs out of range. Valid range: 0-${lastAvailableMessageId}`, 'STMB');
             return '';
         }
         if (Array.isArray(rangeInfo?.missingRanges) && rangeInfo.missingRanges.length > 0) {
             const missing = rangeInfo.missingRanges[0];
-            toastr.error(`Cannot use messages ${range.sceneStart}-${range.sceneEnd} because messages ${missing.start}-${missing.end} are unavailable in chat storage.`, 'STMB');
+            toastr.error(t`Cannot use messages ${range.sceneStart}-${range.sceneEnd} because messages ${missing.start}-${missing.end} are unavailable in chat storage.`, 'STMB');
             return '';
         }
     } catch (error) {
@@ -9702,7 +9702,7 @@ async function sceneMemoryCommand(_, rangeText) {
     setSceneRange(range.sceneStart, range.sceneEnd);
     const group = selected_group ? groups.find(item => item.id === selected_group) : null;
     const groupSuffix = group?.name ? ` in group "${group.name}"` : '';
-    toastr.info(`Scene set: messages ${range.sceneStart}-${range.sceneEnd}${groupSuffix}`, 'STMB');
+    toastr.info(t`Scene set: messages ${range.sceneStart}-${range.sceneEnd}${groupSuffix}`, 'STMB');
     launchMemoryCreationInBackground({ range, keepSceneMarkers: true }, 'Failed to create memory from scene range.');
 
     return '';
@@ -9711,7 +9711,7 @@ async function sceneMemoryCommand(_, rangeText) {
 async function nextMemoryCommand() {
     try {
         if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(buildStmbSceneContext()))) {
-            toastr.info('Memory creation is already in progress', 'STMB');
+            toastr.info(translate('Memory creation is already in progress'), 'STMB');
             return '';
         }
 
@@ -9721,7 +9721,7 @@ async function nextMemoryCommand() {
         }
 
         if (chat.length === 0) {
-            toastr.info('There are no messages to summarize yet.', 'STMB');
+            toastr.info(translate('There are no messages to summarize yet.'), 'STMB');
             return '';
         }
 
@@ -9730,14 +9730,14 @@ async function nextMemoryCommand() {
         launchMemoryCreationInBackground({ range, keepSceneMarkers: true, notifyIfBusy: true }, 'Failed to create next memory.');
     } catch (error) {
         if (error?.message === 'No new messages available for /nextmemory') {
-            toastr.info('No new messages since the last memory.', 'STMB');
+            toastr.info(translate('No new messages since the last memory.'), 'STMB');
             return '';
         }
         if (isStmbLorebookHandledError(error)) {
             return '';
         }
         if (/lorebook/i.test(String(error?.message || ''))) {
-            toastr.error(`No lorebook available: ${error.message}`, 'STMB');
+            toastr.error(t`No lorebook available: ${error.message}`, 'STMB');
             return '';
         }
         showSlashCommandError(error?.message || 'Failed to create next memory.', error);
@@ -9751,7 +9751,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
         const sceneContext = buildStmbSceneContext();
         const chatKey = getStmbChatKey(sceneContext);
         if (hasActiveStmbTasks() || hasActiveStmbJobs(chatKey)) {
-            toastr.info('Memory creation is already in progress', 'STMB');
+            toastr.info(translate('Memory creation is already in progress'), 'STMB');
             return '';
         }
 
@@ -9841,7 +9841,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
             });
         }
 
-        toastr.info(`STMB catch-up queued: ${chunks.length} chunk${chunks.length === 1 ? '' : 's'}.`, 'STMB');
+        toastr.info(t`STMB catch-up queued: ${chunks.length} chunk${chunks.length === 1 ? '' : 's'}.`, 'STMB');
     } catch (error) {
         showSlashCommandError(error?.message || 'Failed to run /stmb-catchup.', error);
     }
@@ -9852,7 +9852,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
 async function sidePromptCommand(_, rawInput) {
     const raw = String(rawInput || '').trim();
     if (!raw) {
-        toastr.info('SidePrompt guide: Choose a quoted template name, then fill any prompted macros. Usage: /sideprompt "Name" {{macro}}="value" [X-Y].', 'STMB');
+        toastr.info(translate('SidePrompt guide: Choose a quoted template name, then fill any prompted macros. Usage: /sideprompt "Name" {{macro}}="value" [X-Y].'), 'STMB');
         return '';
     }
 
@@ -9862,7 +9862,7 @@ async function sidePromptCommand(_, rawInput) {
 async function sidePromptSetCommand(_, rawInput) {
     const raw = String(rawInput || '').trim();
     if (!raw) {
-        toastr.info('SidePrompt set guide: Choose a quoted set name. Usage: /sideprompt-set "Name" [X-Y].', 'STMB');
+        toastr.info(translate('SidePrompt set guide: Choose a quoted set name. Usage: /sideprompt-set "Name" [X-Y].'), 'STMB');
         return '';
     }
 
@@ -9872,7 +9872,7 @@ async function sidePromptSetCommand(_, rawInput) {
 async function sidePromptMacroSetCommand(_, rawInput) {
     const raw = String(rawInput || '').trim();
     if (!raw) {
-        toastr.info('SidePrompt macroset guide: Choose a quoted set name, then fill any prompted macros. Usage: /sideprompt-macroset "Name" {{macro}}="value" [X-Y].', 'STMB');
+        toastr.info(translate('SidePrompt macroset guide: Choose a quoted set name, then fill any prompted macros. Usage: /sideprompt-macroset "Name" {{macro}}="value" [X-Y].'), 'STMB');
         return '';
     }
 
@@ -9884,8 +9884,8 @@ async function toggleSidePromptCommand(_, rawInput, enabled) {
     if (!raw) {
         toastr.error(
             enabled
-                ? 'Missing name. Use: /sideprompt-on "Name" OR /sideprompt-on all'
-                : 'Missing name. Use: /sideprompt-off "Name" OR /sideprompt-off all',
+                ? translate('Missing name. Use: /sideprompt-on "Name" OR /sideprompt-on all')
+                : translate('Missing name. Use: /sideprompt-off "Name" OR /sideprompt-off all'),
             'STMB',
         );
         return '';
@@ -9896,12 +9896,12 @@ async function toggleSidePromptCommand(_, rawInput, enabled) {
         await refreshSidePromptCache();
         window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
         if (result.all) {
-            toastr.success(`${enabled ? 'Enabled' : 'Disabled'} ${result.changed} side prompt${result.changed === 1 ? '' : 's'}`, 'STMB');
+            toastr.success(t`${enabled ? 'Enabled' : 'Disabled'} ${result.changed} side prompt${result.changed === 1 ? '' : 's'}`, 'STMB');
         } else if (result.template) {
             if (result.changed > 0) {
-                toastr.success(`${enabled ? 'Enabled' : 'Disabled'} "${result.template.name}"`, 'STMB');
+                toastr.success(t`${enabled ? 'Enabled' : 'Disabled'} "${result.template.name}"`, 'STMB');
             } else {
-                toastr.info(`"${result.template.name}" is already ${enabled ? 'enabled' : 'disabled'}`, 'STMB');
+                toastr.info(t`"${result.template.name}" is already ${enabled ? 'enabled' : 'disabled'}`, 'STMB');
             }
         }
     } catch (error) {
@@ -9910,7 +9910,7 @@ async function toggleSidePromptCommand(_, rawInput, enabled) {
             toastr.error(String(error.message), 'STMB');
             return '';
         }
-        toastr.error(`Failed to toggle side prompt: ${error?.message || 'Unknown error'}`, 'STMB');
+        toastr.error(t`Failed to toggle side prompt: ${error?.message || 'Unknown error'}`, 'STMB');
     }
 
     return '';
@@ -9935,7 +9935,7 @@ async function getHighestProcessedCommand() {
 async function setHighestProcessedCommand(_, value) {
     const raw = String(value || '').trim();
     if (!raw) {
-        toastr.error('Missing argument. Use: /stmb-set-highest <N|none>', 'STMB');
+        toastr.error(translate('Missing argument. Use: /stmb-set-highest <N|none>'), 'STMB');
         return '';
     }
 
@@ -9946,30 +9946,30 @@ async function setHighestProcessedCommand(_, value) {
         saveMetadataDebounced();
         refreshMemoryBoundaryUi();
         await refreshOpenSettingsPopupSceneState();
-        toastr.success('Last processed message cleared (no memories processed).', 'STMB');
+        toastr.success(translate('Last processed message cleared (no memories processed).'), 'STMB');
         return '';
     }
 
     const parsed = Number.parseInt(input, 10);
     if (!Number.isFinite(parsed) || Number.isNaN(parsed)) {
-        toastr.error('Invalid argument. Use: /stmb-set-highest <N|none>', 'STMB');
+        toastr.error(translate('Invalid argument. Use: /stmb-set-highest <N|none>'), 'STMB');
         return '';
     }
     if (parsed < 0) {
-        toastr.error('Message IDs must be zero or greater.', 'STMB');
+        toastr.error(translate('Message IDs must be zero or greater.'), 'STMB');
         return '';
     }
 
     const lastChatIndex = chat.length - 1;
     if (!Number.isInteger(lastChatIndex) || lastChatIndex < 0) {
-        toastr.error('There are no messages in this chat yet.', 'STMB');
+        toastr.error(translate('There are no messages in this chat yet.'), 'STMB');
         return '';
     }
 
     const clamped = Math.min(parsed, lastChatIndex);
     if (clamped !== parsed) {
         toastr.info(
-            `Highest message is ${lastChatIndex}, so last message processed has been set to ${lastChatIndex}.`,
+            t`Highest message is ${lastChatIndex}, so last message processed has been set to ${lastChatIndex}.`,
             'STMB',
         );
     }
@@ -9980,12 +9980,12 @@ async function setHighestProcessedCommand(_, value) {
     });
     const lastAvailableMessageId = Number(rangeInfo?.lastAvailableMessageId);
     if (!Number.isInteger(lastAvailableMessageId) || lastAvailableMessageId < 0) {
-        toastr.error('There are no messages in this chat yet.', 'STMB');
+        toastr.error(translate('There are no messages in this chat yet.'), 'STMB');
         return '';
     }
     if (Array.isArray(rangeInfo?.missingRanges) && rangeInfo.missingRanges.length > 0) {
         const missing = rangeInfo.missingRanges[0];
-        toastr.error(`Message #${clamped} is unavailable because messages ${missing.start}-${missing.end} are missing from chat storage.`, 'STMB');
+        toastr.error(t`Message #${clamped} is unavailable because messages ${missing.start}-${missing.end} are missing from chat storage.`, 'STMB');
         return '';
     }
 
@@ -9995,7 +9995,7 @@ async function setHighestProcessedCommand(_, value) {
     saveMetadataDebounced();
     refreshMemoryBoundaryUi();
     await refreshOpenSettingsPopupSceneState();
-    toastr.success(`Last processed message manually set to #${clamped}.`, 'STMB');
+    toastr.success(t`Last processed message manually set to #${clamped}.`, 'STMB');
 
     return '';
 }
@@ -10354,7 +10354,7 @@ async function buildConsolidationRegenerationDraft(lorebookData, eligibility, ta
 
 async function handleLorebookEntryRegeneration(button) {
     if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(buildStmbSceneContext()))) {
-        toastr.warning('STMB generation is already in progress.', 'STMB');
+        toastr.warning(translate('STMB generation is already in progress.'), 'STMB');
         return;
     }
     const lorebookName = String(button?.dataset?.lorebookName || '').trim();
@@ -10402,7 +10402,7 @@ async function handleLorebookEntryRegeneration(button) {
         }, { signal: task.signal });
         worldInfoCache.delete(lorebookName);
         await Promise.resolve(reloadEditor(lorebookName));
-        toastr.success('Memory regenerated successfully.', 'STMB');
+        toastr.success(translate('Memory regenerated successfully.'), 'STMB');
     } catch (error) {
         if (!isStmbAbortError(error)) {
             toastr.error(error?.message || 'Memory regeneration failed.', 'STMB');

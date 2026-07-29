@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { getPreviewString, saveTtsProviderSettings } from './index.js';
 
 export { VITSTtsProvider };
@@ -64,7 +65,7 @@ class VITSTtsProvider {
 
     get settingsHtml() {
         let html = `
-        <label for="vits_lang">Text Language</label>
+        <label for="vits_lang" data-i18n="Text Language">Text Language</label>
         <select id="vits_lang">`;
 
         for (let language in this.languageLabels) {
@@ -77,12 +78,12 @@ class VITSTtsProvider {
 
         html += `
         </select>
-        <label>VITS / W2V2-VITS / Bert-VITS2 Settings:</label><br/>
-        <label for="vits_endpoint">Provider Endpoint:</label>
+        <label data-i18n="VITS / W2V2-VITS / Bert-VITS2 Settings:">VITS / W2V2-VITS / Bert-VITS2 Settings:</label><br/>
+        <label for="vits_endpoint" data-i18n="Provider Endpoint:">Provider Endpoint:</label>
         <input id="vits_endpoint" type="text" class="text_pole" maxlength="250" value="${this.defaultSettings.provider_endpoint}"/>
         <span>Use <a target="_blank" href="https://github.com/Artrajz/vits-simple-api">vits-simple-api</a>.</span><br/>
 
-        <label for="vits_format">Audio format:</label>
+        <label for="vits_format" data-i18n="Audio format:">Audio format:</label>
         <select id="vits_format">`;
 
         for (let format of this.audioFormats) {
@@ -109,24 +110,24 @@ class VITSTtsProvider {
 
         <label for="vits_streaming" class="checkbox_label">
             <input id="vits_streaming" type="checkbox" />
-            <span>Streaming</span>
+            <span data-i18n="Streaming">Streaming</span>
         </label>
 
-        <label>W2V2-VITS Settings:</label><br/>
-        <label for="vits_dim_emotion">Dimensional emotion:</label>
+        <label data-i18n="W2V2-VITS Settings:">W2V2-VITS Settings:</label><br/>
+        <label for="vits_dim_emotion" data-i18n="Dimensional emotion:">Dimensional emotion:</label>
         <input id="vits_dim_emotion" type="number" class="text_pole" min="0" max="5457" step="1" value="${this.defaultSettings.dim_emotion}"/>
 
-        <label>BERT-VITS2 Settings:</label><br/>
+        <label data-i18n="BERT-VITS2 Settings:">BERT-VITS2 Settings:</label><br/>
         <label for="vits_sdp_ratio">sdp_ratio: <span id="vits_sdp_ratio_output">${this.defaultSettings.sdp_ratio}</span></label>
         <input id="vits_sdp_ratio" type="range" value="${this.defaultSettings.sdp_ratio}" min="0.0" max="1" step="0.01" />
 
         <label for="vits_emotion">emotion: <span id="vits_emotion_output">${this.defaultSettings.emotion}</span></label>
         <input id="vits_emotion" type="range" value="${this.defaultSettings.emotion}" min="0" max="9" step="1" />
 
-        <label for="vits_text_prompt">Text Prompt:</label>
+        <label for="vits_text_prompt" data-i18n="Text Prompt:">Text Prompt:</label>
         <input id="vits_text_prompt" type="text" class="text_pole" maxlength="512" value="${this.defaultSettings.text_prompt}"/>
 
-        <label for="vits_style_text">Style text:</label>
+        <label for="vits_style_text" data-i18n="Style text:">Style text:</label>
         <input id="vits_style_text" type="text" class="text_pole" maxlength="512" value="${this.defaultSettings.style_text}"/>
 
         <label for="vits_style_weight">Style weight <span id="vits_style_weight_output">${this.defaultSettings.style_weight}</span></label>
@@ -367,7 +368,7 @@ class VITSTtsProvider {
             },
         );
         if (!response.ok) {
-            toastr.error(response.statusText, 'TTS Generation Failed');
+            toastr.error(response.statusText, translate('TTS Generation Failed'));
             throw new Error(`HTTP ${response.status}: ${await response.text()}`);
         }
         return response;

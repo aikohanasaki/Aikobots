@@ -1,40 +1,40 @@
-<h3>World Info Report{{#if messageId}} <small>(Message {{messageId}})</small>{{/if}}</h3>
+<h3><span data-i18n="World Info Report">World Info Report</span>{{#if messageId}} <small>(<span data-i18n="Message">Message</span> {{messageId}})</small>{{/if}}</h3>
 <div class="flex-container flexFlowColumns">
     <div class="flex-container wide100p">
-        <div class="flex1">Active Entries</div>
+        <div class="flex1" data-i18n="Active Entries">Active Entries</div>
         <div>{{activeEntriesCount}}</div>
     </div>
     {{#if hiddenEntriesCount}}
     <div class="flex-container wide100p">
-        <div class="flex1"><small>{{hiddenEntriesCount}} hidden entries</small></div>
+        <div class="flex1"><small>{{hiddenEntriesCount}} <span data-i18n="hidden entries">hidden entries</span></small></div>
         <div></div>
     </div>
     {{/if}}
     <div class="flex-container wide100p">
-        <div class="flex1">Active Tokens</div>
+        <div class="flex1" data-i18n="Active Tokens">Active Tokens</div>
         <div>{{totalTokens}}</div>
     </div>
     <div class="flex-container wide100p">
-        <div class="flex1">Global Budget</div>
+        <div class="flex1" data-i18n="Global Budget">Global Budget</div>
         <div>{{globalBudgetUsed}} / {{globalBudgetLimit}}</div>
     </div>
     <div class="flex-container wide100p">
-        <div class="flex1">Overflowed</div>
-        <div>{{#if overflowed}}Yes{{else}}No{{/if}}</div>
+        <div class="flex1" data-i18n="Overflowed">Overflowed</div>
+        <div>{{#if overflowed}}<span data-i18n="Yes">Yes</span>{{else}}<span data-i18n="No">No</span>{{/if}}</div>
     </div>
 </div>
 
 {{#if activeEntries.length}}
 <hr>
-<h4>Active Entries</h4>
+<h4 data-i18n="Active Entries">Active Entries</h4>
 <div class="flex-container flexFlowColumns flexNoGap">
     {{#each activeEntries}}
     <div class="wide100p" style="padding: 0.4rem 0; border-bottom: 1px solid var(--SmartThemeBorderColor);">
         <div class="flex-container wide100p">
             <div class="flex1">
-                {{#if displayName}}{{displayName}}{{else}}{{#if book}}{{book}}{{else}}World Info Entry{{/if}}{{/if}}
+                {{#if displayName}}{{displayName}}{{else}}{{#if book}}{{book}}{{else}}<span data-i18n="World Info Entry">World Info Entry</span>{{/if}}{{/if}}
             </div>
-            <div>{{tokens}} tokens</div>
+            <div>{{tokens}} <span data-i18n="tokens">tokens</span></div>
         </div>
         <div><small>{{metaText}}</small></div>
         <pre class="tokenItemizingMaintext">{{displayContent}}</pre>
@@ -45,13 +45,13 @@
 
 {{#if rounds.length}}
 <hr>
-<h4>Rounds</h4>
+<h4 data-i18n="Rounds">Rounds</h4>
 <div class="flex-container flexFlowColumns flexNoGap">
     {{#each rounds}}
     <div class="wide100p" style="padding: 0.6rem 0; border-bottom: 1px solid var(--SmartThemeBorderColor);">
         <div class="flex-container wide100p">
-            <div class="flex1">Round {{roundIndex}}</div>
-            <div><small>{{scanState}} | admitted {{admittedEntries}} | dropped {{droppedEntries}}</small></div>
+            <div class="flex1"><span data-i18n="Round">Round</span> {{roundIndex}}</div>
+            <div><small>{{scanState}} | <span data-i18n="admitted">admitted</span> {{admittedEntries}} | <span data-i18n="dropped">dropped</span> {{droppedEntries}}</small></div>
         </div>
         {{#if entries.length}}
         <div class="flex-container flexFlowColumns flexNoGap">
@@ -59,9 +59,9 @@
             <div class="wide100p" style="padding: 0.35rem 0;">
                 <div class="flex-container wide100p">
                     <div class="flex1">
-                        {{#if displayName}}{{displayName}}{{else}}{{#if book}}{{book}}{{else}}World Info Entry{{/if}}{{/if}}
+                        {{#if displayName}}{{displayName}}{{else}}{{#if book}}{{book}}{{else}}<span data-i18n="World Info Entry">World Info Entry</span>{{/if}}{{/if}}
                     </div>
-                    <div>{{tokens}} tokens</div>
+                    <div>{{tokens}} <span data-i18n="tokens">tokens</span></div>
                 </div>
                 <div><small>{{metaText}}</small></div>
                 <pre class="tokenItemizingMaintext">{{displayContent}}</pre>

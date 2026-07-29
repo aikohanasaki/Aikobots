@@ -1,3 +1,4 @@
+import { translate } from './i18n.js';
 import { characters, getRequestHeaders, getCurrentChatId, renderDetachedMessage, this_chid } from '../script.js';
 import { selected_group } from './group-chats.js';
 
@@ -165,7 +166,7 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Chat Log</title>
+    <title data-i18n="Chat Log">Chat Log</title>
     ${stylesheets}
     <style>
         :root {
@@ -181,13 +182,13 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                     <div class="loader-icon-wrap">
                         <i class="loader-spinner fa-solid fa-circle-notch"></i>
                     </div>
-                    <div class="loader-copy" id="chat-popout-loading-text">Loading chat…</div>
+                    <div class="loader-copy" id="chat-popout-loading-text" data-i18n="Loading chat…">Loading chat…</div>
                 </div>
             </div>
             <div id="chat"></div>
         </main>
         <footer class="chat-popout-end" id="chat-popout-end" data-hidden="true">
-            <strong>End of chat log</strong>
+            <strong data-i18n="End of chat log">End of chat log</strong>
             Close this window to return to the main chat.
         </footer>
     </div>
@@ -532,14 +533,14 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
 export function openChatPopoutWindow({ focusMessageId = null } = {}) {
     const context = buildReaderContext();
     if (!context) {
-        toastr.error('Chat log is not available right now.');
+        toastr.error(translate('Chat log is not available right now.'));
         return null;
     }
 
     const themeVariables = getChatPopoutThemeVariables();
     const popup = window.open('', 'core-chat-popout', 'popup=yes,width=960,height=900,resizable=yes,scrollbars=yes');
     if (!popup) {
-        toastr.error('The chat popout was blocked by the browser.');
+        toastr.error(translate('The chat popout was blocked by the browser.'));
         return null;
     }
 

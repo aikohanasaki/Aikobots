@@ -37,28 +37,28 @@
             </label>
             <label for="sd_source" data-i18n="Source">Source</label>
             <select id="sd_source">
-                <option value="aimlapi">AI/ML API</option>
-                <option value="bfl">BFL (Black Forest Labs)</option>
-                <option value="comfy">ComfyUI</option>
-                <option value="drawthings">DrawThings HTTP API</option>
+                <option value="aimlapi" data-i18n="AI/ML API">AI/ML API</option>
+                <option value="bfl" data-i18n="BFL (Black Forest Labs)">BFL (Black Forest Labs)</option>
+                <option value="comfy" data-i18n="ComfyUI">ComfyUI</option>
+                <option value="drawthings" data-i18n="DrawThings HTTP API">DrawThings HTTP API</option>
                 <option value="electronhub">Electron Hub</option>
-                <option value="extras">Extras API (deprecated)</option>
+                <option value="extras" data-i18n="Extras API (deprecated)">Extras API (deprecated)</option>
                 <option value="falai">FAL.AI</option>
-                <option value="google">Google AI</option>
-                <option value="huggingface">HuggingFace Inference API (serverless)</option>
+                <option value="google" data-i18n="Google AI">Google AI</option>
+                <option value="huggingface" data-i18n="HuggingFace Inference API (serverless)">HuggingFace Inference API (serverless)</option>
                 <option value="nanogpt">NanoGPT</option>
-                <option value="novel">NovelAI Diffusion</option>
+                <option value="novel" data-i18n="NovelAI Diffusion">NovelAI Diffusion</option>
                 <option value="openai">OpenAI</option>
                 <option value="pollinations">Pollinations</option>
                 <option value="vlad">SD.Next (vladmandic)</option>
-                <option value="stability">Stability AI</option>
-                <option value="auto">Stable Diffusion Web UI (AUTOMATIC1111)</option>
-                <option value="horde">Stable Horde</option>
-                <option value="togetherai">TogetherAI</option>
+                <option value="stability" data-i18n="Stability AI">Stability AI</option>
+                <option value="auto" data-i18n="Stable Diffusion Web UI (AUTOMATIC1111)">Stable Diffusion Web UI (AUTOMATIC1111)</option>
+                <option value="horde" data-i18n="Stable Horde">Stable Horde</option>
+                <option value="togetherai" data-i18n="TogetherAI">TogetherAI</option>
                 <option value="xai">xAI (Grok)</option>
             </select>
             <div data-sd-source="auto">
-                <label for="sd_auto_url">SD Web UI URL</label>
+                <label for="sd_auto_url" data-i18n="SD Web UI URL">SD Web UI URL</label>
                 <div class="flex-container flexnowrap">
                     <input id="sd_auto_url" type="text" class="text_pole" data-i18n="[placeholder]sd_auto_url" placeholder="Example: {{auto_url}}" value="{{auto_url}}" />
                     <div id="sd_auto_validate" class="menu_button menu_button_icon">
@@ -74,7 +74,7 @@
                 <i><b data-i18n="Important:">Important:</b></i><i data-i18n="sd_auto_auth_warning_1"> run SD Web UI with the </i><i><tt>--api</tt></i><i data-i18n="sd_auto_auth_warning_2"> flag! The server must be accessible from the SillyTavern host machine.</i>
             </div>
             <div data-sd-source="drawthings">
-                <label for="sd_drawthings_url">DrawThings API URL</label>
+                <label for="sd_drawthings_url" data-i18n="DrawThings API URL">DrawThings API URL</label>
                 <div class="flex-container flexnowrap">
                     <input id="sd_drawthings_url" type="text" class="text_pole" data-i18n="[placeholder]sd_drawthings_url" placeholder="Example: {{drawthings_url}}" value="{{drawthings_url}}" />
                     <div id="sd_drawthings_validate" class="menu_button menu_button_icon">
@@ -165,8 +165,8 @@
                     <div class="flex1">
                         <label for="sd_openai_style" data-i18n="Image Style">Image Style</label>
                         <select id="sd_openai_style">
-                            <option value="vivid">Vivid</option>
-                            <option value="natural">Natural</option>
+                            <option value="vivid" data-i18n="Vivid">Vivid</option>
+                            <option value="natural" data-i18n="Natural">Natural</option>
                         </select>
                     </div>
                     <div class="flex1">
@@ -189,7 +189,7 @@
                 </div>
             </div>
             <div data-sd-source="comfy">
-                <label for="sd_comfy_url">ComfyUI URL</label>
+                <label for="sd_comfy_url" data-i18n="ComfyUI URL">ComfyUI URL</label>
                 <div class="flex-container flexnowrap">
                     <input id="sd_comfy_url" type="text" class="text_pole" data-i18n="[placeholder]sd_comfy_url" placeholder="Example: {{comfy_url}}" value="{{comfy_url}}" />
                     <div id="sd_comfy_validate" class="menu_button menu_button_icon">
@@ -200,7 +200,7 @@
                     </div>
                 </div>
                 <p><i><b data-i18n="Important:">Important:</b></i><i data-i18n="The server must be accessible from the SillyTavern host machine."> The server must be accessible from the SillyTavern host machine.</i></p>
-                <label for="sd_comfy_workflow">ComfyUI Workflow</label>
+                <label for="sd_comfy_workflow" data-i18n="ComfyUI Workflow">ComfyUI Workflow</label>
                 <div class="flex-container flexnowrap">
                     <select id="sd_comfy_workflow" class="flex1 text_pole"></select>
                     <div id="sd_comfy_open_workflow_editor" class="menu_button menu_button_icon" data-i18n="[title]Open workflow editor" title="Open workflow editor">
@@ -245,23 +245,23 @@
                     <div class="flex1">
                         <label for="sd_stability_style_preset" data-i18n="Style Preset">Style Preset</label>
                         <select id="sd_stability_style_preset">
-                            <option value="anime">Anime</option>
-                            <option value="3d-model">3D Model</option>
-                            <option value="analog-film">Analog Film</option>
-                            <option value="cinematic">Cinematic</option>
-                            <option value="comic-book">Comic Book</option>
-                            <option value="digital-art">Digital Art</option>
-                            <option value="enhance">Enhance</option>
-                            <option value="fantasy-art">Fantasy Art</option>
-                            <option value="isometric">Isometric</option>
-                            <option value="line-art">Line Art</option>
-                            <option value="low-poly">Low Poly</option>
-                            <option value="modeling-compound">Modeling Compound</option>
-                            <option value="neon-punk">Neon Punk</option>
-                            <option value="origami">Origami</option>
-                            <option value="photographic">Photographic</option>
-                            <option value="pixel-art">Pixel Art</option>
-                            <option value="tile-texture">Tile Texture</option>
+                            <option value="anime" data-i18n="Anime">Anime</option>
+                            <option value="3d-model" data-i18n="3D Model">3D Model</option>
+                            <option value="analog-film" data-i18n="Analog Film">Analog Film</option>
+                            <option value="cinematic" data-i18n="Cinematic">Cinematic</option>
+                            <option value="comic-book" data-i18n="Comic Book">Comic Book</option>
+                            <option value="digital-art" data-i18n="Digital Art">Digital Art</option>
+                            <option value="enhance" data-i18n="Enhance">Enhance</option>
+                            <option value="fantasy-art" data-i18n="Fantasy Art">Fantasy Art</option>
+                            <option value="isometric" data-i18n="Isometric">Isometric</option>
+                            <option value="line-art" data-i18n="Line Art">Line Art</option>
+                            <option value="low-poly" data-i18n="Low Poly">Low Poly</option>
+                            <option value="modeling-compound" data-i18n="Modeling Compound">Modeling Compound</option>
+                            <option value="neon-punk" data-i18n="Neon Punk">Neon Punk</option>
+                            <option value="origami" data-i18n="Origami">Origami</option>
+                            <option value="photographic" data-i18n="Photographic">Photographic</option>
+                            <option value="pixel-art" data-i18n="Pixel Art">Pixel Art</option>
+                            <option value="tile-texture" data-i18n="Tile Texture">Tile Texture</option>
                         </select>
                     </div>
                 </div>
@@ -321,9 +321,9 @@
                     <div class="flex1">
                         <label for="sd_google_duration" data-i18n="Duration (Veo)">Duration (Veo)</label>
                         <select id="sd_google_duration">
-                            <option value="4">Short (4 seconds)</option>
-                            <option value="6">Medium (6 seconds)</option>
-                            <option value="8">Long (8 seconds)</option>
+                            <option value="4" data-i18n="Short (4 seconds)">Short (4 seconds)</option>
+                            <option value="6" data-i18n="Medium (6 seconds)">Medium (6 seconds)</option>
+                            <option value="8" data-i18n="Long (8 seconds)">Long (8 seconds)</option>
                         </select>
                     </div>
                 </div>
@@ -336,7 +336,7 @@
                 </div>
 
                 <div class="flex1" data-sd-source="comfy,auto">
-                    <label for="sd_vae">VAE</label>
+                    <label for="sd_vae" data-i18n="VAE">VAE</label>
                     <select id="sd_vae"></select>
                 </div>
             </div>
@@ -474,7 +474,7 @@
                     <input id="sd_novel_sm_dyn" type="checkbox" />
                     <small data-i18n="DYN">DYN</small>
                 </label>
-                <label class="flex1 checkbox_label" for="sd_novel_decrisper" title="Reduce artifacts caused by high guidance values.">
+                <label class="flex1 checkbox_label" for="sd_novel_decrisper" title="Reduce artifacts caused by high guidance values." data-i18n="[title]Reduce artifacts caused by high guidance values.">
                     <input id="sd_novel_decrisper" type="checkbox" />
                     <small data-i18n="Decrisper">Decrisper</small>
                 </label>
@@ -521,7 +521,7 @@
                     <span data-i18n="Shareable">
                         Shareable
                     </span>
-                    <small class="flexBasis100p">
+                    <small class="flexBasis100p" data-i18n="When checked, character-specific prompts will be saved with the character card data.">
                         When checked, character-specific prompts will be saved with the character card data.
                     </small>
                 </label>

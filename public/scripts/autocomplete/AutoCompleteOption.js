@@ -1,3 +1,4 @@
+import { t } from '../i18n.js';
 import { AutoCompleteFuzzyScore } from './AutoCompleteFuzzyScore.js';
 
 
@@ -176,7 +177,7 @@ export class AutoCompleteOption {
                     for (const aliasName of aliasList) {
                         const alias = document.createElement('span'); {
                             alias.classList.add('monospace');
-                            alias.textContent = `/${aliasName}`;
+                            alias.textContent = t`/${aliasName}`;
                             aliases.append(alias);
                         }
                     }

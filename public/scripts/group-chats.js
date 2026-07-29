@@ -106,7 +106,7 @@ import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map
 import { FILTER_TYPES, FilterHelper } from './filters.js';
 import { isExternalMediaAllowed } from './chats.js';
 import { POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 
 export {
@@ -1215,7 +1215,7 @@ export function getGroupBlock(group) {
     const template = $('#group_list_template .group_select').clone();
     template.data('id', group.id);
     template.attr('data-grid', group.id);
-    template.find('.ch_name').text(group.name).attr('title', `[Group] ${group.name}`);
+    template.find('.ch_name').text(group.name).attr('title', t`[Group] ${group.name}`);
     template.find('.group_fav_icon').css('display', 'none');
     template.addClass(group.fav ? 'is_fav' : '');
     template.find('.ch_fav').val(group.fav);
@@ -1287,7 +1287,7 @@ function getGroupAvatar(group) {
             groupAvatar.find(`.img_${i + 1}`).attr('src', memberAvatars[i]);
         }
 
-        groupAvatar.attr('title', `[Group] ${group.name}`);
+        groupAvatar.attr('title', t`[Group] ${group.name}`);
         return groupAvatar;
     }
 
@@ -1299,7 +1299,7 @@ function getGroupAvatar(group) {
     // default avatar
     const groupAvatar = $('#group_avatars_template .collage_1').clone();
     groupAvatar.find('.img_1').attr('src', group.avatar_url || system_avatar);
-    groupAvatar.attr('title', `[Group] ${group.name}`);
+    groupAvatar.attr('title', t`[Group] ${group.name}`);
     return groupAvatar;
 }
 
@@ -1420,7 +1420,7 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         }
 
         if (activatedMembers.length === 0) {
-            //toastr.warning('All group members are disabled. Enable at least one to get a reply.');
+            //toastr.warning(translate('All group members are disabled. Enable at least one to get a reply.'));
 
             // Send user message as is
             const bias = getBiasStrings(userInput, type);
@@ -2202,7 +2202,7 @@ async function uploadGroupAvatar(event) {
 
     $('#dialogue_popup').addClass('large_dialogue_popup wide_dialogue_popup');
 
-    const croppedImage = await callGenericPopup('Set the crop position of the avatar image', POPUP_TYPE.CROP, '', { cropImage: result });
+    const croppedImage = await callGenericPopup(translate('Set the crop position of the avatar image'), POPUP_TYPE.CROP, '', { cropImage: result });
 
     if (!croppedImage) {
         return;
@@ -2228,7 +2228,7 @@ async function uploadGroupAvatar(event) {
 }
 
 async function restoreGroupAvatar() {
-    const confirm = await Popup.show.confirm('Are you sure you want to restore the group avatar?', 'Your custom image will be deleted, and a collage will be used instead.');
+    const confirm = await Popup.show.confirm(t`Are you sure you want to restore the group avatar?`, t`Your custom image will be deleted, and a collage will be used instead.`);
     if (!confirm) {
         return;
     }

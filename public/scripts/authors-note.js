@@ -18,7 +18,7 @@ import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
 export { MODULE_NAME as NOTE_MODULE_NAME };
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { MacrosParser } from './macros.js';
 
 const MODULE_NAME = '2_floating_prompt'; // <= Deliberate, for sorting lower than memory
@@ -350,7 +350,7 @@ export function setFloatingPrompt() {
 
     if (lastMessageNumber <= 0 || chat_metadata[metadata_keys.interval] <= 0) {
         context.setExtensionPrompt(MODULE_NAME, '', extension_prompt_types.NONE, MAX_INJECTION_DEPTH);
-        $('#extension_floating_counter').text('(disabled)');
+        $('#extension_floating_counter').text(translate('(disabled)'));
         shouldWIAddPrompt = false;
         return;
     }
@@ -508,7 +508,7 @@ export function initAuthorsNote() {
             ),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Sets an author's note for the currently selected chat if specified and returns the current note.">
                 Sets an author's note for the currently selected chat if specified and returns the current note.
             </div>
         `,
@@ -524,7 +524,7 @@ export function initAuthorsNote() {
             ),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Sets an author's note depth for in-chat positioning if specified and returns the current depth.">
                 Sets an author's note depth for in-chat positioning if specified and returns the current depth.
             </div>
         `,
@@ -541,7 +541,7 @@ export function initAuthorsNote() {
             ),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Sets an author's note insertion frequency if specified and returns the current frequency.">
                 Sets an author's note insertion frequency if specified and returns the current frequency.
             </div>
         `,
@@ -558,7 +558,7 @@ export function initAuthorsNote() {
             ),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Sets an author's note position if specified and returns the current position.">
                 Sets an author's note position if specified and returns the current position.
             </div>
         `,
@@ -574,7 +574,7 @@ export function initAuthorsNote() {
             ),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Sets an author's note chat insertion role if specified and returns the current role.">
                 Sets an author's note chat insertion role if specified and returns the current role.
             </div>
         `,

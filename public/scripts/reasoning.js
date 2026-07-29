@@ -93,7 +93,7 @@ function getReasoningEditTarget(element) {
     }
 
     if (hasActiveMessageEditSession()) {
-        toastr.warning('This message changed while it was being edited. Cancel and reopen the edit before saving.');
+        toastr.warning(translate('This message changed while it was being edited. Cancel and reopen the edit before saving.'));
         return null;
     }
 
@@ -251,7 +251,7 @@ async function maybePromptToCleanCurrentChat(chatId) {
 
     const confirm = await Popup.show.confirm(
         t`Strip AI Thinking`,
-        'Strip thinking from entire chat is enabled. Do you want to clean thinking tags from this entire chat?',
+        t`Strip thinking from entire chat is enabled. Do you want to clean thinking tags from this entire chat?`,
     );
 
     if (!confirm) {
@@ -1089,7 +1089,7 @@ function selectReasoningTemplateCallback(args, name) {
         const result = performFuzzySearch('reasoning-templates', templateNames, [], name);
 
         if (result.length === 0) {
-            !quiet && toastr.warning(`Reasoning template "${name}" not found`);
+            !quiet && toastr.warning(t`Reasoning template "${name}" not found`);
             return '';
         }
 
@@ -1097,7 +1097,7 @@ function selectReasoningTemplateCallback(args, name) {
     }
 
     UI.$select.val(foundName).trigger('change');
-    !quiet && toastr.success(`Reasoning template "${foundName}" selected`);
+    !quiet && toastr.success(t`Reasoning template "${foundName}" selected`);
     return foundName;
 
 }
@@ -1268,12 +1268,12 @@ function registerReasoningSlashCommands() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Selects a reasoning template by name, using fuzzy search to find the closest match. Gets the current template if no name is provided.">
                 Selects a reasoning template by name, using fuzzy search to find the closest match.
                 Gets the current template if no name is provided.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/reasoning-template DeepSeek</code></pre>

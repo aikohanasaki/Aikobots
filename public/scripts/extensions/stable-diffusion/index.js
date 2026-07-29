@@ -603,7 +603,7 @@ function addPromptTemplates() {
             });
         const button = $('<button></button>')
             .addClass('menu_button fa-solid fa-undo')
-            .attr('title', 'Restore default')
+            .attr('title', translate('Restore default'))
             .attr('data-i18n', 'Restore default')
             .on('click', () => {
                 textarea.val(promptTemplates[name]);
@@ -660,7 +660,7 @@ async function onDeleteStyleClick() {
         return;
     }
 
-    const confirmed = await callGenericPopup(t`Are you sure you want to delete the style "${selectedStyle}"?`, POPUP_TYPE.CONFIRM, '', { okButton: 'Delete', cancelButton: 'Cancel' });
+    const confirmed = await callGenericPopup(t`Are you sure you want to delete the style "${selectedStyle}"?`, POPUP_TYPE.CONFIRM, '', { okButton: translate('Delete'), cancelButton: translate('Cancel') });
 
     if (!confirmed) {
         return;
@@ -689,7 +689,7 @@ async function onDeleteStyleClick() {
 }
 
 async function onSaveStyleClick() {
-    const userInput = await callGenericPopup('Enter style name:', POPUP_TYPE.INPUT);
+    const userInput = await callGenericPopup(translate('Enter style name:'), POPUP_TYPE.INPUT);
 
     if (!userInput) {
         return;
@@ -733,8 +733,8 @@ async function onSaveStyleClick() {
  */
 async function refinePrompt(prompt, isNegative) {
     if (extension_settings.sd.refine_mode) {
-        const text = isNegative ? '<h3>Review and edit the <i>negative</i> prompt:</h3>' : '<h3>Review and edit the prompt:</h3>';
-        const refinedPrompt = await callGenericPopup(text + 'Press "Cancel" to abort the image generation.', POPUP_TYPE.INPUT, prompt.trim(), { rows: 5, okButton: 'Continue' });
+        const text = isNegative ? '<h3>Review and edit the <i data-i18n="negative">negative</i> prompt:</h3>' : '<h3 data-i18n="Review and edit the prompt:">Review and edit the prompt:</h3>';
+        const refinedPrompt = await callGenericPopup(text + 'Press "Cancel" to abort the image generation.', POPUP_TYPE.INPUT, prompt.trim(), { rows: 5, okButton: translate('Continue') });
 
         if (refinedPrompt) {
             return String(refinedPrompt);
@@ -1036,14 +1036,14 @@ async function onViewAnlasClick() {
     const result = await loadNovelSubscriptionData();
 
     if (!result) {
-        toastr.warning('Are you subscribed?', 'Could not load NovelAI subscription data');
+        toastr.warning(translate('Are you subscribed?'), translate('Could not load NovelAI subscription data'));
         return;
     }
 
     const anlas = getNovelAnlas();
     const unlimitedGeneration = getNovelUnlimitedImageGeneration();
 
-    toastr.info(`Free image generation: ${unlimitedGeneration ? 'Yes' : 'No'}`, `Anlas: ${anlas}`);
+    toastr.info(t`Free image generation: ${unlimitedGeneration ? 'Yes' : 'No'}`, `Anlas: ${anlas}`);
 }
 
 function onNovelAnlasGuardInput() {
@@ -1193,7 +1193,7 @@ async function changeComfyWorkflow(_, name) {
         $('#sd_comfy_workflow').val(extension_settings.sd.comfy_workflow);
         saveSettingsDebounced();
     } else {
-        toastr.error(`ComfyUI Workflow "${name}" does not exist.`);
+        toastr.error(t`ComfyUI Workflow "${name}" does not exist.`);
     }
     return '';
 }
@@ -1215,9 +1215,9 @@ async function validateAutoUrl() {
         }
 
         await loadSettingOptions();
-        toastr.success('SD WebUI API connected.');
+        toastr.success(translate('SD WebUI API connected.'));
     } catch (error) {
-        toastr.error(`Could not validate SD WebUI API: ${error.message}`);
+        toastr.error(t`Could not validate SD WebUI API: ${error.message}`);
     }
 }
 
@@ -1238,9 +1238,9 @@ async function validateDrawthingsUrl() {
         }
 
         await loadSettingOptions();
-        toastr.success('SD Drawthings API connected.');
+        toastr.success(translate('SD Drawthings API connected.'));
     } catch (error) {
-        toastr.error(`Could not validate SD Drawthings API: ${error.message}`);
+        toastr.error(t`Could not validate SD Drawthings API: ${error.message}`);
     }
 }
 
@@ -1261,9 +1261,9 @@ async function validateVladUrl() {
         }
 
         await loadSettingOptions();
-        toastr.success('SD.Next API connected.');
+        toastr.success(translate('SD.Next API connected.'));
     } catch (error) {
-        toastr.error(`Could not validate SD.Next API: ${error.message}`);
+        toastr.error(t`Could not validate SD.Next API: ${error.message}`);
     }
 }
 
@@ -1285,9 +1285,9 @@ async function validateComfyUrl() {
         }
 
         await loadSettingOptions();
-        toastr.success('ComfyUI API connected.');
+        toastr.success(translate('ComfyUI API connected.'));
     } catch (error) {
-        toastr.error(`Could not validate ComfyUI API: ${error.message}`);
+        toastr.error(t`Could not validate ComfyUI API: ${error.message}`);
     }
 }
 
@@ -1325,14 +1325,14 @@ async function onModelChange() {
         return;
     }
 
-    toastr.info('Updating remote model...', 'Please wait');
+    toastr.info(translate('Updating remote model...'), translate('Please wait'));
     if (extension_settings.sd.source === sources.extras) {
         await updateExtrasRemoteModel();
     }
     if (extension_settings.sd.source === sources.auto || extension_settings.sd.source === sources.vlad) {
         await updateAutoRemoteModel();
     }
-    toastr.success('Model successfully loaded!', 'Image Generation');
+    toastr.success(translate('Model successfully loaded!'), translate('Image Generation'));
 }
 
 async function getAutoRemoteModel() {
@@ -1470,7 +1470,7 @@ async function updateAutoRemoteModel() {
         console.log('Model successfully updated on SD WebUI remote.');
     } catch (error) {
         console.error(error);
-        toastr.error(`Could not update SD WebUI model: ${error.message}`);
+        toastr.error(t`Could not update SD WebUI model: ${error.message}`);
     }
 }
 
@@ -2559,7 +2559,7 @@ function getRawLastMessage() {
             };
         }
 
-        toastr.warning('No usable messages found.', 'Image Generation');
+        toastr.warning(translate('No usable messages found.'), translate('Image Generation'));
         throw new Error('No usable messages found.');
     };
 
@@ -2613,7 +2613,7 @@ async function generatePicture(initiator, args, trigger, message, callback) {
     }
 
     if (!isValidState()) {
-        toastr.warning('Image generation is not available. Check your settings and try again.');
+        toastr.warning(translate('Image generation is not available. Check your settings and try again.'));
         return;
     }
 
@@ -2685,7 +2685,7 @@ async function generatePicture(initiator, args, trigger, message, callback) {
         // sendGenerationRequest mostly deals with its own errors
         const reason = err.error?.message || err.message || 'Unknown error';
         const errorText = 'SD prompt text generation failed. ' + reason;
-        toastr.error(errorText, 'Image Generation');
+        toastr.error(errorText, translate('Image Generation'));
         throw new Error(errorText);
     }
     finally {
@@ -2834,7 +2834,7 @@ async function generateMultimodalPrompt(generationType, quietPrompt) {
     }
 
     try {
-        const toast = toastr.info('Generating multimodal caption...', 'Image Generation');
+        const toast = toastr.info(translate('Generating multimodal caption...'), translate('Image Generation'));
         const response = await fetch(avatarUrl);
 
         if (!response.ok) {
@@ -2854,7 +2854,7 @@ async function generateMultimodalPrompt(generationType, quietPrompt) {
         return caption;
     } catch (error) {
         console.error(error);
-        toastr.error('Multimodal captioning failed. Please try again.', 'Image Generation');
+        toastr.error(translate('Multimodal captioning failed. Please try again.'), translate('Image Generation'));
         throw new Error('Multimodal captioning failed.');
     }
 }
@@ -2887,7 +2887,7 @@ async function generatePrompt(quietPrompt) {
     const processedReply = processReply(reply);
 
     if (!processedReply) {
-        toastr.error('Prompt generation produced no text. Check your prompt settings and try again', 'Image Generation');
+        toastr.error(translate('Prompt generation produced no text. Check your prompt settings and try again'), translate('Image Generation'));
         throw new Error('Prompt generation failed.');
     }
 
@@ -2986,13 +2986,13 @@ async function sendGenerationRequest(generationType, prompt, additionalNegativeP
         }
     } catch (err) {
         console.error('Image generation request error: ', err);
-        toastr.error('Image generation failed. Please try again.' + '\n\n' + String(err), 'Image Generation');
+        toastr.error(translate('Image generation failed. Please try again.') + '\n\n' + String(err), translate('Image Generation'));
         return;
     }
 
     if (currentChatId !== getCurrentChatId()) {
         console.warn('Chat changed, aborting SD result saving');
-        toastr.warning('Chat changed, generated image discarded.', 'Image Generation');
+        toastr.warning(translate('Chat changed, generated image discarded.'), translate('Image Generation'));
         return;
     }
 
@@ -3704,7 +3704,7 @@ async function generateComfyImage(prompt, negativePrompt, signal) {
     });
     if (!workflowResponse.ok) {
         const text = await workflowResponse.text();
-        toastr.error(`Failed to load workflow.\n\n${text}`);
+        toastr.error(t`Failed to load workflow.\n\n${text}`);
     }
     let workflow = (await workflowResponse.json()).replaceAll('"%prompt%"', JSON.stringify(prompt));
     workflow = workflow.replaceAll('"%negative_prompt%"', JSON.stringify(negativePrompt));
@@ -4032,7 +4032,7 @@ async function onComfyOpenWorkflowEditorClick() {
         workflow = $('#sd_comfy_workflow_editor_workflow').val().toString();
         return true;
     };
-    const popup = new Popup(editorHtml, POPUP_TYPE.CONFIRM, '', { okButton: 'Save', cancelButton: 'Cancel', wide: true, large: true, onClosing: saveValue });
+    const popup = new Popup(editorHtml, POPUP_TYPE.CONFIRM, '', { okButton: translate('Save'), cancelButton: translate('Cancel'), wide: true, large: true, onClosing: saveValue });
     const popupResult = popup.show();
     const checkPlaceholders = () => {
         workflow = $('#sd_comfy_workflow_editor_workflow').val().toString();
@@ -4047,10 +4047,10 @@ async function onComfyOpenWorkflowEditorClick() {
     const addPlaceholderDom = (placeholder) => {
         const el = $(`
             <li class="sd_comfy_workflow_editor_not_found" data-placeholder="${placeholder.find}">
-                <span class="sd_comfy_workflow_editor_custom_remove" title="Remove custom placeholder">⊘</span>
+                <span class="sd_comfy_workflow_editor_custom_remove" title="Remove custom placeholder" data-i18n="[title]Remove custom placeholder">⊘</span>
                 <span class="sd_comfy_workflow_editor_custom_final">"%${placeholder.find}%"</span><br>
-                <input placeholder="find" title="find" type="text" class="text_pole sd_comfy_workflow_editor_custom_find" value=""><br>
-                <input placeholder="replace" title="replace" type="text" class="text_pole sd_comfy_workflow_editor_custom_replace">
+                <input placeholder="find" title="find" type="text" class="text_pole sd_comfy_workflow_editor_custom_find" value="" data-i18n="[title]find;[placeholder]find"><br>
+                <input placeholder="replace" title="replace" type="text" class="text_pole sd_comfy_workflow_editor_custom_replace" data-i18n="[title]replace;[placeholder]replace">
             </li>
         `);
         $('#sd_comfy_workflow_editor_placeholder_list_custom').append(el);
@@ -4060,7 +4060,7 @@ async function onComfyOpenWorkflowEditorClick() {
                 return;
             }
             placeholder.find = this.value;
-            el.find('.sd_comfy_workflow_editor_custom_final').text(`"%${this.value}%"`);
+            el.find('.sd_comfy_workflow_editor_custom_final').text(t`"%${this.value}%"`);
             el.attr('data-placeholder', `${this.value}`);
             checkPlaceholders();
             saveSettingsDebounced();
@@ -4107,13 +4107,13 @@ async function onComfyOpenWorkflowEditorClick() {
         });
         if (!response.ok) {
             const text = await response.text();
-            toastr.error(`Failed to save workflow.\n\n${text}`);
+            toastr.error(t`Failed to save workflow.\n\n${text}`);
         }
     }
 }
 
 async function onComfyNewWorkflowClick() {
-    let name = await callGenericPopup('Workflow name:', POPUP_TYPE.INPUT);
+    let name = await callGenericPopup(translate('Workflow name:'), POPUP_TYPE.INPUT);
     if (!name) {
         return;
     }
@@ -4131,7 +4131,7 @@ async function onComfyNewWorkflowClick() {
     });
     if (!response.ok) {
         const text = await response.text();
-        toastr.error(`Failed to save workflow.\n\n${text}`);
+        toastr.error(t`Failed to save workflow.\n\n${text}`);
     }
     saveSettingsDebounced();
     await loadComfyWorkflows();
@@ -4153,7 +4153,7 @@ async function onComfyDeleteWorkflowClick() {
     });
     if (!response.ok) {
         const text = await response.text();
-        toastr.error(`Failed to save workflow.\n\n${text}`);
+        toastr.error(t`Failed to save workflow.\n\n${text}`);
     }
     await loadComfyWorkflows();
     onComfyWorkflowChange();
@@ -4190,7 +4190,7 @@ async function sendMessage(prompt, image, generationType, additionalNegativePref
             source: MEDIA_SOURCE.GENERATED,
         };
     if (!mediaAttachment) {
-        toastr.error('Generated image could not be attached to the message.', 'Image Generation');
+        toastr.error(translate('Generated image could not be attached to the message.'), translate('Image Generation'));
         mediaAttachment = {
             url: image,
             type: mediaType,

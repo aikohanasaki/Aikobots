@@ -1,3 +1,4 @@
+import { translate } from './i18n.js';
 import dialogPolyfill from '../lib/dialog-polyfill.esm.js';
 import { shouldSendOnEnter } from './RossAscends-mods.js';
 import { power_user, toastPositionClasses } from './power-user.js';
@@ -227,7 +228,7 @@ export class Popup {
         if (animation) this.dlg.classList.add('popup--animation-' + animation);
 
         // If custom button captions are provided, we set them beforehand
-        this.okButton.textContent = typeof okButton === 'string' ? okButton : 'OK';
+        this.okButton.textContent = typeof okButton === 'string' ? okButton : translate('OK');
         this.okButton.dataset.i18n = this.okButton.textContent;
         this.cancelButton.textContent = typeof cancelButton === 'string' ? cancelButton : template.getAttribute('popup-button-cancel');
         this.cancelButton.dataset.i18n = this.cancelButton.textContent;
@@ -555,11 +556,11 @@ export class Popup {
      * - popup with `POPUP_TYPE.INPUT` will return the input value - or `false` on negative and `null` on cancelled
      * - All other will return the result value as provided as `POPUP_RESULT` or a custom number value
      *
-     * <b>IMPORTANT:</b> If the popup closing was cancelled via the `onClosing` handler, the return value will be `Promise<undefined>`.
+     * <b data-i18n="IMPORTANT:">IMPORTANT:</b> If the popup closing was cancelled via the `onClosing` handler, the return value will be `Promise<undefined>`.
      *
      * @param {POPUP_RESULT|number} result - The result of the popup (either an existing `POPUP_RESULT` or a custom result value)
      *
-     * @returns {Promise<string|number|boolean|undefined?>} A promise that resolves with the value of the popup when it is completed. <b>Returns `undefined` if the closing action was cancelled.</b>
+     * @returns {Promise<string|number|boolean|undefined?>} A promise that resolves with the value of the popup when it is completed. <b data-i18n="Returns `undefined` if the closing action was cancelled.">Returns `undefined` if the closing action was cancelled.</b>
      */
     async complete(result) {
         // In all cases besides INPUT the popup value should be the result

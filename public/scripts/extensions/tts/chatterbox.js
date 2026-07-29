@@ -55,21 +55,21 @@ class ChatterboxTtsProvider {
     get settingsHtml() {
         let html = `<div class="chatterbox-settings-container">
             <div class="chatterbox-settings-header">
-                <h3>Chatterbox TTS Settings</h3>
+                <h3 data-i18n="Chatterbox TTS Settings">Chatterbox TTS Settings</h3>
                 <div class="status-indicator">
-                    Status: <span id="chatterbox-status" class="offline">Offline</span>
+                    Status: <span id="chatterbox-status" class="offline" data-i18n="Offline">Offline</span>
                 </div>
             </div>`;
 
         // Server endpoint
         html += `<div class="chatterbox-setting-row">
-            <label for="chatterbox-endpoint">Server Endpoint:</label>
+            <label for="chatterbox-endpoint" data-i18n="Server Endpoint:">Server Endpoint:</label>
             <input id="chatterbox-endpoint" type="text" class="text_pole" value="${this.settings.provider_endpoint}" />
         </div>`;
 
         // Language selection
         html += `<div class="chatterbox-setting-row">
-            <label for="chatterbox-language">Language:</label>
+            <label for="chatterbox-language" data-i18n="Language:">Language:</label>
             <select id="chatterbox-language">`;
         for (let language in this.languageLabels) {
             html += `<option value="${this.languageLabels[language]}" ${this.languageLabels[language] === this.settings.language ? 'selected' : ''}>${language}</option>`;
@@ -79,7 +79,7 @@ class ChatterboxTtsProvider {
 
         // Generation parameters
         html += `<div class="chatterbox-params-section">
-            <h4>Generation Parameters</h4>`;
+            <h4 data-i18n="Generation Parameters">Generation Parameters</h4>`;
 
         // Temperature
         html += `<div class="chatterbox-setting-row">
@@ -107,7 +107,7 @@ class ChatterboxTtsProvider {
 
         // Seed
         html += `<div class="chatterbox-setting-row">
-            <label for="chatterbox-seed">Seed (-1 for random):</label>
+            <label for="chatterbox-seed" data-i18n="Seed (-1 for random):">Seed (-1 for random):</label>
             <input id="chatterbox-seed" class="text_pole" type="number" min="-1" value="${this.settings.seed}" />
         </div>`;
 
@@ -121,16 +121,16 @@ class ChatterboxTtsProvider {
 
         // Chunk size
         html += `<div class="chatterbox-setting-row" id="chunk-size-row" ${!this.settings.split_text ? 'style="display: none;"' : ''}>
-            <label for="chatterbox-chunk-size">Chunk Size:</label>
+            <label for="chatterbox-chunk-size" data-i18n="Chunk Size:">Chunk Size:</label>
             <input id="chatterbox-chunk-size" class="text_pole" type="number" min="50" max="500" value="${this.settings.chunk_size}" />
         </div>`;
 
         // Output format
         html += `<div class="chatterbox-setting-row">
-            <label for="chatterbox-format">Output Format:</label>
+            <label for="chatterbox-format" data-i18n="Output Format:">Output Format:</label>
             <select id="chatterbox-format">
-                <option value="wav" ${this.settings.output_format === 'wav' ? 'selected' : ''}>WAV</option>
-                <option value="opus" ${this.settings.output_format === 'opus' ? 'selected' : ''}>Opus</option>
+                <option value="wav" ${this.settings.output_format === 'wav' ? 'selected' : ''} data-i18n="WAV">WAV</option>
+                <option value="opus" ${this.settings.output_format === 'opus' ? 'selected' : ''} data-i18n="Opus">Opus</option>
             </select>
         </div>`;
 
@@ -138,8 +138,8 @@ class ChatterboxTtsProvider {
 
         // Footer with links
         html += `<div class="chatterbox-footer">
-            <a href="${this.settings.provider_endpoint}" target="_blank">Chatterbox Web UI</a> |
-            <a href="https://github.com/devnen/Chatterbox-TTS-Server" target="_blank">Documentation</a>
+            <a href="${this.settings.provider_endpoint}" target="_blank" data-i18n="Chatterbox Web UI">Chatterbox Web UI</a> |
+            <a href="https://github.com/devnen/Chatterbox-TTS-Server" target="_blank" data-i18n="Documentation">Documentation</a>
         </div>`;
 
         html += '</div>'; // End container

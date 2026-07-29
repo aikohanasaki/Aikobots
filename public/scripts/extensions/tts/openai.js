@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { getRequestHeaders, substituteParams } from '../../../script.js';
 import { saveTtsProviderSettings, sanitizeId } from './index.js';
 
@@ -31,10 +32,10 @@ class OpenAITtsProvider {
 
     get settingsHtml() {
         let html = `
-        <div>Use OpenAI's TTS engine.</div>
-        <small>Hint: Save an API key in the OpenAI API settings to use it here.</small>
+        <div data-i18n="Use OpenAI's TTS engine.">Use OpenAI's TTS engine.</div>
+        <small data-i18n="Hint: Save an API key in the OpenAI API settings to use it here.">Hint: Save an API key in the OpenAI API settings to use it here.</small>
         <div>
-            <label for="openai-tts-model">Model:</label>
+            <label for="openai-tts-model" data-i18n="Model:">Model:</label>
             <select id="openai-tts-model">
                 <optgroup label="Latest">
                     <option value="tts-1">tts-1</option>
@@ -136,8 +137,8 @@ class OpenAITtsProvider {
         if ($('#openai-instructions-container').length === 0) {
             const containerHtml = `
                 <div id="openai-instructions-container" style="display: none;">
-                    <span>Voice Instructions (GPT-4o Mini TTS)</span><br>
-                    <small>Customize how each character speaks</small>
+                    <span data-i18n="Voice Instructions (GPT-4o Mini TTS)">Voice Instructions (GPT-4o Mini TTS)</span><br>
+                    <small data-i18n="Customize how each character speaks">Customize how each character speaks</small>
                     <div id="openai-character-instructions"></div>
                 </div>
             `;
@@ -166,7 +167,7 @@ class OpenAITtsProvider {
             label.setAttribute('for', `openai_char_${sanitizedName}`);
             label.innerText = `${char}:`;
             textArea.id = `openai_char_${sanitizedName}`;
-            textArea.placeholder = 'e.g., "Speak cheerfully and energetically"';
+            textArea.placeholder = translate('e.g., "Speak cheerfully and energetically"');
             textArea.className = 'textarea_compact autoSetHeight';
             textArea.value = savedInstructions;
             textArea.addEventListener('input', () => {
@@ -244,7 +245,7 @@ class OpenAITtsProvider {
         });
 
         if (!response.ok) {
-            toastr.error(response.statusText, 'TTS Generation Failed');
+            toastr.error(response.statusText, translate('TTS Generation Failed'));
             throw new Error(`HTTP ${response.status}: ${await response.text()}`);
         }
 

@@ -15,7 +15,7 @@ import { commonEnumProviders } from '../../slash-commands/SlashCommandCommonEnum
 import { slashCommandReturnHelper } from '../../slash-commands/SlashCommandReturnHelper.js';
 import { generateWebLlmChatPrompt, isWebLlmSupported } from '../shared.js';
 import { Popup, POPUP_RESULT } from '../../popup.js';
-import { t } from '../../i18n.js';
+import { t, translate } from '../../i18n.js';
 import { removeReasoningFromString } from '../../reasoning.js';
 export { MODULE_NAME };
 
@@ -687,11 +687,11 @@ async function setSpriteFolderCommand(_, folder) {
 
 async function classifyCallback(/** @type {{api: string?, filter: string?, prompt: string?}} */ { api = null, filter = null, prompt = null }, text) {
     if (!text) {
-        toastr.error('No text provided');
+        toastr.error(translate('No text provided'));
         return '';
     }
     if (api && !Object.keys(EXPRESSION_API).includes(api)) {
-        toastr.error('Invalid API provided');
+        toastr.error(translate('Invalid API provided'));
         return '';
     }
 
@@ -699,12 +699,12 @@ async function classifyCallback(/** @type {{api: string?, filter: string?, promp
     const filterAvailable = !isFalseBoolean(filter);
 
     if (expressionApi === EXPRESSION_API.none) {
-        toastr.warning('No classifier API selected');
+        toastr.warning(translate('No classifier API selected'));
         return '';
     }
 
     if (!modules.includes('classify') && expressionApi == EXPRESSION_API.extras) {
-        toastr.warning('Text classification is disabled or not available');
+        toastr.warning(translate('Text classification is disabled or not available'));
         return '';
     }
 
@@ -1070,7 +1070,7 @@ export async function getExpressionLabel(text, expressionsApi = extension_settin
                 return '';
             }
             default: {
-                toastr.error('Invalid API selected');
+                toastr.error(translate('Invalid API selected'));
                 return '';
             }
         }
@@ -1282,7 +1282,7 @@ function renderCustomExpressions() {
     }
 
     if (customExpressions.length === 0) {
-        $('#expression_custom').append('<option value="" disabled selected>[ No custom expressions ]</option>');
+        $('#expression_custom').append('<option value="" disabled selected data-i18n="No custom expressions">[ No custom expressions ]</option>');
     }
 }
 
@@ -1620,15 +1620,15 @@ async function onClickExpressionAddCustom() {
 
     // a-z, 0-9, dashes and underscores only
     if (!/^[a-z0-9-_]+$/.test(expressionName)) {
-        toastr.warning('Invalid custom expression name provided', 'Add Custom Expression');
+        toastr.warning(translate('Invalid custom expression name provided'), translate('Add Custom Expression'));
         return;
     }
     if (DEFAULT_EXPRESSIONS.includes(expressionName) || DEFAULT_EXPRESSIONS.some(x => expressionName.startsWith(x))) {
-        toastr.warning('Expression name already exists', 'Add Custom Expression');
+        toastr.warning(translate('Expression name already exists'), translate('Add Custom Expression'));
         return;
     }
     if (extension_settings.expressions.custom.includes(expressionName)) {
-        toastr.warning('Custom expression already exists', 'Add Custom Expression');
+        toastr.warning(translate('Custom expression already exists'), translate('Add Custom Expression'));
         return;
     }
 
@@ -1664,7 +1664,7 @@ async function onClickExpressionRemoveCustom() {
     const index = extension_settings.expressions.custom.indexOf(selectedExpression);
     extension_settings.expressions.custom.splice(index, 1);
     if (selectedExpression == extension_settings.expressions.fallback_expression) {
-        toastr.warning(`Deleted custom expression '${selectedExpression}' that was also selected as the fallback expression.\nFallback expression has been reset to '${DEFAULT_FALLBACK_EXPRESSION}'.`, 'Remove Custom Expression');
+        toastr.warning(t`Deleted custom expression '${selectedExpression}' that was also selected as the fallback expression.\nFallback expression has been reset to '${DEFAULT_FALLBACK_EXPRESSION}'.`, translate('Remove Custom Expression'));
         extension_settings.expressions.fallback_expression = DEFAULT_FALLBACK_EXPRESSION;
     }
     await renderAdditionalExpressionSettings();
@@ -1750,7 +1750,7 @@ async function handleFileUpload(url, formData) {
         return data ?? {};
     } catch (error) {
         console.error('Error uploading image:', error);
-        toastr.error('Failed to upload image');
+        toastr.error(translate('Failed to upload image'));
         return {};
     }
 }
@@ -1966,13 +1966,13 @@ async function onClickExpressionUploadPackButton() {
         formData.append('name', name);
         formData.append('avatar', file);
 
-        const uploadToast = toastr.info('Please wait...', 'Upload is processing', { timeOut: 0, extendedTimeOut: 0 });
+        const uploadToast = toastr.info(translate('Please wait...'), translate('Upload is processing'), { timeOut: 0, extendedTimeOut: 0 });
         const { count } = await handleFileUpload('/api/sprites/upload-zip', formData);
         toastr.clear(uploadToast);
 
         // Only show success message if at least one image was uploaded
         if (count) {
-            toastr.success(`Uploaded ${count} image(s) for ${name}`);
+            toastr.success(t`Uploaded ${count} image(s) for ${name}`);
         }
 
         // Reset the input
@@ -2013,7 +2013,7 @@ async function onClickExpressionDelete(event) {
             body: JSON.stringify({ name, label: expression, spriteName: fileName }),
         });
     } catch (error) {
-        toastr.error('Failed to delete image. Try again later.');
+        toastr.error(translate('Failed to delete image. Try again later.'));
     }
 
     // Refresh sprites list
@@ -2294,7 +2294,7 @@ function migrateSettings() {
                 Sets an override sprite folder for the current character.<br />
                 In groups, this will apply to the character who last sent a message.
             </div>
-            <div>
+            <div data-i18n="If the name starts with a slash or a backslash, selects a sub-folder in the character-named folder. Empty value to reset to default.">
                 If the name starts with a slash or a backslash, selects a sub-folder in the character-named folder. Empty value to reset to default.
             </div>
         `,
@@ -2393,14 +2393,14 @@ function migrateSettings() {
         ],
         returns: 'emotion classification label for the given text',
         helpString: `
-            <div>
+            <div data-i18n="Performs an emotion classification of the given text and returns a label.">
                 Performs an emotion classification of the given text and returns a label.
             </div>
-            <div>
+            <div data-i18n="Allows to specify which Classifier API to perform the classification with.">
                 Allows to specify which Classifier API to perform the classification with.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code>/classify I am so happy today!</code></pre>
@@ -2452,11 +2452,11 @@ function migrateSettings() {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Upload a sprite from a URL.">
                 Upload a sprite from a URL.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code>/uploadsprite name=Seraphina label=joy /user/images/Seraphina/Seraphina_2024-12-22@12h37m57s.png</code></pre>
