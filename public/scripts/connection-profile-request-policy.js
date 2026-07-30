@@ -24,3 +24,10 @@ export function resolveConnectionProfileTemperature(...candidates) {
     }
     return undefined;
 }
+
+/**
+ * Applies public request payload overrides after connection profile fields.
+ */
+export function mergeConnectionProfilePayloadOverrides(payload, extraRequestFields = {}) {
+    return { ...payload, ...extraRequestFields };
+}

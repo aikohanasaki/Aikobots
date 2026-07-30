@@ -5,6 +5,7 @@ import { t, translate } from './i18n.js';
 import { proxies } from './openai.js';
 import { getPresetManager } from './preset-manager.js';
 import {
+    mergeConnectionProfilePayloadOverrides,
     resolveConnectionProfileModel,
     resolveConnectionProfileTemperature,
 } from './connection-profile-request-policy.js';
@@ -127,7 +128,7 @@ export function applyConnectionProfileSnapshot(generateData, snapshot, overrides
         throw new Error(t`Proxy preset '${snapshot.proxyName}' not found`);
     }
 
-    return {
+    return mergeConnectionProfilePayloadOverrides({
         ...generateData,
         ...structuredClone(snapshot.requestOverrides || {}),
         chat_completion_source: snapshot.source,
@@ -138,7 +139,7 @@ export function applyConnectionProfileSnapshot(generateData, snapshot, overrides
         proxy_password: proxy?.password || undefined,
         custom_prompt_post_processing: snapshot.promptPostProcessing || undefined,
         secret_id: snapshot.secretId || undefined,
-    };
+    }, overrides.extraRequestFields);
 }
 
 /**
@@ -152,9 +153,10 @@ export async function sendConnectionProfileRequest(profileId, prompt, maxTokens,
         includePreset: true,
         ...custom,
     };
+    const { model, temperature, ...extraRequestFields } = overridePayload || {};
     const snapshot = createConnectionProfileRequestSnapshot(profileId, {
-        model: overridePayload.model,
-        temperature: overridePayload.temperature,
+        model,
+        temperature,
     });
 
     const messages = Array.isArray(prompt) ? prompt : [{ role: 'user', content: prompt }];
@@ -162,8 +164,7 @@ export async function sendConnectionProfileRequest(profileId, prompt, maxTokens,
         stream: options.stream,
         messages,
         max_tokens: maxTokens,
-        ...overridePayload,
-    }, snapshot);
+    }, snapshot, { model, temperature, extraRequestFields });
 
     try {
         return await ChatCompletionService.processRequest(data, {
