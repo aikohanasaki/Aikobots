@@ -6,6 +6,7 @@ import {
     applyStmbProfileConnection,
     createDefaultStmbProfile,
     normalizeStmbSettings,
+    resolveStmbProfileConnectionSummary,
 } from '../public/scripts/stmb-core.js';
 
 test('legacy direct profiles remain usable and migrate model and temperature to overrides', () => {
@@ -59,6 +60,65 @@ test('a central profile binding keeps overrides and drops duplicated direct conn
     assert.equal(profile.modelOverride, 'override-model');
     assert.equal(profile.temperatureOverride, 0);
     assert.deepEqual(profile.connection, { api: 'connection_profile' });
+});
+
+test('connection profile summaries show effective details and identify overrides', () => {
+    const summary = resolveStmbProfileConnectionSummary({
+        connectionProfileId: 'connection-1',
+        connectionProfileName: 'Saved Connection',
+        connection: { api: 'connection_profile' },
+        modelOverride: 'override-model',
+        temperatureOverride: 0,
+    }, {
+        connectionProfile: {
+            id: 'connection-1',
+            name: 'Saved Connection',
+            api: 'openai',
+            model: 'profile-model',
+        },
+        connectionSnapshot: {
+            profileId: 'connection-1',
+            profileName: 'Saved Connection',
+            source: 'openai',
+            model: 'override-model',
+            temperature: 0,
+        },
+    });
+
+    assert.deepEqual(summary, {
+        usesConnectionProfile: true,
+        connectionProfileName: 'Saved Connection',
+        provider: 'openai',
+        model: 'override-model',
+        temperature: 0,
+        modelIsOverride: true,
+        temperatureIsOverride: true,
+    });
+});
+
+test('connection profile summaries distinguish inherited model and temperature', () => {
+    const summary = resolveStmbProfileConnectionSummary({
+        connectionProfileId: 'connection-1',
+        connection: { api: 'connection_profile' },
+        modelOverride: '',
+        temperatureOverride: null,
+    }, {
+        connectionProfile: {
+            name: 'Saved Connection',
+            api: 'openai',
+        },
+        connectionSnapshot: {
+            source: 'openai',
+            model: 'profile-model',
+            temperature: 0.7,
+        },
+    });
+
+    assert.equal(summary.connectionProfileName, 'Saved Connection');
+    assert.equal(summary.model, 'profile-model');
+    assert.equal(summary.temperature, 0.7);
+    assert.equal(summary.modelIsOverride, false);
+    assert.equal(summary.temperatureIsOverride, false);
 });
 
 test('normalization preserves a settings version newer than this build', () => {

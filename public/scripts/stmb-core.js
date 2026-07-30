@@ -504,6 +504,55 @@ export function applyStmbConnectionProfileSelection(profile, connectionProfileId
     return profile;
 }
 
+/** Resolves the non-secret connection details shown for an STMB profile. */
+export function resolveStmbProfileConnectionSummary(profile, options = {}) {
+    const {
+        currentUiConnection = {},
+        connectionProfile = {},
+        connectionSnapshot = {},
+    } = options;
+    const connection = profile?.connection || {};
+    const usesConnectionProfile = Boolean(profile?.connectionProfileId || connectionSnapshot?.profileId);
+    const modelOverride = String(profile?.modelOverride || '').trim();
+    const temperatureOverride = profile?.temperatureOverride;
+    const modelIsOverride = Boolean(modelOverride);
+    const temperatureIsOverride = temperatureOverride !== null
+        && temperatureOverride !== undefined
+        && Number.isFinite(Number(temperatureOverride));
+
+    if (usesConnectionProfile) {
+        return {
+            usesConnectionProfile,
+            connectionProfileName: String(
+                connectionSnapshot?.profileName
+                || profile?.connectionProfileName
+                || connectionProfile?.name
+                || '',
+            ),
+            provider: String(connectionSnapshot?.source || connectionProfile?.api || ''),
+            model: modelOverride || String(connectionSnapshot?.model || connectionProfile?.model || ''),
+            temperature: temperatureIsOverride
+                ? Number(temperatureOverride)
+                : connectionSnapshot?.temperature,
+            modelIsOverride,
+            temperatureIsOverride,
+        };
+    }
+
+    const usesCurrentUi = String(connection.api || 'current_st') === 'current_st';
+    return {
+        usesConnectionProfile: false,
+        connectionProfileName: '',
+        provider: String(usesCurrentUi ? (currentUiConnection?.api || 'openai') : (connection.api || 'openai')),
+        model: modelOverride || String(usesCurrentUi ? (currentUiConnection?.model || '') : (connection.model || '')),
+        temperature: temperatureIsOverride
+            ? Number(temperatureOverride)
+            : (usesCurrentUi ? currentUiConnection?.temperature : connection.temperature),
+        modelIsOverride,
+        temperatureIsOverride,
+    };
+}
+
 export function createDefaultStmbSettings() {
     return {
         parity: { ...STMB_PARITY },

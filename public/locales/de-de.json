@@ -6029,5 +6029,8 @@
     "Model required": "Modell erforderlich",
     "Current SillyTavern model": "Aktuelles SillyTavern-Modell",
     "Current SillyTavern temperature": "Aktuelle SillyTavern-Temperatur",
-    "Connection profile preset/default": "Voreinstellung/Standardwert des Verbindungsprofils"
+    "Connection profile preset/default": "Voreinstellung/Standardwert des Verbindungsprofils",
+    "Using connection profile": "Verwendetes Verbindungsprofil",
+    "(override)": "(Überschreibung)",
+    "Title Format": "Titelformat"
 }

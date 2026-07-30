@@ -77,6 +77,7 @@ import {
     parseStmbCatchupCommandArgs,
     parseSequenceFromTitle,
     parseStructuredMemoryResponse,
+    resolveStmbProfileConnectionSummary,
     buildStmbCatchupChunks,
 } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo, getStmbChatKey, isPassiveStmbFlushSuppressedForChat } from './stmb-scene.js';
@@ -2020,6 +2021,28 @@ function getProfileTemperatureDisplay(profile) {
         : (profile?.connection?.temperature ?? translate('Connection profile preset/default'));
 }
 
+function getSettingsProfileConnectionSummary(profile, currentUiConnection) {
+    const connectionProfile = profile?.connectionProfileId
+        ? getSupportedConnectionProfiles().find(item => item.id === profile.connectionProfileId)
+        : null;
+    let connectionSnapshot = profile?.connectionSnapshot;
+    if (profile?.connectionProfileId && !connectionSnapshot) {
+        try {
+            connectionSnapshot = createConnectionProfileRequestSnapshot(profile.connectionProfileId, {
+                model: profile.modelOverride,
+                temperature: profile.temperatureOverride,
+            });
+        } catch {
+            // Keep the summary useful for incomplete profiles without exposing connection errors or secrets.
+        }
+    }
+    return resolveStmbProfileConnectionSummary(profile, {
+        currentUiConnection,
+        connectionProfile,
+        connectionSnapshot,
+    });
+}
+
 function getConnectionProfileOptionsHtml(selectedId = '') {
     const profiles = getSupportedConnectionProfiles()
         .slice()
@@ -2197,6 +2220,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
     const moduleSettings = getModuleSettings();
     const selectedProfileIndex = Number.isFinite(Number(settings.defaultProfile)) ? Number(settings.defaultProfile) : 0;
     const selectedProfile = getActiveStmbProfile(settings, selectedProfileIndex);
+    const connectionSummary = getSettingsProfileConnectionSummary(selectedProfile, currentUiConnection);
     const currentTitleFormat = String(settings.titleFormat || STMB_DEFAULT_TITLE_FORMAT);
     const titleFormats = Array.isArray(STMB_DEFAULT_TITLE_FORMATS) ? STMB_DEFAULT_TITLE_FORMATS : [];
     const usesCustomTitleFormat = !titleFormats.includes(currentTitleFormat);
@@ -2384,10 +2408,11 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
             </div>
             <div id="stmb-settings-profile-summary" class="info-block marginBot10">
                 <div class="marginBot5" data-i18n="Profile Settings:">Profile Settings:</div>
-                <div>Provider: <span id="stmb-settings-summary-api">${escapeHtml(String(selectedProfile?.connection?.api === 'current_st' ? currentUiConnection.api : (selectedProfile?.connection?.api || 'openai')))}</span></div>
-                <div>Model: <span id="stmb-settings-summary-model">${escapeHtml(String(getProfileModelDisplay(selectedProfile) || translate('Current SillyTavern model')))}</span></div>
-                <div>Temperature: <span id="stmb-settings-summary-temp">${escapeHtml(String(getProfileTemperatureDisplay(selectedProfile)))}</span></div>
-                <div>Title Format: <span id="stmb-settings-summary-title">${escapeHtml(String(selectedProfile?.titleFormat || settings.titleFormat || STMB_DEFAULT_TITLE_FORMAT))}</span></div>
+                <div id="stmb-settings-summary-connection-profile" class="${connectionSummary.usesConnectionProfile ? '' : 'displayNone'}"><span data-i18n="Using connection profile">Using connection profile</span> "<span id="stmb-settings-summary-connection-profile-name">${escapeHtml(connectionSummary.connectionProfileName)}</span>"</div>
+                <div><span data-i18n="Provider">Provider</span>: <span id="stmb-settings-summary-api">${escapeHtml(connectionSummary.provider || translate('Unknown'))}</span></div>
+                <div><span data-i18n="Model">Model</span>: <span id="stmb-settings-summary-model">${escapeHtml(String(connectionSummary.model || translate(connectionSummary.usesConnectionProfile ? 'Model required' : 'Current SillyTavern model')))}</span> <span id="stmb-settings-summary-model-override" class="${connectionSummary.modelIsOverride ? '' : 'displayNone'}" data-i18n="(override)">(override)</span></div>
+                <div><span data-i18n="Temperature">Temperature</span>: <span id="stmb-settings-summary-temp">${escapeHtml(String(connectionSummary.temperature ?? translate(connectionSummary.usesConnectionProfile ? 'Connection profile preset/default' : 'Current SillyTavern temperature')))}</span> <span id="stmb-settings-summary-temp-override" class="${connectionSummary.temperatureIsOverride ? '' : 'displayNone'}" data-i18n="(override)">(override)</span></div>
+                <div><span data-i18n="Title Format">Title Format</span>: <span id="stmb-settings-summary-title">${escapeHtml(String(selectedProfile?.titleFormat || settings.titleFormat || STMB_DEFAULT_TITLE_FORMAT))}</span></div>
                 <details class="marginTop10">
                     <summary data-i18n="View Prompt">View Prompt</summary>
                     <div class="padding10 marginTop5 stmb-box">
@@ -2605,17 +2630,34 @@ function updateSettingsPopupDynamicState(dialog, currentUiConnection) {
         });
     }
 
+    const connectionSummary = getSettingsProfileConnectionSummary(selectedProfile, currentUiConnection);
+    const connectionProfileRow = dialog.querySelector('#stmb-settings-summary-connection-profile');
+    if (connectionProfileRow) {
+        connectionProfileRow.classList.toggle('displayNone', !connectionSummary.usesConnectionProfile);
+    }
+    const connectionProfileNameEl = dialog.querySelector('#stmb-settings-summary-connection-profile-name');
+    if (connectionProfileNameEl) {
+        connectionProfileNameEl.textContent = connectionSummary.connectionProfileName;
+    }
     const apiEl = dialog.querySelector('#stmb-settings-summary-api');
     if (apiEl) {
-        apiEl.textContent = String(selectedProfile?.connection?.api === 'current_st' ? currentUiConnection.api : (selectedProfile?.connection?.api || 'openai'));
+        apiEl.textContent = connectionSummary.provider || translate('Unknown');
     }
     const modelEl = dialog.querySelector('#stmb-settings-summary-model');
     if (modelEl) {
-        modelEl.textContent = String(getProfileModelDisplay(selectedProfile) || translate('Current SillyTavern model'));
+        modelEl.textContent = String(connectionSummary.model || translate(connectionSummary.usesConnectionProfile ? 'Model required' : 'Current SillyTavern model'));
+    }
+    const modelOverrideEl = dialog.querySelector('#stmb-settings-summary-model-override');
+    if (modelOverrideEl) {
+        modelOverrideEl.classList.toggle('displayNone', !connectionSummary.modelIsOverride);
     }
     const tempEl = dialog.querySelector('#stmb-settings-summary-temp');
     if (tempEl) {
-        tempEl.textContent = String(getProfileTemperatureDisplay(selectedProfile));
+        tempEl.textContent = String(connectionSummary.temperature ?? translate(connectionSummary.usesConnectionProfile ? 'Connection profile preset/default' : 'Current SillyTavern temperature'));
+    }
+    const tempOverrideEl = dialog.querySelector('#stmb-settings-summary-temp-override');
+    if (tempOverrideEl) {
+        tempOverrideEl.classList.toggle('displayNone', !connectionSummary.temperatureIsOverride);
     }
     const titleEl = dialog.querySelector('#stmb-settings-summary-title');
     if (titleEl) {

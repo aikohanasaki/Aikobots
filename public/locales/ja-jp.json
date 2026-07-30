@@ -6032,5 +6032,8 @@
     "Model required": "モデルが必要です",
     "Current SillyTavern model": "現在のSillyTavernモデル",
     "Current SillyTavern temperature": "現在のSillyTavern温度",
-    "Connection profile preset/default": "接続プロファイルのプリセット/デフォルト"
+    "Connection profile preset/default": "接続プロファイルのプリセット/デフォルト",
+    "Using connection profile": "使用する接続プロファイル",
+    "(override)": "(オーバーライド)",
+    "Title Format": "タイトル形式"
 }
