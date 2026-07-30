@@ -16,6 +16,7 @@ const STMB_GENERATE_DATA_FIELDS = new Set([
     'response_format',
     'responseMimeType',
     'responseSchema',
+    'reasoning_effort',
     'custom_url',
     'custom_api_key',
     'custom_include_body',

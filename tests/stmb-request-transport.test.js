@@ -23,3 +23,12 @@ test('connection-profile fields survive the STMB request allowlist', () => {
     assert.equal(request.custom_prompt_post_processing, 'strict');
     assert.equal(request.unrelated_internal_state, undefined);
 });
+
+test('Navy reasoning effort survives the STMB request allowlist and is normalized', () => {
+    const request = applyStmbRequestTransport({
+        chat_completion_source: 'navy',
+        reasoning_effort: 'max',
+    });
+
+    assert.equal(request.reasoning_effort, 'xhigh');
+});
