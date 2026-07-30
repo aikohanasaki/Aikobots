@@ -326,8 +326,8 @@ function renderProfileOptions(profiles = [], selectedIndex = 0) {
 function applyProfileDisplay(dialog, profiles, profileIndex, { editablePrompt = false } = {}) {
     const profile = profiles[profileIndex] || profiles[0] || {};
     const promptText = String(profile?.effectivePrompt || '').trim();
-    const modelText = String(profile?.profileModel || 'Current SillyTavern model');
-    const temperatureText = String(profile?.profileTemperature ?? 'Current SillyTavern temperature');
+    const modelText = String(profile?.profileModel || translate('Current SillyTavern model'));
+    const temperatureText = String(profile?.profileTemperature ?? translate('Current SillyTavern temperature'));
 
     const promptEl = dialog.querySelector(editablePrompt ? '#stmb-advanced-prompt' : '#stmb-confirm-prompt');
     if (promptEl) {

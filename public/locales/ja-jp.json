@@ -6028,5 +6028,9 @@
     "Open General Settings": "一般設定を開く",
     "STMemoryBooks_Consolidation_MemberIdsInstruction": "重要：member_ids は、キャラクター名、グループ、参加者ではなく、下記の「001」や「{{example}}」のような番号付きソースエントリを参照する必要があります。",
     "STMemoryBooks_Consolidation_ChronologyGap": "時系列の空白",
-    "STMemoryBooks_Untitled": "無題"
+    "STMemoryBooks_Untitled": "無題",
+    "Model required": "モデルが必要です",
+    "Current SillyTavern model": "現在のSillyTavernモデル",
+    "Current SillyTavern temperature": "現在のSillyTavern温度",
+    "Connection profile preset/default": "接続プロファイルのプリセット/デフォルト"
 }

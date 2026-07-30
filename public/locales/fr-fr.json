@@ -6085,5 +6085,9 @@
     "Open General Settings": "Ouvrir les paramètres généraux",
     "STMemoryBooks_Consolidation_MemberIdsInstruction": "Important : member_ids doit faire référence aux entrées sources numérotées ci-dessous, telles que « 001 » ou « {{example}} », et non aux noms de personnages, groupes ou participants.",
     "STMemoryBooks_Consolidation_ChronologyGap": "Lacune chronologique",
-    "STMemoryBooks_Untitled": "Sans titre"
+    "STMemoryBooks_Untitled": "Sans titre",
+    "Model required": "Modèle requis",
+    "Current SillyTavern model": "Modèle SillyTavern actuel",
+    "Current SillyTavern temperature": "Température SillyTavern actuelle",
+    "Connection profile preset/default": "Préréglage/valeur par défaut du profil de connexion"
 }

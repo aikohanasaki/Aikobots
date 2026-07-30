@@ -487,6 +487,23 @@ export function createDefaultStmbProfile() {
     };
 }
 
+/** Applies or clears a central connection profile binding on an STMB profile. */
+export function applyStmbConnectionProfileSelection(profile, connectionProfileId, connectionProfileName = '') {
+    const normalizedId = String(connectionProfileId || '').trim();
+    if (normalizedId) {
+        profile.connectionProfileId = normalizedId;
+        profile.connectionProfileName = String(connectionProfileName || '');
+        profile.connection = { api: 'connection_profile' };
+    } else {
+        profile.connectionProfileId = '';
+        profile.connectionProfileName = '';
+        if (String(profile.connection?.api || '') === 'connection_profile') {
+            profile.connection = { api: 'current_st' };
+        }
+    }
+    return profile;
+}
+
 export function createDefaultStmbSettings() {
     return {
         parity: { ...STMB_PARITY },
@@ -802,6 +819,9 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     const source = rawSettings && typeof rawSettings === 'object' && !rawSettings.moduleSettings
         ? importLegacyStmbSettings(rawSettings)
         : importLegacyStmbSettings(sourceCandidate);
+    let migrationVersion = Number.isFinite(Number(source.migrationVersion))
+        ? Number(source.migrationVersion)
+        : defaults.migrationVersion;
 
     const moduleSettings = {
         ...defaults.moduleSettings,
@@ -895,6 +915,10 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         defaultProfile,
         titleFormat,
     });
+    // Profile validation also migrates legacy connection fields to the v5 override shape.
+    if (migrationVersion < 5) {
+        migrationVersion = STMB_SETTINGS_VERSION;
+    }
     defaultProfile = profileValidation.settings.defaultProfile;
     const parsedCompactionProfileIndex = Number(moduleSettings.compactionProfileIndex);
     moduleSettings.compactionProfileIndex = Number.isFinite(parsedCompactionProfileIndex)
@@ -921,9 +945,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
             : { ...defaults.arcPromptPresetMetadata },
         profiles: profileValidation.settings.profiles,
         defaultProfile,
-        migrationVersion: Number.isFinite(Number(source.migrationVersion))
-            ? Math.max(STMB_SETTINGS_VERSION, Number(source.migrationVersion))
-            : defaults.migrationVersion,
+        migrationVersion,
     };
 }
 
@@ -1150,6 +1172,57 @@ export function applyStmbProfileToGenerateData(generateData, profile, providerDe
     }
 
     return next;
+}
+
+/**
+ * Applies an STMB profile's central, current-ST, or legacy connection to request data.
+ */
+export function applyStmbProfileConnection(generateData, profile, options = {}) {
+    const {
+        applyConnectionProfileSnapshot,
+        createConnectionProfileRequestSnapshot,
+        providerDefaults = {},
+        translate = text => text,
+    } = options;
+    const overrides = {
+        model: profile?.modelOverride,
+        temperature: profile?.temperatureOverride,
+    };
+
+    if (profile?.connectionSnapshot || profile?.connectionProfileId) {
+        if (typeof applyConnectionProfileSnapshot !== 'function') {
+            throw new TypeError('applyConnectionProfileSnapshot is required for an STMB connection profile');
+        }
+        const snapshot = profile.connectionSnapshot
+            || createConnectionProfileRequestSnapshot?.(profile.connectionProfileId, overrides);
+        return applyConnectionProfileSnapshot(generateData, snapshot, overrides);
+    }
+
+    if (String(profile?.connection?.api || '') === 'current_st') {
+        const model = String(profile?.modelOverride || generateData?.model || '').trim();
+        if (!model) {
+            throw new Error(translate('Enter a model ID or select a connection profile with a saved model ID.'));
+        }
+        return {
+            ...generateData,
+            model,
+            temperature: profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined
+                ? profile.temperatureOverride
+                : generateData.temperature,
+        };
+    }
+
+    const legacyProfile = {
+        ...profile,
+        connection: {
+            ...(profile?.connection || {}),
+            model: String(profile?.modelOverride || profile?.connection?.model || '').trim(),
+            temperature: profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined
+                ? profile.temperatureOverride
+                : profile?.connection?.temperature,
+        },
+    };
+    return applyStmbProfileToGenerateData(generateData, legacyProfile, providerDefaults);
 }
 
 export function applyStmbMaxTokensToGenerateData(generateData, stmbMaxTokens) {

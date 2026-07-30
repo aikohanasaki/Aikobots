@@ -887,6 +887,34 @@ export function parseConsolidationKeywordsResponse(response) {
 }
 
 /**
+ * Resolves candidate keywords without letting optional enrichment discard a generated summary.
+ */
+export async function resolveConsolidationCandidateKeywords(candidate, requestKeywords, {
+    fallbackKeywords = [],
+    isAbortError = () => false,
+} = {}) {
+    const existingKeywords = normalizeKeywords(candidate?.keywords);
+    if (existingKeywords.length > 0) {
+        return { keywords: existingKeywords, usedFallback: false };
+    }
+
+    try {
+        const requestedKeywords = normalizeKeywords(await requestKeywords(String(candidate?.summary || '')));
+        if (requestedKeywords.length > 0) {
+            return { keywords: requestedKeywords, usedFallback: false };
+        }
+    } catch (error) {
+        if (isAbortError(error)) throw error;
+    }
+
+    const inheritedKeywords = normalizeKeywords(fallbackKeywords).slice(0, 30);
+    return {
+        keywords: inheritedKeywords.length > 0 ? inheritedKeywords : normalizeKeywords([candidate?.title]),
+        usedFallback: true,
+    };
+}
+
+/**
  * Builds the localized keyword-recovery prompt for a summary.
  */
 export function buildConsolidationKeywordPrompt(summary, targetTier = 1, localize = source => source) {

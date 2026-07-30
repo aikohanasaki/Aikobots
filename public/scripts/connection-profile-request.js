@@ -156,17 +156,12 @@ export async function sendConnectionProfileRequest(profileId, prompt, maxTokens,
         model: overridePayload.model,
         temperature: overridePayload.temperature,
     });
-    const proxy = snapshot.proxyName ? proxies.find(item => item.name === snapshot.proxyName) : null;
-    if (snapshot.proxyName && !proxy) {
-        throw new Error(t`Proxy preset '${snapshot.proxyName}' not found`);
-    }
 
     const messages = Array.isArray(prompt) ? prompt : [{ role: 'user', content: prompt }];
     const data = applyConnectionProfileSnapshot({
         stream: options.stream,
         messages,
         max_tokens: maxTokens,
-        proxy_password: proxy?.password,
         ...overridePayload,
     }, snapshot);
 
@@ -177,7 +172,7 @@ export async function sendConnectionProfileRequest(profileId, prompt, maxTokens,
                 : undefined,
         }, options.extractData, options.signal);
     } catch (error) {
-        throw new Error(t`API request failed`, { cause: error });
+        throw new Error(`${t`API request failed`}: ${error?.message || error}`, { cause: error });
     }
 }
 

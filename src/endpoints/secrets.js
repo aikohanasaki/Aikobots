@@ -445,6 +445,19 @@ export function readSecret(directories, key, id = null) {
 }
 
 /**
+ * Resolves a request-selected secret without changing the user's active secret.
+ * @param {import('express').Request} request Express request
+ * @param {string} key Secret key
+ * @returns {string} Secret value
+ */
+export function readRequestSecret(request, key) {
+    const secretId = typeof request?.body?.secret_id === 'string' && request.body.secret_id.trim()
+        ? request.body.secret_id.trim()
+        : null;
+    return readSecret(request.user.directories, key, secretId);
+}
+
+/**
  * Reads the secret state from the secrets file
  * @param {import('../users.js').UserDirectoryList} directories User directories
  * @returns {Record<string, boolean>} Secret state

@@ -7,7 +7,7 @@ import util from 'node:util';
 import urlJoin from 'url-join';
 import lodash from 'lodash';
 
-import { readSecret, SECRET_KEYS } from './secrets.js';
+import { readRequestSecret, SECRET_KEYS } from './secrets.js';
 import { GEMINI_SAFETY, VERTEX_SAFETY } from '../constants.js';
 import { delay, getConfigValue, trimTrailingSlash } from '../util.js';
 
@@ -35,15 +35,6 @@ function createWavHeader(dataSize, sampleRate, numChannels = 1, bitsPerSample = 
 function createCompleteWavFile(pcmData, sampleRate) {
     const header = createWavHeader(pcmData.length, sampleRate);
     return Buffer.concat([header, pcmData]);
-}
-
-// Vertex AI authentication helper functions
-/** Resolves the request-selected Google secret without changing the active secret. */
-function readRequestSecret(request, key) {
-    const secretId = typeof request.body.secret_id === 'string' && request.body.secret_id.trim()
-        ? request.body.secret_id.trim()
-        : null;
-    return readSecret(request.user.directories, key, secretId);
 }
 
 export async function getVertexAIAuth(request) {

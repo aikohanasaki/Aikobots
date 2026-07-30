@@ -1,6 +1,7 @@
 import { DOMPurify, Fuse } from '../../../lib.js';
 
 import { event_types, eventSource, main_api, online_status, saveSettingsDebounced } from '../../../script.js';
+import { CONNECTION_PROFILE_REQUEST_OVERRIDE_KEYS as REQUEST_OVERRIDE_KEYS } from '../../connection-profile-request.js';
 import { extension_settings, renderExtensionTemplateAsync } from '../../extensions.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from '../../popup.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
@@ -23,18 +24,6 @@ const PROMPT_POST_PROCESSING_COMMAND = 'prompt-post-processing';
 const PROMPT_POST_PROCESSING_DISABLED_TITLE = 'changing this is disabled by "Use Global Prompt Post-Processing Modes".';
 const REMOVED_PROFILE_COMMANDS = [
     'regex-preset',
-];
-const REQUEST_OVERRIDE_KEYS = [
-    'azure_base_url',
-    'azure_deployment_name',
-    'azure_api_version',
-    'custom_include_body',
-    'custom_exclude_body',
-    'custom_include_headers',
-    'vertexai_auth_mode',
-    'vertexai_region',
-    'vertexai_express_project_id',
-    'zai_endpoint',
 ];
 
 const DEFAULT_SETTINGS = {

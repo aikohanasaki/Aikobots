@@ -62,7 +62,7 @@ import {
     sendActiveSessionRequired,
 } from '../../active-session-store.js';
 
-import { readSecret, SECRET_KEYS } from '../secrets.js';
+import { readRequestSecret, readSecret, SECRET_KEYS } from '../secrets.js';
 import {
     getTokenizerModel,
     getSentencepieceTokenizer,
@@ -105,14 +105,6 @@ const STREAM_HEARTBEAT_INTERVAL_MS = 15000;
 // blocked due to site policy, unblocking august 2026
 const BLOCKED_CUSTOM_ENDPOINT_HOSTNAME = 'voidai.app';
 const REQUEST_SOCKET_ABORT_CLEANUPS = Symbol('requestSocketAbortCleanups');
-
-/** Resolves the request-selected secret without changing the user's active secret. */
-function readRequestSecret(request, key) {
-    const secretId = typeof request?.body?.secret_id === 'string' && request.body.secret_id.trim()
-        ? request.body.secret_id.trim()
-        : null;
-    return readSecret(request.user.directories, key, secretId);
-}
 
 function removeEmitterListener(emitter, eventName, listener) {
     if (typeof emitter?.off === 'function') {

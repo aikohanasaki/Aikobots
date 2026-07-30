@@ -6025,5 +6025,9 @@
     "Open General Settings": "Allgemeine Einstellungen öffnen",
     "STMemoryBooks_Consolidation_MemberIdsInstruction": "Wichtig: member_ids muss auf die unten nummerierten Quelleinträge verweisen, etwa „001“ oder „{{example}}“, nicht auf Charakternamen, Gruppen oder Teilnehmer.",
     "STMemoryBooks_Consolidation_ChronologyGap": "Chronologielücke",
-    "STMemoryBooks_Untitled": "Ohne Titel"
+    "STMemoryBooks_Untitled": "Ohne Titel",
+    "Model required": "Modell erforderlich",
+    "Current SillyTavern model": "Aktuelles SillyTavern-Modell",
+    "Current SillyTavern temperature": "Aktuelle SillyTavern-Temperatur",
+    "Connection profile preset/default": "Voreinstellung/Standardwert des Verbindungsprofils"
 }

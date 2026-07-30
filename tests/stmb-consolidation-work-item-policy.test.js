@@ -7,6 +7,7 @@ import {
     buildConsolidationKeywordPrompt,
     buildSummaryAnalysisPrompt,
     parseConsolidationKeywordsResponse,
+    resolveConsolidationCandidateKeywords,
 } from '../public/scripts/stmb-summary.js';
 
 const selectedPrompt = {
@@ -77,5 +78,64 @@ test('keyword fallback accepts JSON wrappers and plain lists', () => {
     assert.deepEqual(
         parseConsolidationKeywordsResponse('- CPAP machine\n- cookie baking'),
         ['CPAP machine', 'cookie baking'],
+    );
+});
+
+test('keyword enrichment failure preserves summaries with inherited retrieval keys', async () => {
+    const result = await resolveConsolidationCandidateKeywords(
+        { title: 'Fallback title', summary: 'Generated summary.', keywords: [] },
+        async () => {
+            throw new Error('provider failure');
+        },
+        { fallbackKeywords: ['source hook', 'source hook'] },
+    );
+
+    assert.deepEqual(result, {
+        keywords: ['source hook'],
+        usedFallback: true,
+    });
+});
+
+test('existing candidate keywords skip enrichment provider calls', async () => {
+    let requestCount = 0;
+    const result = await resolveConsolidationCandidateKeywords(
+        { title: 'Existing title', summary: 'Generated summary.', keywords: ['existing hook'] },
+        async () => {
+            requestCount++;
+            return ['replacement hook'];
+        },
+    );
+
+    assert.deepEqual(result, {
+        keywords: ['existing hook'],
+        usedFallback: false,
+    });
+    assert.equal(requestCount, 0);
+});
+
+test('empty keyword enrichment falls back to the candidate title when sources have no keys', async () => {
+    const result = await resolveConsolidationCandidateKeywords(
+        { title: 'Fallback title', summary: 'Generated summary.', keywords: [] },
+        async () => [],
+    );
+
+    assert.deepEqual(result, {
+        keywords: ['Fallback title'],
+        usedFallback: true,
+    });
+});
+
+test('keyword enrichment still propagates aborts', async () => {
+    const abortError = Object.assign(new Error('stopped'), { code: 'ABORTED' });
+
+    await assert.rejects(
+        resolveConsolidationCandidateKeywords(
+            { title: 'Fallback title', summary: 'Generated summary.', keywords: [] },
+            async () => {
+                throw abortError;
+            },
+            { isAbortError: error => error === abortError },
+        ),
+        error => error === abortError,
     );
 });

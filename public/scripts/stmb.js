@@ -51,7 +51,8 @@ import { SECRET_KEYS, secret_state } from './secrets.js';
 import { buildMemoryPromptText } from './stmb-prompt-assembly.js';
 import {
     applyDeletedMessageToSceneState,
-    applyStmbProfileToGenerateData,
+    applyStmbConnectionProfileSelection,
+    applyStmbProfileConnection,
     applyStmbMaxTokensToGenerateData,
     parseSceneRange,
     compiledSceneToText,
@@ -102,6 +103,7 @@ import {
     parseConsolidationKeywordsResponse,
     parseSummaryJsonResponse,
     pluralizeSummaryLabel,
+    resolveConsolidationCandidateKeywords,
     resolveSelectedSummarySourceEntries,
 } from './stmb-summary.js';
 import { buildConsolidationWorkItemPrompt } from './stmb-consolidation-work-item-policy.js';
@@ -1949,15 +1951,6 @@ function applySelectedRegex(text, selectedKeys) {
     }
 }
 
-function getStmbProviderDefaults() {
-    return {
-        azure_base_url: oai_settings.azure_base_url,
-        azure_api_version: oai_settings.azure_api_version,
-        azure_deployment_name: oai_settings.azure_deployment_name,
-        custom_url: oai_settings.custom_url,
-    };
-}
-
 async function getCurrentUiConnectionInfo() {
     const { generateData } = await buildOpenAIGenerateData('quiet', [{ role: 'user', content: 'ping' }]);
     return {
@@ -2008,11 +2001,11 @@ function getProfileModelDisplay(profile) {
     }
     if (profile?.connectionProfileId) {
         const connectionProfile = getSupportedConnectionProfiles().find(item => item.id === profile.connectionProfileId);
-        return String(connectionProfile?.model || 'Model required');
+        return String(connectionProfile?.model || translate('Model required'));
     }
     return profile?.connection?.api === 'current_st'
-        ? 'Current SillyTavern model'
-        : String(profile?.connection?.model || 'Current SillyTavern model');
+        ? translate('Current SillyTavern model')
+        : String(profile?.connection?.model || translate('Current SillyTavern model'));
 }
 
 function getProfileTemperatureDisplay(profile) {
@@ -2023,8 +2016,8 @@ function getProfileTemperatureDisplay(profile) {
         return profile.connectionSnapshot.temperature;
     }
     return profile?.connection?.api === 'current_st'
-        ? 'Current SillyTavern temperature'
-        : (profile?.connection?.temperature ?? 'Connection profile preset/default');
+        ? translate('Current SillyTavern temperature')
+        : (profile?.connection?.temperature ?? translate('Connection profile preset/default'));
 }
 
 function getConnectionProfileOptionsHtml(selectedId = '') {
@@ -2392,7 +2385,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
             <div id="stmb-settings-profile-summary" class="info-block marginBot10">
                 <div class="marginBot5" data-i18n="Profile Settings:">Profile Settings:</div>
                 <div>Provider: <span id="stmb-settings-summary-api">${escapeHtml(String(selectedProfile?.connection?.api === 'current_st' ? currentUiConnection.api : (selectedProfile?.connection?.api || 'openai')))}</span></div>
-                <div>Model: <span id="stmb-settings-summary-model">${escapeHtml(String(getProfileModelDisplay(selectedProfile) || 'Current SillyTavern model'))}</span></div>
+                <div>Model: <span id="stmb-settings-summary-model">${escapeHtml(String(getProfileModelDisplay(selectedProfile) || translate('Current SillyTavern model')))}</span></div>
                 <div>Temperature: <span id="stmb-settings-summary-temp">${escapeHtml(String(getProfileTemperatureDisplay(selectedProfile)))}</span></div>
                 <div>Title Format: <span id="stmb-settings-summary-title">${escapeHtml(String(selectedProfile?.titleFormat || settings.titleFormat || STMB_DEFAULT_TITLE_FORMAT))}</span></div>
                 <details class="marginTop10">
@@ -2618,7 +2611,7 @@ function updateSettingsPopupDynamicState(dialog, currentUiConnection) {
     }
     const modelEl = dialog.querySelector('#stmb-settings-summary-model');
     if (modelEl) {
-        modelEl.textContent = String(getProfileModelDisplay(selectedProfile) || 'Current SillyTavern model');
+        modelEl.textContent = String(getProfileModelDisplay(selectedProfile) || translate('Current SillyTavern model'));
     }
     const tempEl = dialog.querySelector('#stmb-settings-summary-temp');
     if (tempEl) {
@@ -5048,12 +5041,10 @@ function buildProfileFromEditor(dialog, baseProfile = null) {
 
     if (!isBuiltin) {
         const selectedConnectionProfileId = String(dialog.querySelector('#stmb-profile-editor-connection-profile')?.value || '').trim();
-        if (selectedConnectionProfileId) {
-            const selectedConnectionProfile = getSupportedConnectionProfiles().find(item => item.id === selectedConnectionProfileId);
-            profile.connectionProfileId = selectedConnectionProfileId;
-            profile.connectionProfileName = String(selectedConnectionProfile?.name || '');
-            profile.connection = { api: 'connection_profile' };
-        }
+        const selectedConnectionProfile = selectedConnectionProfileId
+            ? getSupportedConnectionProfiles().find(item => item.id === selectedConnectionProfileId)
+            : null;
+        applyStmbConnectionProfileSelection(profile, selectedConnectionProfileId, selectedConnectionProfile?.name);
     }
 
     profile.titleFormat = titleFormat || stmbSettings.titleFormat || STMB_DEFAULT_TITLE_FORMAT;
@@ -7560,44 +7551,12 @@ function buildSummaryPromptMessages(prompt) {
 async function buildStmbGenerateData(messages, profile, { jsonSchema = null } = {}) {
     const options = jsonSchema ? { jsonSchema } : {};
     const { generateData } = await buildOpenAIGenerateData('quiet', messages, options);
-    let profiledGenerateData;
-    if (profile?.connectionSnapshot || profile?.connectionProfileId) {
-        const snapshot = profile.connectionSnapshot || createConnectionProfileRequestSnapshot(
-            profile.connectionProfileId,
-            {
-                model: profile.modelOverride,
-                temperature: profile.temperatureOverride,
-            },
-        );
-        profiledGenerateData = applyConnectionProfileSnapshot(generateData, snapshot, {
-            model: profile.modelOverride,
-            temperature: profile.temperatureOverride,
-        });
-    } else if (String(profile?.connection?.api || '') === 'current_st') {
-        const model = String(profile?.modelOverride || generateData?.model || '').trim();
-        if (!model) {
-            throw new Error(translate('Enter a model ID or select a connection profile with a saved model ID.'));
-        }
-        profiledGenerateData = {
-            ...generateData,
-            model,
-            temperature: profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined
-                ? profile.temperatureOverride
-                : generateData.temperature,
-        };
-    } else {
-        const legacyProfile = {
-            ...profile,
-            connection: {
-                ...(profile?.connection || {}),
-                model: String(profile?.modelOverride || profile?.connection?.model || '').trim(),
-                temperature: profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined
-                    ? profile.temperatureOverride
-                    : profile?.connection?.temperature,
-            },
-        };
-        profiledGenerateData = applyStmbProfileToGenerateData(generateData, legacyProfile, getStmbProviderDefaults());
-    }
+    const profiledGenerateData = applyStmbProfileConnection(generateData, profile, {
+        applyConnectionProfileSnapshot,
+        createConnectionProfileRequestSnapshot,
+        providerDefaults: oai_settings,
+        translate,
+    });
     return applyStmbMaxTokensToGenerateData(
         profiledGenerateData,
         getModuleSettings().maxTokens,
@@ -8037,16 +7996,29 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
         carryBriefs = batch.filter(brief => leftovers.includes(String(brief.id)));
     }
 
+    const sourceKeywordsById = new Map(sourceEntries
+        .filter(entry => !entry?.__stmbGapMarker)
+        .map(entry => [String(entry?.uid), Array.isArray(entry?.key) ? entry.key : []]));
     for (const candidate of acceptedSummaries) {
-        if (Array.isArray(candidate.keywords) && candidate.keywords.length > 0) continue;
         throwIfStmbAborted(signal);
-        candidate.keywords = await requestConsolidationKeywords(
-            candidate.summary,
-            targetTier,
-            profile,
-            signal,
-            onRateLimitWait,
+        const enrichment = await resolveConsolidationCandidateKeywords(
+            candidate,
+            summary => requestConsolidationKeywords(
+                summary,
+                targetTier,
+                profile,
+                signal,
+                onRateLimitWait,
+            ),
+            {
+                fallbackKeywords: candidate.memberIds.flatMap(id => sourceKeywordsById.get(String(id)) || []),
+                isAbortError: isStmbAbortError,
+            },
         );
+        candidate.keywords = enrichment.keywords;
+        if (enrichment.usedFallback) {
+            console.warn('STMB consolidation keyword enrichment failed; using a local retrieval fallback.');
+        }
     }
 
     return {

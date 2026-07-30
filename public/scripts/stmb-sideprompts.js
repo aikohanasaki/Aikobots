@@ -16,7 +16,7 @@ import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-l
 import { createStmbTask, isStmbAbortError, throwIfStmbAborted } from './stmb-tasks.js';
 import {
     applyStmbMaxTokensToGenerateData,
-    applyStmbProfileToGenerateData,
+    applyStmbProfileConnection,
     buildSidePromptCheckpointMetadata,
     findFirstLorebookEntryByTitle,
     getActiveStmbProfile,
@@ -79,15 +79,6 @@ function enqueuePreview(task) {
         console.warn('STMB side prompt preview task failed', error);
     });
     return previewQueue;
-}
-
-function getStmbProviderDefaults() {
-    return {
-        azure_base_url: oai_settings.azure_base_url,
-        azure_api_version: oai_settings.azure_api_version,
-        azure_deployment_name: oai_settings.azure_deployment_name,
-        custom_url: oai_settings.custom_url,
-    };
 }
 
 function getStmbChatState() {
@@ -529,44 +520,12 @@ async function runWithConcurrencyLimit(items, limit, worker) {
 
 async function runTextGeneration(prompt, settings, profile = null, signal = null, onRateLimitWait = null) {
     const { generateData } = await buildOpenAIGenerateData('quiet', [{ role: 'user', content: String(prompt || '') }], {});
-    let profiledGenerateData;
-    if (profile?.connectionSnapshot || profile?.connectionProfileId) {
-        const snapshot = profile.connectionSnapshot || createConnectionProfileRequestSnapshot(
-            profile.connectionProfileId,
-            {
-                model: profile.modelOverride,
-                temperature: profile.temperatureOverride,
-            },
-        );
-        profiledGenerateData = applyConnectionProfileSnapshot(generateData, snapshot, {
-            model: profile.modelOverride,
-            temperature: profile.temperatureOverride,
-        });
-    } else if (String(profile?.connection?.api || '') === 'current_st') {
-        const model = String(profile?.modelOverride || generateData?.model || '').trim();
-        if (!model) {
-            throw new Error(translate('Enter a model ID or select a connection profile with a saved model ID.'));
-        }
-        profiledGenerateData = {
-            ...generateData,
-            model,
-            temperature: profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined
-                ? profile.temperatureOverride
-                : generateData.temperature,
-        };
-    } else {
-        const legacyProfile = {
-            ...profile,
-            connection: {
-                ...(profile?.connection || {}),
-                model: String(profile?.modelOverride || profile?.connection?.model || '').trim(),
-                temperature: profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined
-                    ? profile.temperatureOverride
-                    : profile?.connection?.temperature,
-            },
-        };
-        profiledGenerateData = applyStmbProfileToGenerateData(generateData, legacyProfile, getStmbProviderDefaults());
-    }
+    const profiledGenerateData = applyStmbProfileConnection(generateData, profile, {
+        applyConnectionProfileSnapshot,
+        createConnectionProfileRequestSnapshot,
+        providerDefaults: oai_settings,
+        translate,
+    });
     const result = await generateStmbText({
         generateData: applyStmbMaxTokensToGenerateData(
             profiledGenerateData,
