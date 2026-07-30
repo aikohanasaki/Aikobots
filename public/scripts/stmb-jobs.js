@@ -1470,9 +1470,15 @@ export function retryFailedStmbJob(chatKey = null, jobId = null, options = {}) {
     const dependentJobs = includeDependents
         ? collectStmbCanceledDependents(sourceJob, store.recentHistory)
         : [];
+    const currentDependentIds = includeDependents
+        ? store.recentHistory
+            .filter(job => isStmbAfterMemoryDependent(sourceJob, job))
+            .map(job => String(job.id))
+        : [];
     const consumedJobIds = new Set([
         String(sourceJob.id),
         ...dependentJobs.map(job => String(job.id)),
+        ...currentDependentIds,
     ]);
     store.recentHistory = store.recentHistory.filter(job => !consumedJobIds.has(String(job.id)));
     touchStore(store);

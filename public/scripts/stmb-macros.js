@@ -56,13 +56,18 @@ function clearCounts() {
  * Refreshes the cached Memory Books macro counts for the effective lorebook.
  */
 export async function refreshStmbMacroCache(lorebookName = null, lorebookData = null) {
-    const sequence = ++refreshSequence;
     const effectiveLorebook = getEffectiveLorebookName();
-    clearCounts();
-    if (!effectiveLorebook || (lorebookName && String(lorebookName) !== effectiveLorebook)) {
+    if (!effectiveLorebook) {
+        ++refreshSequence;
+        clearCounts();
+        return;
+    }
+    if (lorebookName && String(lorebookName) !== effectiveLorebook) {
         return;
     }
 
+    const sequence = ++refreshSequence;
+    clearCounts();
     try {
         const data = lorebookData && typeof lorebookData === 'object'
             ? lorebookData
