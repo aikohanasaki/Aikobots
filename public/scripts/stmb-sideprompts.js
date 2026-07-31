@@ -706,7 +706,7 @@ export async function buildQueuedAfterMemorySidePromptJobs({
         if (missingMacros.length > 0) {
             toastr.warning(t`Skipped side prompt set items with unresolved macros: ${missingMacros.join(', ')}.`, 'STMB');
         }
-        runItems = filterAutomaticSidePromptSetItems(resolvedSet.runnable, 'onAfterMemory').map(item => ({
+        runItems = filterAutomaticSidePromptSetItems(resolvedSet.runnable, 'onAfterMemory', { selectedSet: true }).map(item => ({
             template: item.template,
             runtimeMacros: item.runtimeMacros || {},
             fallbackKinds: ['plotpoints', 'scoreboard'],

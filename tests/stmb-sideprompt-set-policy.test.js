@@ -28,3 +28,20 @@ test('automatic set filtering keeps only rows enabled for the requested trigger'
     assert.deepEqual(filterAutomaticSidePromptSetItems([afterMemory, interval, disabled], 'onAfterMemory'), [afterMemory]);
     assert.deepEqual(filterAutomaticSidePromptSetItems([afterMemory, interval, disabled], 'onInterval'), [interval]);
 });
+
+test('a selected after-memory set runs every resolved member regardless of individual flags', () => {
+    const individuallyEnabled = makeItem({ triggers: { onAfterMemory: { enabled: true } } });
+    const individuallyDisabled = makeItem({
+        enabled: false,
+        triggers: { onAfterMemory: { enabled: false } },
+    });
+
+    assert.deepEqual(
+        filterAutomaticSidePromptSetItems(
+            [individuallyEnabled, individuallyDisabled],
+            'onAfterMemory',
+            { selectedSet: true },
+        ),
+        [individuallyEnabled, individuallyDisabled],
+    );
+});
