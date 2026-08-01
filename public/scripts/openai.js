@@ -77,6 +77,7 @@ import { accountStorage } from './util/AccountStorage.js';
 import { LatestTask } from './util/LatestTask.js';
 import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL } from './constants.js';
 import { consumeChatCompletionStream } from './chat-completion-stream.js';
+import { getOpenRouterPricingDisplay } from './openrouter-pricing.js';
 
 export {
     oai_settings,
@@ -1827,16 +1828,30 @@ function getOpenRouterModelTemplate(option) {
         return option.text;
     }
 
-    let tokens_dollar = Number(1 / (1000 * model.pricing?.prompt));
-    let tokens_rounded = (Math.round(tokens_dollar * 1000) / 1000).toFixed(0);
+    const price = getOpenRouterPricingDisplay(model.pricing);
+    const container = $('<div>', {
+        class: 'flex-container flexFlowColumn',
+        title: model.id,
+    });
+    const row = $('<div>')
+        .append($('<strong>').text(model.name))
+        .append(` | ${model.context_length} ctx | `);
+    const priceElement = $('<small>').text(price.text);
 
-    const price = 0 === Number(model.pricing?.prompt) ? 'Free' : `${tokens_rounded}k t/$ `;
+    if (price.tooltip) {
+        const tooltipLabel = translate('Pricing overrides');
+        const accessibleTooltip = t`${tooltipLabel}: ${price.tooltip}`;
+        priceElement
+            .attr('title', price.tooltip)
+            .append(' ')
+            .append($('<i>', {
+                class: 'fa-solid fa-circle-info fa-sm',
+                title: price.tooltip,
+                'aria-label': accessibleTooltip,
+            }));
+    }
 
-    return $((`
-        <div class="flex-container flexFlowColumn" title="${DOMPurify.sanitize(model.id)}">
-            <div><strong>${DOMPurify.sanitize(model.name)}</strong> | ${model.context_length} ctx | <small>${price}</small></div>
-        </div>
-    `));
+    return container.append(row.append(priceElement));
 }
 
 function calculateOpenRouterCost() {

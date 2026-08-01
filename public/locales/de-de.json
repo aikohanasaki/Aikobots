@@ -6068,5 +6068,12 @@
     "The locked Memory Book \"{{lorebookName}}\" no longer exists. Unlock this character and choose a valid Memory Book.": "Das gesperrte Memory Book \"{{lorebookName}}\" existiert nicht mehr. Entsperren Sie diesen Charakter und wählen Sie ein gültiges Memory Book.",
     "The locked Memory Book \"{{lorebookName}}\" could not be loaded. Unlock this character and choose a valid Memory Book.": "Das gesperrte Memory Book \"{{lorebookName}}\" konnte nicht geladen werden. Entsperren Sie diesen Charakter und wählen Sie ein gültiges Memory Book.",
     "{{characterName}}: locked Memory Book \"{{lorebookName}}\" not found; unlock and repair this assignment": "{{characterName}}: Das gesperrte Memory Book \"{{lorebookName}}\" wurde nicht gefunden; entsperren und reparieren Sie diese Zuweisung",
-    "Missing: ${0}": "Fehlt: ${0}"
+    "Missing: ${0}": "Fehlt: ${0}",
+    "Input $${0} / Output $${1} per 1M tokens": "Eingabe $${0} / Ausgabe $${1} pro 1 Mio. Token",
+    "Conditional pricing overrides:": "Bedingte Preisüberschreibungen:",
+    "More than ${0} input tokens": "Mehr als ${0} Eingabetoken",
+    "From ${0} to ${1} UTC": "Von ${0} bis ${1} UTC",
+    "Other conditions": "Andere Bedingungen",
+    "${0}: ${1}": "${0}: ${1}",
+    "Pricing overrides": "Preisüberschreibungen"
 }

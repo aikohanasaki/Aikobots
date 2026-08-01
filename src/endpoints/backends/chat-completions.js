@@ -3496,17 +3496,20 @@ router.post('/status', async function (request, statusResponse) {
             }
 
             if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENROUTER && Array.isArray(data?.data)) {
-                let models = [];
+                const models = Object.fromEntries(data.data.map(model => {
+                    const inputPrice = typeof model.pricing?.prompt === 'string' || typeof model.pricing?.prompt === 'number'
+                        ? Number(model.pricing.prompt)
+                        : NaN;
+                    const outputPrice = typeof model.pricing?.completion === 'string' || typeof model.pricing?.completion === 'number'
+                        ? Number(model.pricing.completion)
+                        : NaN;
 
-                data.data.forEach(model => {
-                    const context_length = model.context_length;
-                    const tokens_dollar = Number(1 / (1000 * model.pricing?.prompt));
-                    const tokens_rounded = (Math.round(tokens_dollar * 1000) / 1000).toFixed(0);
-                    models[model.id] = {
-                        tokens_per_dollar: tokens_rounded + 'k',
-                        context_length: context_length,
-                    };
-                });
+                    return [model.id, {
+                        input_price_per_million: Number.isFinite(inputPrice) ? inputPrice * 1_000_000 : null,
+                        output_price_per_million: Number.isFinite(outputPrice) ? outputPrice * 1_000_000 : null,
+                        context_length: model.context_length,
+                    }];
+                }));
 
                 console.info('Available OpenRouter models:', models);
             } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.MISTRALAI) {

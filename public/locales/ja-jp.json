@@ -6071,5 +6071,12 @@
     "The locked Memory Book \"{{lorebookName}}\" no longer exists. Unlock this character and choose a valid Memory Book.": "ロックされたメモリーブック「{{lorebookName}}」は存在しません。このキャラクターのロックを解除し、有効なメモリーブックを選択してください。",
     "The locked Memory Book \"{{lorebookName}}\" could not be loaded. Unlock this character and choose a valid Memory Book.": "ロックされたメモリーブック「{{lorebookName}}」を読み込めませんでした。このキャラクターのロックを解除し、有効なメモリーブックを選択してください。",
     "{{characterName}}: locked Memory Book \"{{lorebookName}}\" not found; unlock and repair this assignment": "{{characterName}}：ロックされたメモリーブック「{{lorebookName}}」が見つかりません。この割り当てを解除して修復してください",
-    "Missing: ${0}": "見つかりません：${0}"
+    "Missing: ${0}": "見つかりません：${0}",
+    "Input $${0} / Output $${1} per 1M tokens": "入力 $${0} / 出力 $${1}（100万トークンあたり）",
+    "Conditional pricing overrides:": "条件付き料金:",
+    "More than ${0} input tokens": "入力トークンが ${0} を超える場合",
+    "From ${0} to ${1} UTC": "${0}～${1} UTC",
+    "Other conditions": "その他の条件",
+    "${0}: ${1}": "${0}: ${1}",
+    "Pricing overrides": "条件付き料金"
 }

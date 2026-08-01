@@ -1485,5 +1485,14 @@
     "The locked Memory Book \"{{lorebookName}}\" no longer exists. Unlock this character and choose a valid Memory Book.": "O Livro de Memória bloqueado \"{{lorebookName}}\" já não existe. Desbloqueie esta personagem e escolha um Livro de Memória válido.",
     "The locked Memory Book \"{{lorebookName}}\" could not be loaded. Unlock this character and choose a valid Memory Book.": "Não foi possível carregar o Livro de Memória bloqueado \"{{lorebookName}}\". Desbloqueie esta personagem e escolha um Livro de Memória válido.",
     "{{characterName}}: locked Memory Book \"{{lorebookName}}\" not found; unlock and repair this assignment": "{{characterName}}: o Livro de Memória bloqueado \"{{lorebookName}}\" não foi encontrado; desbloqueie e repare esta atribuição",
-    "Missing: ${0}": "Em falta: ${0}"
+    "Missing: ${0}": "Em falta: ${0}",
+    "Unknown": "Desconhecido",
+    "Free": "Grátis",
+    "Input $${0} / Output $${1} per 1M tokens": "Entrada: ${0} $ / saída: ${1} $ por 1 milhão de tokens",
+    "Conditional pricing overrides:": "Preços condicionais:",
+    "More than ${0} input tokens": "Mais de ${0} tokens de entrada",
+    "From ${0} to ${1} UTC": "Das ${0} às ${1} UTC",
+    "Other conditions": "Outras condições",
+    "${0}: ${1}": "${0}: ${1}",
+    "Pricing overrides": "Preços condicionais"
 }

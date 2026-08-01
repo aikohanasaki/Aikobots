@@ -6128,5 +6128,12 @@
     "The locked Memory Book \"{{lorebookName}}\" no longer exists. Unlock this character and choose a valid Memory Book.": "Le Memory Book verrouillé « {{lorebookName}} » n’existe plus. Déverrouillez ce personnage et choisissez un Memory Book valide.",
     "The locked Memory Book \"{{lorebookName}}\" could not be loaded. Unlock this character and choose a valid Memory Book.": "Le Memory Book verrouillé « {{lorebookName}} » n’a pas pu être chargé. Déverrouillez ce personnage et choisissez un Memory Book valide.",
     "{{characterName}}: locked Memory Book \"{{lorebookName}}\" not found; unlock and repair this assignment": "{{characterName}} : le Memory Book verrouillé « {{lorebookName}} » est introuvable ; déverrouillez et réparez cette attribution",
-    "Missing: ${0}": "Manquant : ${0}"
+    "Missing: ${0}": "Manquant : ${0}",
+    "Input $${0} / Output $${1} per 1M tokens": "Entrée : ${0} $ / sortie : ${1} $ par million de jetons",
+    "Conditional pricing overrides:": "Tarifs conditionnels :",
+    "More than ${0} input tokens": "Plus de ${0} jetons d’entrée",
+    "From ${0} to ${1} UTC": "De ${0} à ${1} UTC",
+    "Other conditions": "Autres conditions",
+    "${0}: ${1}": "${0} : ${1}",
+    "Pricing overrides": "Tarifs conditionnels"
 }
