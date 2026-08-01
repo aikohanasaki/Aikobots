@@ -25,6 +25,7 @@ let insertSqliteMessageAt;
 let loadDb;
 let migrateChatHeaderReferences;
 let moveSqliteMessagesAdjacent;
+let resolveLogicalChatReference;
 let resolveSqliteLogicalChatReference;
 let truncateSqliteChatAfterUuid;
 let updateSqliteChatMetadata;
@@ -196,6 +197,7 @@ describe('SQLite chat length handling', () => {
         getChatSearchResult = chatsModule.getChatSearchResult;
         hasValidGroupChatPayload = chatsModule.hasValidGroupChatPayload;
         insertSqliteMessageAt = chatsModule.insertSqliteMessageAt;
+        resolveLogicalChatReference = chatsModule.resolveLogicalChatReference;
         resolveSqliteLogicalChatReference = chatsModule.resolveSqliteLogicalChatReference;
         truncateSqliteChatAfterUuid = chatsModule.truncateSqliteChatAfterUuid;
         updateSqliteChatMetadata = chatsModule.updateSqliteChatMetadata;
@@ -741,6 +743,30 @@ describe('SQLite chat length handling', () => {
             expect(chatState.totalMessages).toBe(0);
             expect(chatState.lastAvailableMessageId).toBe(-1);
             expect(chatState.messages).toEqual([]);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('resolves extensionless logical chat references to legacy JSONL storage', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jsonl-logical-chat-reference-'));
+        const chatsDir = path.join(tempDir, 'chats');
+        const groupChatsDir = path.join(tempDir, 'group chats');
+        const jsonlPath = path.join(chatsDir, 'avatar', 'chat.jsonl');
+
+        try {
+            fs.mkdirSync(path.dirname(jsonlPath), { recursive: true });
+            fs.writeFileSync(jsonlPath, [makeHeader(), ...makeMessages(3)].map(record => JSON.stringify(record)).join('\n'), 'utf8');
+
+            const chatState = await resolveLogicalChatReference({ chats: chatsDir, groupChats: groupChatsDir }, {
+                type: 'character',
+                avatarUrl: 'avatar.png',
+                fileName: 'chat',
+            });
+
+            expect(chatState.storageMode).toBe('jsonl');
+            expect(chatState.totalMessages).toBe(3);
+            expect(chatState.messages).toHaveLength(3);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

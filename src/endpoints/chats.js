@@ -1746,7 +1746,7 @@ async function getChatSegments(filePath, { metadataOnly = false } = {}) {
         }
     }
 
-    const tailObjects = readJsonlObjects(filePath);
+    const tailObjects = readJsonlObjects(replaceChatStorageExtension(filePath, '.jsonl'));
 
     if (!tailObjects.length) {
         return {
@@ -3771,7 +3771,7 @@ async function resolveGroupLogicalChat(filePath, options = {}) {
         };
     }
 
-    const messages = readJsonlObjects(filePath);
+    const messages = readJsonlObjects(replaceChatStorageExtension(filePath, '.jsonl'));
     return {
         chatType: 'group',
         filePath,

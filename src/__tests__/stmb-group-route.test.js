@@ -5,6 +5,7 @@ const saveLorebookForManagement = jest.fn();
 const transactionSave = jest.fn();
 const assertLorebookCheckoutForManagement = jest.fn();
 const isReservedRecommendedTemplateSource = jest.fn();
+const resolveLogicalChatReference = jest.fn();
 const resolveSqliteLogicalChatReference = jest.fn();
 const withChatSaveLock = jest.fn(async (_path, callback) => await callback());
 
@@ -29,6 +30,7 @@ jest.unstable_mockModule('../recommended-chat-template-store.js', () => ({
 }));
 
 jest.unstable_mockModule('../endpoints/chats.js', () => ({
+    resolveLogicalChatReference,
     resolveSqliteLogicalChatReference,
 }));
 
@@ -68,7 +70,20 @@ beforeEach(() => {
     transactionSave.mockReset();
     assertLorebookCheckoutForManagement.mockReset();
     isReservedRecommendedTemplateSource.mockReset();
+    resolveLogicalChatReference.mockReset();
+    resolveSqliteLogicalChatReference.mockReset();
     isReservedRecommendedTemplateSource.mockReturnValue(false);
+    resolveSqliteLogicalChatReference.mockResolvedValue({
+        storageMode: 'sqlite',
+        sqliteMissing: false,
+        messages: [
+            undefined,
+            { aikobots_message_uuid: '00000000-0000-4000-8000-000000000001' },
+            undefined,
+            undefined,
+            { aikobots_message_uuid: '00000000-0000-4000-8000-000000000004' },
+        ],
+    });
     transactionSave.mockResolvedValue({});
 });
 
@@ -106,6 +121,7 @@ function makeRequest(overrides = {}) {
                 usePrimaryTitle: false,
             }],
             sceneContext: { sceneStart: 1, sceneEnd: 4, groupName: 'Party' },
+            chatRef: { type: 'group', chatId: 'party-chat' },
             profile: { titleFormat: '[000] - {{title}}' },
         },
         ...overrides,
@@ -226,6 +242,25 @@ describe('STMB multi-lorebook group route', () => {
             },
         });
         expect(response.payload.entries[0]).not.toHaveProperty('content');
+    });
+
+    it('saves numeric scene boundaries for legacy JSONL chats without message UUIDs', async () => {
+        resolveSqliteLogicalChatReference.mockResolvedValue({ sqliteMissing: true });
+        resolveLogicalChatReference.mockResolvedValue({
+            storageMode: 'jsonl',
+            messages: Array.from({ length: 5 }, (_, index) => ({ mes: `Message ${index}` })),
+        });
+        mockLoadedLorebooks();
+        const response = makeResponse();
+
+        await handler(makeRequest(), response);
+
+        expect(response.statusCode).toBe(200);
+        expect(resolveLogicalChatReference).toHaveBeenCalledTimes(1);
+        const primaryEntry = Object.values(transactionSave.mock.calls[0][2].entries)[0];
+        expect(primaryEntry).toMatchObject({ STMB_start: 1, STMB_end: 4 });
+        expect(primaryEntry).not.toHaveProperty('STMB_startUuid');
+        expect(primaryEntry).not.toHaveProperty('STMB_endUuid');
     });
 
     it('allocates canonical numbers from managed memories, not unrelated or consolidated entries', async () => {

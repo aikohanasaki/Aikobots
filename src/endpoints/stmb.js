@@ -1,5 +1,5 @@
 import express from 'express';
-import { resolveSqliteLogicalChatReference } from './chats.js';
+import { resolveLogicalChatReference, resolveSqliteLogicalChatReference } from './chats.js';
 import { stableHashString } from '../../public/scripts/hashing.js';
 import { applyStloCharacterFilters } from '../../public/scripts/stlo-utils.js';
 import { withChatSaveLock } from '../chat-storage.js';
@@ -271,17 +271,30 @@ async function resolveStmbChatStateForUuidRange(request, chatRef, rangeStartUuid
     });
 }
 
-/** Adds stable UUID boundaries from the authoritative SQLite scene range. */
+/** Adds persisted UUID boundaries when the authoritative chat storage provides them. */
 async function addAuthoritativeSceneBoundaryUuids(request, sceneContext, chatRef) {
     const sceneStart = Number(sceneContext?.sceneStart);
     const sceneEnd = Number(sceneContext?.sceneEnd);
     if (!Number.isInteger(sceneStart) || !Number.isInteger(sceneEnd) || sceneStart < 0 || sceneEnd < sceneStart || !chatRef) {
         throw createStmbRequestError(400, 'StmbBadRequest', 'A valid chat reference and scene range are required to save a memory.');
     }
-    const chatState = await resolveStmbChatStateForRange(request, chatRef, sceneStart, sceneEnd);
-    assertSqliteChatStorageAvailable(chatState);
+
+    let chatState = await resolveStmbChatStateForRange(request, chatRef, sceneStart, sceneEnd);
+    if (chatState?.sqliteMissing) {
+        chatState = await resolveLogicalChatReference(request.user.directories, chatRef);
+    }
+
+    const sceneStartMessage = chatState.messages?.[sceneStart];
+    const sceneEndMessage = chatState.messages?.[sceneEnd];
+    if (!sceneStartMessage || !sceneEndMessage) {
+        throw createStmbRequestError(409, 'StmbMessageIdentityUnavailable', 'The scene message identities could not be resolved. Reload the chat and try again.');
+    }
+
     const sceneStartUuid = chatState.messages?.[sceneStart]?.[AIKOBOTS_MESSAGE_UUID_KEY];
     const sceneEndUuid = chatState.messages?.[sceneEnd]?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    if (chatState.storageMode === 'jsonl' && (!isValidAikobotsUuid(sceneStartUuid) || !isValidAikobotsUuid(sceneEndUuid))) {
+        return { ...sceneContext };
+    }
     if (!isValidAikobotsUuid(sceneStartUuid) || !isValidAikobotsUuid(sceneEndUuid)) {
         throw createStmbRequestError(409, 'StmbMessageIdentityUnavailable', 'The scene message identities could not be resolved. Reload the chat and try again.');
     }

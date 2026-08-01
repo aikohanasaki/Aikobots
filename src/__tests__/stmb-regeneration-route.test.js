@@ -29,6 +29,7 @@ jest.unstable_mockModule('../recommended-chat-template-store.js', () => ({
 }));
 
 jest.unstable_mockModule('../endpoints/chats.js', () => ({
+    resolveLogicalChatReference: jest.fn(),
     resolveSqliteLogicalChatReference,
 }));
 
