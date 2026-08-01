@@ -7941,12 +7941,14 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
 
     addCopyToCodeBlocks(newMessage);
 
-    // Set the swipes counter for past messages, only visible if 'Show Swipes on All Message' is enabled
+    // Populate every rendered counter; CSS controls whether historical counters are visible.
     const chatMessage = chat[mesId];
-    if (!params.isUser && mesId !== 0 && mesId !== chat.length - 1 && chatMessage) {
+    if (!params.isUser && !params.isSystem && !isSmallSys && chatMessage) {
         const swipesNum = chatMessage.swipes?.length;
         const swipeId = chatMessage.swipe_id + 1;
-        newMessage.find('.swipes-counter').text(formatSwipeCounter(swipeId, swipesNum));
+        if (swipesNum) {
+            newMessage.find('.swipes-counter').text(formatSwipeCounter(swipeId, swipesNum));
+        }
     }
 
     if (showSwipes) {
@@ -13342,7 +13344,7 @@ export function renderDetachedMessage(mes, messageId) {
     appendMediaToMessage(mes, messageElement, SCROLL_BEHAVIOR.NONE);
     addCopyToCodeBlocks(messageElement);
 
-    if (!params.isUser && messageId !== 0 && messageId !== chat.length - 1) {
+    if (!params.isUser && !params.isSystem && !isSmallSys) {
         const swipesNum = mes?.swipes?.length;
         const swipeId = (mes?.swipe_id ?? 0) + 1;
         if (swipesNum) {
