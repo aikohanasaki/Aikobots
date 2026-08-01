@@ -386,7 +386,7 @@ async function listStmbPlannerJobs() {
 
 async function getStmbPlannerChatState({ sceneContext } = {}) {
     return {
-        state: structuredClone(getStmbState(resolveStmbStateChatKey(sceneContext))),
+        state: structuredClone({ ...getStmbState(resolveStmbStateChatKey(sceneContext)) }),
     };
 }
 
