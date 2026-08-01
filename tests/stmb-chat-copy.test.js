@@ -100,6 +100,67 @@ test('UUID ranges remain authoritative when numeric message positions changed', 
     assert.equal(result.data.entries[1].STMB_end, 3);
 });
 
+test('an incomplete UUID range falls back to valid numeric message positions', () => {
+    const result = projectStmbLorebookForChatCopy({
+        entries: {
+            1: {
+                uid: 1,
+                stmemorybooks: true,
+                STMB_start: 1,
+                STMB_end: 3,
+                STMB_startUuid: 'start-only',
+            },
+        },
+    }, { cutoffIndex: 3, resolveMessageIndex: uuid => uuid === 'start-only' ? 1 : undefined });
+    const targetMessages = [0, 1, 2, 3].map(index => ({ aikobots_message_uuid: `target-${index}` }));
+
+    rewriteManagedMemoryBoundaryUuids(result.data, targetMessages, uuid => uuid === 'start-only' ? 1 : undefined);
+
+    assert.equal(result.data.entries[1].STMB_startUuid, 'target-1');
+    assert.equal(result.data.entries[1].STMB_endUuid, 'target-3');
+    assert.equal(result.data.entries[1].STMB_start, 1);
+    assert.equal(result.data.entries[1].STMB_end, 3);
+});
+
+test('an unresolvable UUID range falls back to valid numeric message positions', () => {
+    const result = projectStmbLorebookForChatCopy({
+        entries: {
+            1: {
+                uid: 1,
+                stmemorybooks: true,
+                STMB_start: 1,
+                STMB_end: 3,
+                STMB_startUuid: 'stale-start',
+                STMB_endUuid: 'stale-end',
+            },
+        },
+    }, { cutoffIndex: 3, resolveMessageIndex: () => undefined });
+    const targetMessages = [0, 1, 2, 3].map(index => ({ aikobots_message_uuid: `target-${index}` }));
+
+    rewriteManagedMemoryBoundaryUuids(result.data, targetMessages, () => undefined);
+
+    assert.equal(result.data.entries[1].STMB_startUuid, 'target-1');
+    assert.equal(result.data.entries[1].STMB_endUuid, 'target-3');
+    assert.equal(result.data.entries[1].STMB_start, 1);
+    assert.equal(result.data.entries[1].STMB_end, 3);
+});
+
+test('invalid UUID metadata still rejects without a valid numeric fallback', () => {
+    assert.throws(
+        () => projectStmbLorebookForChatCopy({
+            entries: {
+                1: {
+                    uid: 1,
+                    stmemorybooks: true,
+                    STMB_startUuid: 'stale-start',
+                    STMB_endUuid: 'stale-end',
+                },
+            },
+        }, { cutoffIndex: 3, resolveMessageIndex: () => undefined }),
+        error => error instanceof StmbChatCopyError && error.code === 'stmb_copy_ambiguous_legacy',
+    );
+});
+
 test('a locked solo book stays on its original book during a branch copy', () => {
     const metadata = {
         world_info: 'Solo',

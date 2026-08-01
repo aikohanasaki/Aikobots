@@ -103,21 +103,25 @@ function getSummarySourceIds(entry, entries) {
 function getManagedEntryRange(entry, resolveMessageIndex) {
     const startUuid = String(entry?.STMB_startUuid || '').trim();
     const endUuid = String(entry?.STMB_endUuid || '').trim();
-    if (startUuid || endUuid) {
-        if (!startUuid || !endUuid) {
-            throw new StmbChatCopyError('stmb_copy_ambiguous_legacy', 'A managed memory has an incomplete UUID range.');
-        }
-        const start = resolveMessageIndex(startUuid);
-        const end = resolveMessageIndex(endUuid);
-        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) {
-            throw new StmbChatCopyError('stmb_copy_ambiguous_legacy', 'A managed memory UUID range does not resolve to this chat.');
-        }
-        return { start, end };
-    }
-
     const start = Number(entry?.STMB_start);
     const end = Number(entry?.STMB_end);
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) {
+    const hasValidNumericRange = Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end >= start;
+    if (startUuid || endUuid) {
+        if (startUuid && endUuid) {
+            const resolvedStart = resolveMessageIndex(startUuid);
+            const resolvedEnd = resolveMessageIndex(endUuid);
+            if (Number.isInteger(resolvedStart) && Number.isInteger(resolvedEnd) && resolvedStart >= 0 && resolvedEnd >= resolvedStart) {
+                return { start: resolvedStart, end: resolvedEnd };
+            }
+        }
+        if (hasValidNumericRange) return { start, end };
+        const message = !startUuid || !endUuid
+            ? 'A managed memory has an incomplete UUID range.'
+            : 'A managed memory UUID range does not resolve to this chat.';
+        throw new StmbChatCopyError('stmb_copy_ambiguous_legacy', message);
+    }
+
+    if (!hasValidNumericRange) {
         throw new StmbChatCopyError('stmb_copy_ambiguous_legacy', 'A legacy managed memory has no safe message range.');
     }
     return { start, end };
