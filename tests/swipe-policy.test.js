@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { canGenerateHistoricalSwipe } from '../public/scripts/swipe-policy.js';
+import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter } from '../public/scripts/swipe-policy.js';
 
 test('historical swipe generation requires every later message to be prompt-hidden', () => {
     const messages = [
@@ -28,4 +28,13 @@ test('historical swipe generation uses the prompt assembler visibility policy', 
     assert.equal(canGenerateHistoricalSwipe(messages, 0, isPromptHidden), true);
     messages[0].extra = { ignore: true };
     assert.equal(canGenerateHistoricalSwipe(messages, 0, isPromptHidden), false);
+});
+
+test('swipe counters distinguish prompt-hidden messages from system notices', () => {
+    const isSystemNotice = message => message?.extra?.type === 'notice';
+
+    assert.equal(shouldDisplaySwipeCounter({ is_system: true, swipes: ['one', 'two'] }, isSystemNotice), true);
+    assert.equal(shouldDisplaySwipeCounter({ is_system: true, swipes: ['notice'], extra: { type: 'notice' } }, isSystemNotice), false);
+    assert.equal(shouldDisplaySwipeCounter({ is_user: true, swipes: ['user'] }, isSystemNotice), false);
+    assert.equal(shouldDisplaySwipeCounter({ swipes: ['small'], extra: { isSmallSys: true } }, isSystemNotice), false);
 });

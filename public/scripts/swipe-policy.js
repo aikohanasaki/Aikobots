@@ -13,6 +13,21 @@ export function canGenerateHistoricalSwipe(messages, messageId, isPromptHidden =
         messageId < messages.length - 1 &&
         message &&
         !isPromptHidden(message) &&
-        messages.slice(messageId + 1).every(isPromptHidden)
+        messages.slice(messageId + 1).every(isPromptHidden),
+    );
+}
+
+/**
+ * Returns whether a message may display a swipe counter.
+ * @param {object} message Chat message.
+ * @param {(message: object) => boolean} [isSystemNotice] Actual system-notice predicate.
+ * @returns {boolean}
+ */
+export function shouldDisplaySwipeCounter(message, isSystemNotice = () => false) {
+    return Boolean(
+        message &&
+        !message.is_user &&
+        !message.extra?.isSmallSys &&
+        !(message.is_system && isSystemNotice(message)),
     );
 }

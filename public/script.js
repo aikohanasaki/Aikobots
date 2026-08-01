@@ -278,7 +278,7 @@ import { AudioPlayer } from './scripts/audio-player.js';
 import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
-import { canGenerateHistoricalSwipe } from './scripts/swipe-policy.js';
+import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter } from './scripts/swipe-policy.js';
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
@@ -7943,7 +7943,7 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
 
     // Populate every rendered counter; CSS controls whether historical counters are visible.
     const chatMessage = chat[mesId];
-    if (!params.isUser && !params.isSystem && !isSmallSys && chatMessage) {
+    if (shouldDisplaySwipeCounter(chatMessage, isSystemNotice)) {
         const swipesNum = chatMessage.swipes?.length;
         const swipeId = chatMessage.swipe_id + 1;
         if (swipesNum) {
@@ -13344,7 +13344,7 @@ export function renderDetachedMessage(mes, messageId) {
     appendMediaToMessage(mes, messageElement, SCROLL_BEHAVIOR.NONE);
     addCopyToCodeBlocks(messageElement);
 
-    if (!params.isUser && !params.isSystem && !isSmallSys) {
+    if (shouldDisplaySwipeCounter(mes, isSystemNotice)) {
         const swipesNum = mes?.swipes?.length;
         const swipeId = (mes?.swipe_id ?? 0) + 1;
         if (swipesNum) {
@@ -17643,6 +17643,14 @@ export function callPopup(text, type, inputValue = '', { okButton, rows, wide, w
     });
 }
 
+/** Returns whether a message is an actual system notice rather than a prompt-hidden chat message. */
+function isSystemNotice(message) {
+    return Boolean(message?.is_system && (
+        message.name === systemUserName ||
+        Object.values(system_message_types).includes(message.extra?.type)
+    ));
+}
+
 /**
  * Updates the swipe counter for a rendered message.
  * @param {Number} mesId Message ID.
@@ -17655,7 +17663,7 @@ export async function updateSwipeCounter(mesId, { message = undefined, messageEl
     message ??= chat[mesId];
     messageElement ??= chatElement.children('.mes').filter(`[mesid="${mesId}"]`);
 
-    if (!message || !messageElement.length || message.is_user || message.is_system || message.extra?.isSmallSys) {
+    if (!messageElement.length || !shouldDisplaySwipeCounter(message, isSystemNotice)) {
         return;
     }
 

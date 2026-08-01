@@ -508,7 +508,7 @@ function applyLoadedChatMessageVisibility(start, end, hide, nameFilter = null) {
         }
     }
 
-    refreshSwipeButtons();
+    refreshSwipeButtons(true);
 }
 
 async function updateServerChatMessageVisibility(start, end, unhide, nameFilter = null) {
