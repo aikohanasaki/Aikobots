@@ -28,7 +28,12 @@ import {
     setStloSettingsOnLorebook,
 } from './stlo-utils.js';
 import { STMB_MANAGED_FLAG } from './stmb-core.js';
-import { buildRegenerationIndexes, getRegenerationEligibility } from './stmb-regeneration.js';
+import {
+    buildRegenerationIndexes,
+    getRegenerationEligibility,
+    isSidePromptRegenerationEntry,
+    SIDE_PROMPT_REGENERATION_METADATA_KEY,
+} from './stmb-regeneration.js';
 import {
     DEFAULT_WORLD_INFO_SORT_ORDER,
     getWorldInfoSortOrder,
@@ -5525,20 +5530,38 @@ export async function getWorldEntry(name, data, entry) {
         // UID display
         editTemplate.find('.world_entry_form_uid_value').text(t`(UID: ${entry.uid})`);
         const regenerateButton = editTemplate.find('.stmb-regenerate-entry');
-        const regenerationEligibility = entry[STMB_MANAGED_FLAG] === true
-            && getLorebookStorageForRequest(name) === 'user'
+        const isSidePrompt = isSidePromptRegenerationEntry(entry);
+        const isOrdinaryUserLorebook = getLorebookStorageForRequest(name) === 'user';
+        const canOfferSidePromptRegeneration = isSidePrompt && isOrdinaryUserLorebook;
+        const isRegenerationCandidate = entry[STMB_MANAGED_FLAG] === true || isSidePrompt;
+        let regenerationEligibility = isRegenerationCandidate && isOrdinaryUserLorebook
             ? getRegenerationEligibility(entry, data, buildRegenerationIndexes(data))
             : { eligible: false };
-        if (regenerationEligibility.eligible) {
+        if (canOfferSidePromptRegeneration && !Object.hasOwn(entry, SIDE_PROMPT_REGENERATION_METADATA_KEY)) {
+            regenerationEligibility = { eligible: false, reason: 'missing-sideprompt-snapshot' };
+        }
+        if (regenerationEligibility.eligible || canOfferSidePromptRegeneration) {
+            const buttonLabelKey = isSidePrompt ? 'Regenerate side prompt' : 'Regenerate memory';
+            const buttonLabel = translate(buttonLabelKey);
+            const buttonTitle = regenerationEligibility.eligible
+                ? translate('Generate a replacement using current settings. Approval is always required.')
+                : regenerationEligibility.reason === 'missing-sideprompt-snapshot'
+                    ? translate('Run this side prompt once to enable regeneration.')
+                    : translate('The saved side-prompt run snapshot is invalid. Run the side prompt again to replace it.');
             regenerateButton
                 .prop('hidden', false)
+                .prop('disabled', !regenerationEligibility.eligible)
+                .attr('title', buttonTitle)
                 .attr('data-lorebook-name', name)
-                .attr('data-entry-uid', String(entry.uid))
-                .on('click', function (event) {
+                .attr('data-entry-uid', String(entry.uid));
+            regenerateButton.find('span').text(buttonLabel).attr('data-i18n', buttonLabelKey);
+            if (regenerationEligibility.eligible) {
+                regenerateButton.on('click', function (event) {
                     event.preventDefault();
                     event.stopPropagation();
                     void Promise.resolve(stmbRegenerationHandler?.(this));
                 });
+            }
         }
 
         // Key inputs

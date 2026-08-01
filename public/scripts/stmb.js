@@ -122,6 +122,7 @@ import {
     evaluateTrackers,
     firstRunInitSidePrompts,
     enqueueAfterMemorySidePromptJobs,
+    generateSidePromptFromSnapshot,
     runSidePrompt,
     runSidePromptSet,
     toggleSidePromptEnabled,
@@ -2250,6 +2251,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-consolidation-previews" ${moduleSettings.showConsolidationPreviews ? 'checked' : ''}> <span data-i18n="Show consolidation previews">Show consolidation previews</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-notifications" ${moduleSettings.showNotifications ? 'checked' : ''}> <span data-i18n="Show notifications">Show notifications</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-floating-clip-button" ${moduleSettings.showFloatingClipButton !== false ? 'checked' : ''}> <span data-i18n="Show floating Clip button">Show floating Clip button</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-copy-memory-books-with-chat-copies" ${moduleSettings.copyMemoryBooksWithChatCopies !== false ? 'checked' : ''}> <span data-i18n="Copy Memory Books with branches and checkpoints">Copy Memory Books with branches and checkpoints</span></label>
                 <label for="stmb-settings-memory-boundary-mode">
                     <span data-i18n="Memory boundary indicator">Memory boundary indicator</span>
                     <small class="opacity50p" data-i18n="Show a chat divider, a jump button, or both at the Memory Books processed boundary.">Show a chat divider, a jump button, or both at the Memory Books processed boundary.</small>
@@ -5595,6 +5597,11 @@ async function showMainEntryPopup(view = 'main', options = {}) {
             refreshFloatingClipButtonSetting();
             return;
         }
+        if (target.matches('#stmb-settings-copy-memory-books-with-chat-copies')) {
+            moduleSettings.copyMemoryBooksWithChatCopies = target.checked;
+            persistSettings();
+            return;
+        }
         if (target.matches('#stmb-settings-memory-boundary-mode')) {
             moduleSettings.memoryBoundaryMode = normalizeStmbMemoryBoundaryMode(target.value);
             persistSettings();
@@ -6266,6 +6273,27 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
 
 function getModuleSettings() {
     return stmbSettings.moduleSettings || {};
+}
+
+/** Returns whether branch and checkpoint creation should offer Memory Book copying. */
+export function isStmbChatCopyEnabled() {
+    return getModuleSettings().copyMemoryBooksWithChatCopies !== false;
+}
+
+/** Returns whether the active chat metadata contains at least one STMB lorebook binding. */
+export function hasStmbChatCopyBindings(metadata = chat_metadata) {
+    const state = metadata?.[STMB_METADATA_KEY];
+    if (!state || typeof state !== 'object' || Array.isArray(state)) return false;
+    const hasValue = value => {
+        if (typeof value === 'string') return Boolean(value.trim());
+        if (Array.isArray(value)) return value.some(hasValue);
+        if (!value || typeof value !== 'object') return false;
+        return hasValue(value.lorebookName) || hasValue(value.name);
+    };
+    return (!hasValue(state.manualLorebook) && hasValue(metadata?.world_info))
+        || hasValue(state.manualLorebook)
+        || Object.values(state.manualCharacterLorebooks || {}).some(hasValue)
+        || Object.values(state.sidePromptLorebookOverrides || {}).some(hasValue);
 }
 
 function getPersistedStmbState() {
@@ -8514,6 +8542,7 @@ async function saveManualGroupMemoryObjects(groupMemory, characterMemories, snap
             usePrimaryTitle: !characterMemories.has(target.lorebookName),
         })),
         sceneContext: buildMemorySceneData(compiledScene, range),
+        chatRef: sceneContext?.chatRef,
         profile,
     }, { signal });
     throwIfStmbAborted(signal);
@@ -8555,6 +8584,7 @@ async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, c
         storage: getLorebookStorageForRequest(lorebookName),
         memoryObject,
         sceneContext: buildMemorySceneData(compiledScene, range),
+        chatRef: sceneContext?.chatRef,
         profile,
     }, { signal });
     throwIfStmbAborted(signal);
@@ -10358,6 +10388,8 @@ function getRegenerationDisabledMessage(eligibility) {
         'wrong-source-tier': 'The complete source set exactly one tier lower cannot be recovered.',
         'missing-number': 'The original sequence number cannot be recovered.',
         'missing-range': 'The original message range is missing or invalid.',
+        'invalid-sideprompt-snapshot': 'The saved side-prompt run snapshot is invalid. Run the side prompt again to replace it.',
+        'missing-sideprompt-snapshot': 'Run this side prompt once to enable regeneration.',
     };
     return messages[eligibility?.reason] || 'This entry cannot be regenerated.';
 }
@@ -10533,6 +10565,54 @@ async function buildConsolidationRegenerationDraft(lorebookData, eligibility, ta
     };
 }
 
+async function buildSidePromptRegenerationDraft(lorebookName, lorebookData, entry, eligibility, task) {
+    const sceneContext = buildStmbSceneContext();
+    const snapshot = eligibility.snapshot;
+    if (String(snapshot.chatId) !== String(sceneContext.chatId || '')) {
+        throw new Error(translate('This side prompt does not belong to the current chat. Open its source chat before regenerating it.'));
+    }
+    const sceneCapture = await captureStmbSceneRange({
+        sceneStart: snapshot.sceneStart,
+        sceneEnd: snapshot.sceneEnd,
+    }, {
+        signal: task.signal,
+        saveFirst: true,
+        skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
+        sceneContext,
+        sceneStartUuid: snapshot.sceneStartUuid,
+        sceneEndUuid: snapshot.sceneEndUuid,
+    });
+    const compiledScene = sceneCapture?.compiledScene;
+    if (!compiledScene || !Array.isArray(compiledScene.messages) || compiledScene.messages.length === 0) {
+        if (!getModuleSettings().unhideBeforeMemory) {
+            await showRegenerationVisibilityGuidance();
+            return null;
+        }
+        throw new Error(translate('No capturable messages remain in the original range.'));
+    }
+    const content = await generateSidePromptFromSnapshot({
+        snapshot,
+        lorebookName,
+        lorebookData,
+        compiledScene,
+        settings: stmbSettings,
+        signal: task.signal,
+    });
+    throwIfStmbAborted(task.signal);
+    return {
+        generatedTitle: String(entry.comment || ''),
+        generatedContent: content,
+        generatedKeywords: Array.isArray(entry.key) ? [...entry.key] : [],
+        formatTitle: () => String(entry.comment || ''),
+        sourceUids: [],
+        sourceHashes: {},
+        chatRef: sceneContext.chatRef,
+        currentChatId: sceneContext.chatId,
+        expectedChatRevision: Number(sceneCapture?.capture?.chatRevision),
+        contentOnly: true,
+    };
+}
+
 async function handleLorebookEntryRegeneration(button) {
     if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(buildStmbSceneContext()))) {
         toastr.warning(translate('STMB generation is already in progress.'), 'STMB');
@@ -10552,7 +10632,9 @@ async function handleLorebookEntryRegeneration(button) {
         const linkedLorebooks = await findLinkedManualGroupLorebooks(lorebookName, entry);
         const draft = eligibility.kind === 'memory'
             ? await buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eligibility, task)
-            : await buildConsolidationRegenerationDraft(lorebookData, eligibility, task);
+            : eligibility.kind === 'sidePrompt'
+                ? await buildSidePromptRegenerationDraft(lorebookName, lorebookData, entry, eligibility, task)
+                : await buildConsolidationRegenerationDraft(lorebookData, eligibility, task);
         if (!draft) return;
         throwIfStmbAborted(task.signal);
         const review = await showRegenerationReviewPopup({
@@ -10562,6 +10644,7 @@ async function handleLorebookEntryRegeneration(button) {
             generatedKeywords: draft.generatedKeywords,
             formatTitle: draft.formatTitle,
             linkedLorebooks,
+            contentOnly: draft.contentOnly === true,
         });
         if (review.action !== 'replace') return;
         throwIfStmbAborted(task.signal);
@@ -10569,11 +10652,14 @@ async function handleLorebookEntryRegeneration(button) {
             lorebookName,
             storage: 'user',
             uid: entryUid,
-            replacement: {
-                title: review.title,
-                content: review.content,
-                keywords: review.keywords,
-            },
+            replacementMode: draft.contentOnly === true ? 'content-only' : 'full',
+            replacement: draft.contentOnly === true
+                ? { content: review.content }
+                : {
+                    title: review.title,
+                    content: review.content,
+                    keywords: review.keywords,
+                },
             expectedTargetHash: targetHash,
             sourceUids: draft.sourceUids,
             sourceHashes: draft.sourceHashes,
@@ -10584,10 +10670,17 @@ async function handleLorebookEntryRegeneration(button) {
         worldInfoCache.delete(lorebookName);
         void refreshStmbMacroCache(lorebookName);
         await Promise.resolve(reloadEditor(lorebookName));
-        toastr.success(translate('Memory regenerated successfully.'), 'STMB');
+        toastr.success(eligibility.kind === 'sidePrompt'
+            ? translate('Side prompt regenerated successfully.')
+            : translate('Memory regenerated successfully.'), 'STMB');
     } catch (error) {
         if (!isStmbAbortError(error)) {
-            toastr.error(error?.message || 'Memory regeneration failed.', 'STMB');
+            const message = error?.code === 'STMB_SIDE_PROMPT_TEMPLATE_MISSING'
+                ? translate('The side-prompt template used for this run no longer exists.')
+                : error?.code === 'STMB_SIDE_PROMPT_REGENERATION_BLANK'
+                    ? translate('The regenerated side prompt was blank. Nothing was overwritten.')
+                    : error?.message || translate('Memory regeneration failed.');
+            toastr.error(message, 'STMB');
         }
     } finally {
         task.cleanup();

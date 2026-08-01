@@ -53,6 +53,12 @@ import {
 import { assembleChatCompletionPrompt } from '../../prompting/chat-completion-assembly.js';
 import { compareChatCompletionMessages } from '../../prompting/chat-completion-compare.js';
 import { runServerGenerationExtensions } from '../../extensions/server-runtime.js';
+import { withDirectoryLock } from '../../file-system-lock.js';
+import {
+    extractPromptCacheUsage,
+    extractPromptCacheUsageFromSseEvent,
+    normalizePromptCacheUsage,
+} from '../../prompt-cache-usage.js';
 import { prepareEntriesForScan, resolveSortedEntriesPayload } from '../worldinfo.js';
 import { resolveCoreChatPayload } from '../chats.js';
 import {
@@ -101,6 +107,10 @@ const API_ZAI_CODING = 'https://api.z.ai/api/coding/paas/v4';
 const API_SILICONFLOW = 'https://api.siliconflow.com/v1';
 const PROMPT_INSPECTION_DIRECTORY = ['_secure', 'prompt-inspection'];
 const STREAM_HEARTBEAT_INTERVAL_MS = 15000;
+const PROMPT_INSPECTION_LOCK_RETRY_MS = 25;
+const PROMPT_INSPECTION_LOCK_TIMEOUT_MS = 5000;
+const PROMPT_INSPECTION_LOCK_STALE_MS = 60_000;
+const PROMPT_INSPECTION_LOCK_HEARTBEAT_MS = 1000;
 
 // blocked due to site policy, unblocking august 2026
 const BLOCKED_CUSTOM_ENDPOINT_HOSTNAME = 'voidai.app';
@@ -543,12 +553,13 @@ function getStructuredOutputFallbackLabel(targetMode) {
     return targetMode === 'json_object' ? 'json_object' : 'text';
 }
 
-function createProviderJsonResult(body, { status = 200, ok = true } = {}) {
+function createProviderJsonResult(body, { status = 200, ok = true, cacheUsage = null } = {}) {
     return {
         kind: 'json',
         ok: Boolean(ok),
         status,
         body,
+        cacheUsage: normalizePromptCacheUsage(cacheUsage?.cachedInputTokens),
     };
 }
 
@@ -1040,6 +1051,13 @@ async function sendProviderDispatchResult(result, request, response, {
             return response.status(500).send({ error: true });
         }
 
+        if (result.ok && promptSnapshotKey) {
+            await updatePromptInspectionSnapshotCacheUsage(
+                promptSnapshotKey,
+                result.cacheUsage || extractPromptCacheUsage(result.body),
+            );
+        }
+
         const payload = result.ok
             ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, firstIncludedMessageId, promptTokenCount)
             : annotateErrorPayload(result.body, {
@@ -1250,7 +1268,7 @@ async function sendClaudeRequest(request) {
 
             // Wrap it back to OAI format + save the original content
             const reply = { choices: [{ 'message': { 'content': responseText } }], content: generateResponseJson.content };
-            return createProviderJsonResult(reply);
+            return createProviderJsonResult(reply, { cacheUsage: extractPromptCacheUsage(generateResponseJson) });
         }
     } catch (error) {
         console.error(color.red(`Error communicating with Claude: ${error}\n${divider}`));
@@ -1512,7 +1530,7 @@ async function sendMakerSuiteRequest(request) {
 
             // Wrap it back to OAI format
             const reply = { choices: [{ 'message': { 'content': responseText } }], responseContent };
-            return createProviderJsonResult(reply);
+            return createProviderJsonResult(reply, { cacheUsage: extractPromptCacheUsage(generateResponseJson) });
         }
     } catch (error) {
         console.error(`Error communicating with ${apiName} API:`, error);
@@ -2109,6 +2127,7 @@ async function sendElectronHubRequest(request) {
             'top_k': request.body.top_k,
             'logit_bias': request.body.logit_bias,
             'seed': request.body.seed,
+            'stream_options': request.body.stream ? { include_usage: true } : undefined,
             ...bodyParams,
         };
 
@@ -2362,6 +2381,23 @@ function getPromptInspectionSnapshotPathForKey(key) {
     return path.join(getPromptInspectionSnapshotDirectory(), `${filename}.json`);
 }
 
+/** Runs a prompt snapshot mutation under one or more deterministic cross-process locks. */
+async function withPromptInspectionSnapshotLocks(keys, operation) {
+    const lockPaths = [...new Set(keys.map(key => `${getPromptInspectionSnapshotPathForKey(key)}.lock`))].sort();
+    const runAt = async index => index >= lockPaths.length
+        ? await operation()
+        : await withDirectoryLock({
+            lockPath: lockPaths[index],
+            retryMs: PROMPT_INSPECTION_LOCK_RETRY_MS,
+            timeoutMs: PROMPT_INSPECTION_LOCK_TIMEOUT_MS,
+            staleMs: PROMPT_INSPECTION_LOCK_STALE_MS,
+            heartbeatMs: PROMPT_INSPECTION_LOCK_HEARTBEAT_MS,
+            timeoutMessage: 'Timed out waiting for prompt inspection snapshot lock.',
+        }, async lock => await lock.run(async () => await runAt(index + 1)));
+
+    return await runAt(0);
+}
+
 async function readPromptInspectionSnapshotForKey(key) {
     if (!key) {
         return null;
@@ -2447,7 +2483,9 @@ function getPromptInspectionInfo(request) {
 }
 
 async function setPromptInspectionSnapshot(key, snapshot) {
-    await writePromptInspectionSnapshotForKey(key, snapshot);
+    await withPromptInspectionSnapshotLocks([key], async () => {
+        await writePromptInspectionSnapshotForKey(key, snapshot);
+    });
 }
 
 async function getPromptInspectionSnapshot(key) {
@@ -2459,6 +2497,10 @@ async function deletePromptInspectionSnapshot(key) {
         return false;
     }
 
+    return await withPromptInspectionSnapshotLocks([key], async () => await deletePromptInspectionSnapshotUnlocked(key));
+}
+
+async function deletePromptInspectionSnapshotUnlocked(key) {
     try {
         await fsPromises.unlink(getPromptInspectionSnapshotPathForKey(key));
         return true;
@@ -2479,23 +2521,49 @@ async function rekeyPromptInspectionSnapshot(fromKey, toKey) {
         return false;
     }
 
-    const snapshot = await readPromptInspectionSnapshotForKey(fromKey);
-    if (!snapshot) {
+    return await withPromptInspectionSnapshotLocks([fromKey, toKey], async () => {
+        const snapshot = await readPromptInspectionSnapshotForKey(fromKey);
+        if (!snapshot) {
+            return false;
+        }
+
+        const rekeyedSnapshot = clonePromptInspectionSnapshot(snapshot);
+        if (rekeyedSnapshot) {
+            rekeyedSnapshot.key = toKey;
+            rekeyedSnapshot.username = parsedToKey.username;
+            rekeyedSnapshot.chatScope = parsedToKey.chatScope;
+            rekeyedSnapshot.mesId = parsedToKey.mesId;
+            rekeyedSnapshot.swipeId = parsedToKey.swipeId;
+        }
+
+        await writePromptInspectionSnapshotForKey(toKey, rekeyedSnapshot);
+        await deletePromptInspectionSnapshotUnlocked(fromKey);
+        return true;
+    });
+}
+
+/** Stores provider-measured cached input tokens without retaining the raw usage payload. */
+async function updatePromptInspectionSnapshotCacheUsage(key, cacheUsage) {
+    const normalizedCacheUsage = normalizePromptCacheUsage(cacheUsage?.cachedInputTokens);
+    if (!parsePromptSnapshotKey(key) || !normalizedCacheUsage) {
         return false;
     }
 
-    const rekeyedSnapshot = clonePromptInspectionSnapshot(snapshot);
-    if (rekeyedSnapshot) {
-        rekeyedSnapshot.key = toKey;
-        rekeyedSnapshot.username = parsedToKey.username;
-        rekeyedSnapshot.chatScope = parsedToKey.chatScope;
-        rekeyedSnapshot.mesId = parsedToKey.mesId;
-        rekeyedSnapshot.swipeId = parsedToKey.swipeId;
-    }
+    try {
+        return await withPromptInspectionSnapshotLocks([key], async () => {
+            const snapshot = await readPromptInspectionSnapshotForKey(key);
+            if (!snapshot) {
+                return false;
+            }
 
-    await writePromptInspectionSnapshotForKey(toKey, rekeyedSnapshot);
-    await deletePromptInspectionSnapshot(fromKey);
-    return true;
+            snapshot.cacheUsage = normalizedCacheUsage;
+            await writePromptInspectionSnapshotForKey(key, snapshot);
+            return true;
+        });
+    } catch (error) {
+        console.warn('Failed to update prompt inspection cache usage.', { code: error?.code });
+        return false;
+    }
 }
 
 function isPromptSnapshotAuthorizedForRequest(request, key) {
@@ -2900,6 +2968,7 @@ function sanitizePromptInspectionSnapshotForResponse(snapshot, user) {
         worldInfoReport,
         itemization: structuredClone(assembly?.itemization || snapshot.itemization || null),
         dispatchMetadata: structuredClone(snapshot.dispatchMetadata || null),
+        cacheUsage: normalizePromptCacheUsage(snapshot.cacheUsage?.cachedInputTokens),
     };
 }
 
@@ -3069,17 +3138,22 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
 
     const decoder = new TextDecoder();
     let buffer = '';
+    let cacheUsage = null;
+    let streamCompleted = false;
+    let responseClosed = false;
 
     const flushEventBlock = (eventBlock) => {
         if (!eventBlock || to.writableEnded) {
             return;
         }
 
+        cacheUsage = extractPromptCacheUsageFromSseEvent(eventBlock) || cacheUsage;
         to.write(`${eventBlock}\n\n`);
         to.flush?.();
     };
 
     const onSocketClose = function () {
+        responseClosed = true;
         stopStreamHeartbeat(heartbeat);
         from.body.once?.('error', () => {});
         from.body.destroy?.();
@@ -3109,12 +3183,16 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
             flushEventBlock(buffer);
         }
 
+        streamCompleted = !responseClosed;
         console.info('Streaming request finished');
     } catch (error) {
         console.error('Streaming request failed', error);
     } finally {
         stopStreamHeartbeat(heartbeat);
         removeEmitterListener(responseSocket, 'close', onSocketClose);
+        if (streamCompleted && promptSnapshotKey && cacheUsage) {
+            await updatePromptInspectionSnapshotCacheUsage(promptSnapshotKey, cacheUsage);
+        }
         if (!to.writableEnded) {
             to.end();
         }
@@ -4086,6 +4164,10 @@ export async function handleChatCompletionsGenerate(request, response) {
         'n': request.body.n,
         ...bodyParams,
     };
+
+    if (request.body.stream && request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENAI && !request.body.reverse_proxy) {
+        requestBody.stream_options = { include_usage: true };
+    }
 
     if ([CHAT_COMPLETION_SOURCES.CUSTOM, CHAT_COMPLETION_SOURCES.ZANITY].includes(request.body.chat_completion_source)) {
         excludeKeysByYaml(requestBody, request.body.custom_exclude_body);

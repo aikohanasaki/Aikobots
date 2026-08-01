@@ -7,10 +7,12 @@ import {
 } from '../../public/scripts/stmb-summary.js';
 import {
     applyRegenerationReplacement,
+    buildSidePromptRegenerationSnapshot,
     buildRegenerationIndexes,
     getRegenerationEligibility,
     getRegenerationSequenceNumber,
     hashRegenerationEntry,
+    getSidePromptRegenerationSnapshot,
     selectPreviousRegenerationMemories,
 } from '../../public/scripts/stmb-regeneration.js';
 import { applyStloCharacterFilters } from '../../public/scripts/stlo-utils.js';
@@ -29,6 +31,107 @@ function memory(uid, number, overrides = {}) {
 }
 
 describe('STMB regeneration eligibility and replacement', () => {
+    it('stores and validates the exact side-prompt regeneration inputs', () => {
+        const runtimeMacros = { npc: 'Alice', score: 4 };
+        const snapshot = buildSidePromptRegenerationSnapshot({
+            templateKey: 'relationship-tracker',
+            priorContent: 'Previous output',
+            compiledScene: {
+                metadata: {
+                    sceneStart: 12,
+                    sceneEnd: 19,
+                    sceneStartUuid: '11111111-1111-4111-8111-111111111111',
+                    sceneEndUuid: '22222222-2222-4222-8222-222222222222',
+                    chatId: 'chat-1',
+                },
+            },
+            runtimeMacros,
+        });
+        const entry = {
+            uid: 8,
+            comment: 'Relationships (STMB SidePrompt)',
+            content: 'Current output',
+            key: ['relationship'],
+            STMB_sidePromptRegeneration: snapshot,
+        };
+
+        expect(getSidePromptRegenerationSnapshot(entry)).toBe(snapshot);
+        expect(getRegenerationEligibility(entry, { entries: { 8: entry } })).toMatchObject({
+            eligible: true,
+            kind: 'sidePrompt',
+            sceneStart: 12,
+            sceneEnd: 19,
+        });
+        expect(snapshot.runtimeMacros).toEqual({ npc: 'Alice', score: '4' });
+        runtimeMacros.npc = 'Changed';
+        expect(snapshot.runtimeMacros.npc).toBe('Alice');
+    });
+
+    it('rejects malformed side-prompt snapshots and replaces only approved content', () => {
+        const entry = {
+            uid: 8,
+            comment: 'Relationships (STMB SidePrompt)',
+            content: 'Current output',
+            key: ['relationship'],
+            order: 222,
+            STMB_sidePromptRegeneration: {
+                version: 1,
+                templateKey: 'relationship-tracker',
+                priorContent: 'Previous output',
+                sceneStart: 12,
+                sceneEnd: 19,
+                sceneStartUuid: '11111111-1111-4111-8111-111111111111',
+                sceneEndUuid: '22222222-2222-4222-8222-222222222222',
+                chatId: 'chat-1',
+                runtimeMacros: {},
+            },
+        };
+        const snapshot = entry.STMB_sidePromptRegeneration;
+        applyRegenerationReplacement(entry, {
+            title: 'Do not replace',
+            content: 'Regenerated output',
+            keywords: ['do-not-replace'],
+        }, { contentOnly: true });
+
+        expect(entry).toMatchObject({
+            comment: 'Relationships (STMB SidePrompt)',
+            content: 'Regenerated output',
+            key: ['relationship'],
+            order: 222,
+            STMB_sidePromptRegeneration: snapshot,
+        });
+        entry.STMB_sidePromptRegeneration.sceneEndUuid = 'invalid';
+        expect(getSidePromptRegenerationSnapshot(entry)).toBeNull();
+        expect(getRegenerationEligibility(entry, { entries: { 8: entry } }).reason).toBe('invalid-sideprompt-snapshot');
+    });
+
+    it('rotates one saved prior version only on a normal side-prompt run', () => {
+        const compiledScene = {
+            metadata: {
+                sceneStart: 20,
+                sceneEnd: 25,
+                sceneStartUuid: '33333333-3333-4333-8333-333333333333',
+                sceneEndUuid: '44444444-4444-4444-8444-444444444444',
+                chatId: 'chat-1',
+            },
+        };
+        const first = buildSidePromptRegenerationSnapshot({
+            templateKey: 'tracker',
+            priorContent: 'Version one',
+            compiledScene,
+        });
+        const second = buildSidePromptRegenerationSnapshot({
+            templateKey: 'tracker',
+            priorContent: 'Version two',
+            compiledScene,
+        });
+
+        expect(first.version).toBe(1);
+        expect(first.priorContent).toBe('Version one');
+        expect(second).toMatchObject({ version: 1, priorContent: 'Version two' });
+        expect(first.priorContent).toBe('Version one');
+    });
+
     it('requires a recoverable range and sequence and selects only preceding context', () => {
         const data = { entries: { 1: memory(1, 1), 2: memory(2, 2), 3: memory(3, 3) } };
         expect(getRegenerationEligibility(data.entries[2], data)).toMatchObject({

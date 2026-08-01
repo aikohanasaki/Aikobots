@@ -13,6 +13,7 @@ import { getContext } from './extensions.js';
 import { groups, selected_group } from './group-chats.js';
 import { compileScene, getStmbCharacterFilterName } from './stmb-core.js';
 import { captureStmbScene, getStmbChatRangeInfo } from './stmb-api.js';
+import { AIKOBOTS_MESSAGE_UUID_KEY, isValidAikobotsUuid } from './chat-identities.js';
 
 const suppressedPassiveFlushCounts = new Map();
 
@@ -274,6 +275,12 @@ function buildLocalCompiledScene(range, { skipSystemMessages = true, allowPartia
         skipSystemMessages,
         groupParticipants: resolvedSceneContext?.groupParticipants,
     });
+    const sceneStartUuid = chat[requestedStart]?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    const sceneEndUuid = chat[requestedEnd]?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    if (isValidAikobotsUuid(sceneStartUuid) && isValidAikobotsUuid(sceneEndUuid)) {
+        compiledScene.metadata.sceneStartUuid = sceneStartUuid;
+        compiledScene.metadata.sceneEndUuid = sceneEndUuid;
+    }
 
     return {
         ok: true,
@@ -335,15 +342,24 @@ export async function captureStmbSceneRange(range, options = {}) {
         skipSystemMessages = true,
         allowPartial = false,
         sceneContext: sceneContextOverride = null,
+        sceneStartUuid = '',
+        sceneEndUuid = '',
     } = options;
     const sceneContext = sceneContextOverride || buildStmbSceneContext();
-    const canUseLocalRange = canUseLocalRangeShortcut(Number(range?.sceneStart), Number(range?.sceneEnd), sceneContext);
+    const hasUuidRange = Boolean(sceneStartUuid || sceneEndUuid);
+    const canUseLocalRange = !hasUuidRange && canUseLocalRangeShortcut(Number(range?.sceneStart), Number(range?.sceneEnd), sceneContext);
     if (saveFirst !== true && canUseLocalRange && allowPartial !== true) {
-        return buildLocalCompiledScene(range, {
+        const localCapture = buildLocalCompiledScene(range, {
             skipSystemMessages,
             allowPartial,
             sceneContext,
         });
+        if (
+            isValidAikobotsUuid(localCapture?.compiledScene?.metadata?.sceneStartUuid)
+            && isValidAikobotsUuid(localCapture?.compiledScene?.metadata?.sceneEndUuid)
+        ) {
+            return localCapture;
+        }
     }
     const shouldSaveFirst = isCurrentSceneContext(sceneContext) && !canUseLocalRange
         ? true
@@ -354,6 +370,8 @@ export async function captureStmbSceneRange(range, options = {}) {
         ...sceneContext,
         sceneStart: Number(range?.sceneStart),
         sceneEnd: Number(range?.sceneEnd),
+        sceneStartUuid,
+        sceneEndUuid,
         skipSystemMessages,
         allowPartial,
     }, { signal });

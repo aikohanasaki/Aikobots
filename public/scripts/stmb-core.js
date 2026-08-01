@@ -582,6 +582,7 @@ export function createDefaultStmbSettings() {
             lorebookNameTemplate: 'LTM - {{char}} - {{chat}}',
             lorebookOrderDefaults: null,
             showFloatingClipButton: true,
+            copyMemoryBooksWithChatCopies: true,
             memoryBoundaryMode: STMB_MEMORY_BOUNDARY_MODES.BOTH,
             memoryBoundaryButtonPosition: null,
             chatEndButtonPosition: null,
@@ -912,6 +913,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         ? moduleSettings.defaultGroupSidePromptSetKey.trim()
         : defaults.moduleSettings.defaultGroupSidePromptSetKey;
     moduleSettings.showFloatingClipButton = moduleSettings.showFloatingClipButton !== false;
+    moduleSettings.copyMemoryBooksWithChatCopies = moduleSettings.copyMemoryBooksWithChatCopies !== false;
     moduleSettings.memoryBoundaryMode = normalizeStmbMemoryBoundaryMode(moduleSettings.memoryBoundaryMode);
     moduleSettings.memoryBoundaryButtonPosition = normalizeStmbMemoryBoundaryButtonPosition(moduleSettings.memoryBoundaryButtonPosition);
     moduleSettings.chatEndButtonPosition = normalizeStmbMemoryBoundaryButtonPosition(moduleSettings.chatEndButtonPosition);
@@ -2516,6 +2518,10 @@ export function createManagedLorebookEntryData(memoryObject, context, profile, s
     if (Number.isInteger(context?.sceneStart) && Number.isInteger(context?.sceneEnd)) {
         entry.STMB_start = context.sceneStart;
         entry.STMB_end = context.sceneEnd;
+        if (typeof context?.sceneStartUuid === 'string' && typeof context?.sceneEndUuid === 'string') {
+            entry.STMB_startUuid = context.sceneStartUuid;
+            entry.STMB_endUuid = context.sceneEndUuid;
+        }
     }
 
     const characterFilterNames = normalizeStmbCharacterFilterNames(

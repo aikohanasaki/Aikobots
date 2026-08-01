@@ -19,7 +19,7 @@ import {
     waitUntilCondition,
     uuidv4,
 } from './utils.js';
-import { ensureMessageIdentity, ensureSwipeIdentities, normalizeChatIdentities } from './chat-identities.js';
+import { AIKOBOTS_MESSAGE_UUID_KEY, AIKOBOTS_SWIPE_UUID_KEY, ensureMessageIdentity, ensureSwipeIdentities, normalizeChatIdentities } from './chat-identities.js';
 import { RA_CountCharTokens, humanizedDateTime, dragElement, favsToHotswap, getMessageTimeStamp } from './RossAscends-mods.js';
 import { LONG_CHAT_DISPLAY_MIN, power_user, loadMovingUIState, sortEntitiesList } from './power-user.js';
 import { debounce_timeout } from './constants.js';
@@ -2700,11 +2700,19 @@ export async function importGroupChat(formData, { refresh = true, groupId = sele
     return [];
 }
 
-export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, { messageOverride = null, skipSourceSave = false, replaceTarget = false } = {}) {
+export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, {
+    messageOverride = null,
+    skipSourceSave = false,
+    replaceTarget = false,
+    copyKind = '',
+    copyMemoryBooks = false,
+    swipeId = null,
+    operationId = uuidv4(),
+} = {}) {
     const group = groups.find(x => x.id === groupId);
 
     if (!group) {
-        return false;
+        return { ok: false, error: 'group_not_found' };
     }
 
     const bookmarkMetadata = cloneGroupChatMetadata({
@@ -2716,14 +2724,14 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, { me
     const targetEndId = Number(mesId);
     if (!sourceChatId || !Number.isInteger(targetEndId) || targetEndId < 0) {
         toastr.warning(t`Invalid message ID.`, t`Create Checkpoint`);
-        return false;
+        return { ok: false, error: 'invalid_message_id' };
     }
 
     if (!skipSourceSave) {
         const saveResult = await saveChatConditional();
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
             toastr.warning(t`Could not save the current group chat before creating a checkpoint.`, t`Create Checkpoint`);
-            return false;
+            return { ok: false, error: 'source_chat_save_failed' };
         }
     }
 
@@ -2737,6 +2745,20 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, { me
         save_session_id: getChatSaveSessionId(),
     };
 
+    if (copyKind) {
+        const sourceMessage = chat[targetEndId];
+        const selectedSwipeId = swipeId === null ? Number(sourceMessage?.swipe_id) : Number(swipeId);
+        body.copy_kind = copyKind;
+        body.copy_memory_books = copyMemoryBooks === true;
+        body.selected_message_uuid = sourceMessage?.[AIKOBOTS_MESSAGE_UUID_KEY] || undefined;
+        body.selected_swipe_uuid = Number.isInteger(selectedSwipeId)
+            ? sourceMessage?.swipe_info?.[selectedSwipeId]?.[AIKOBOTS_SWIPE_UUID_KEY]
+            : undefined;
+        body.base_revision = getChatSaveRevision();
+        body.operation_id = operationId;
+        body.replace_target = false;
+    }
+
     if (messageOverride) {
         body.message_override = structuredClone(messageOverride);
     }
@@ -2748,16 +2770,16 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, { me
     });
 
     if (!response.ok) {
-        toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be saved`);
-        console.error('Group chat could not be saved', response);
-        return false;
+        const errorData = await response.json().catch(() => ({}));
+        return { ok: false, ...errorData };
     }
 
     if (!group.chats.includes(name)) {
         group.chats.push(name);
     }
     await editGroup(groupId, true, false);
-    return true;
+    const result = await response.json().catch(() => ({}));
+    return { ok: true, ...result };
 }
 
 function onSendTextareaInput() {

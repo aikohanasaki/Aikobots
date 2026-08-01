@@ -167,6 +167,16 @@
         </div>
     </div>
 </div>
+{{#if hasCacheUsage}}
+<hr>
+<div class="wide100p flex-container flexFlowColumns">
+    <div class="wide100p"><strong data-i18n="Prompt Cache">Prompt Cache</strong></div>
+    <div class="flex-container wide100p">
+        <div class="flex1"><span data-i18n="Cached Tokens:">Cached Tokens:</span></div>
+        <div>{{cachedInputTokens}}</div>
+    </div>
+</div>
+{{/if}}
 {{#if hasWorldInfoEntries}}
 <hr>
 <div class="wide100p flex-container flexFlowColumns flexNoGap">

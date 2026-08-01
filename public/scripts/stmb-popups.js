@@ -52,14 +52,25 @@ export async function showRegenerationReviewPopup({
     generatedKeywords,
     formatTitle,
     linkedLorebooks = [],
+    contentOnly = false,
 } = {}) {
     const initialFinalTitle = formatTitle?.(generatedTitle) || String(generatedTitle || '').trim();
     const linkedWarning = linkedLorebooks.length > 0
         ? `<div class="stmb-regeneration-linked-warning"><strong data-i18n="Linked group copies are not modified.">Linked group copies are not modified.</strong> <span data-i18n="Only this entry will be replaced. Linked books:">Only this entry will be replaced. Linked books:</span> ${escapeHtml(linkedLorebooks.join(', '))}</div>`
         : '';
+    const editableIdentityFields = contentOnly ? '' : `
+                    <label for="stmb-regeneration-title" data-i18n="Semantic title">Semantic title</label>
+                    <input id="stmb-regeneration-title" class="text_pole" value="${escapeHtml(String(generatedTitle || ''))}">
+                    <label for="stmb-regeneration-final-title" data-i18n="Final formatted title">Final formatted title</label>
+                    <input id="stmb-regeneration-final-title" class="text_pole" value="${escapeHtml(initialFinalTitle)}" readonly>`;
+    const editableKeywords = contentOnly ? '' : `
+                    <label for="stmb-regeneration-keywords" data-i18n="Keywords">Keywords</label>
+                    <input id="stmb-regeneration-keywords" class="text_pole" value="${escapeHtml(keywordsToString(generatedKeywords))}">`;
+    const reviewHeadingKey = contentOnly ? 'Review regenerated side prompt' : 'Review regenerated memory';
+    const reviewHeading = translate(reviewHeadingKey);
     const popup = new Popup(DOMPurify.sanitize(`
         <div class="stmb-regeneration-review">
-            <h3 data-i18n="Review regenerated memory">Review regenerated memory</h3>
+            <h3 data-i18n="${reviewHeadingKey}">${reviewHeading}</h3>
             <p data-i18n="Approval is required before anything is overwritten.">Approval is required before anything is overwritten.</p>
             ${linkedWarning}
             <div class="stmb-regeneration-columns">
@@ -74,14 +85,10 @@ export async function showRegenerationReviewPopup({
                 </section>
                 <section class="stmb-regeneration-column">
                     <h4 data-i18n="After">After</h4>
-                    <label for="stmb-regeneration-title" data-i18n="Semantic title">Semantic title</label>
-                    <input id="stmb-regeneration-title" class="text_pole" value="${escapeHtml(String(generatedTitle || ''))}">
-                    <label for="stmb-regeneration-final-title" data-i18n="Final formatted title">Final formatted title</label>
-                    <input id="stmb-regeneration-final-title" class="text_pole" value="${escapeHtml(initialFinalTitle)}" readonly>
+                    ${editableIdentityFields}
                     <label for="stmb-regeneration-content" data-i18n="Content">Content</label>
                     <textarea id="stmb-regeneration-content" class="text_pole stmb-regeneration-content">${escapeHtml(String(generatedContent || ''))}</textarea>
-                    <label for="stmb-regeneration-keywords" data-i18n="Keywords">Keywords</label>
-                    <input id="stmb-regeneration-keywords" class="text_pole" value="${escapeHtml(keywordsToString(generatedKeywords))}">
+                    ${editableKeywords}
                 </section>
             </div>
         </div>
@@ -101,7 +108,9 @@ export async function showRegenerationReviewPopup({
     if (await popup.show() !== POPUP_RESULT.AFFIRMATIVE) {
         return { action: 'cancel' };
     }
-    const title = String(finalTitleInput?.value || '').trim();
+    const title = contentOnly
+        ? String(originalEntry?.comment || '').trim()
+        : String(finalTitleInput?.value || '').trim();
     const content = String(popup.dlg?.querySelector('#stmb-regeneration-content')?.value || '').trim();
     if (!title || !content) {
         toastr.error(translate('Title and content are required.'), 'STMB');
@@ -111,7 +120,9 @@ export async function showRegenerationReviewPopup({
         action: 'replace',
         title,
         content,
-        keywords: parseKeywords(popup.dlg?.querySelector('#stmb-regeneration-keywords')?.value),
+        keywords: contentOnly
+            ? (Array.isArray(originalEntry?.key) ? [...originalEntry.key] : [])
+            : parseKeywords(popup.dlg?.querySelector('#stmb-regeneration-keywords')?.value),
     };
 }
 

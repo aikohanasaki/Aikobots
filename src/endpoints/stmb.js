@@ -3,6 +3,7 @@ import { resolveSqliteLogicalChatReference } from './chats.js';
 import { stableHashString } from '../../public/scripts/hashing.js';
 import { applyStloCharacterFilters } from '../../public/scripts/stlo-utils.js';
 import { withChatSaveLock } from '../chat-storage.js';
+import { AIKOBOTS_MESSAGE_UUID_KEY, isValidAikobotsUuid } from '../../public/scripts/chat-identities.js';
 
 import {
     applyLorebookSettings,
@@ -172,6 +173,8 @@ function normalizeSceneEndpointRequest(body = {}) {
         chatRef: body.chatRef,
         sceneStart,
         sceneEnd,
+        sceneStartUuid: String(body.sceneStartUuid || '').trim(),
+        sceneEndUuid: String(body.sceneEndUuid || '').trim(),
         skipSystemMessages: body.skipSystemMessages !== false,
         allowPartial: Boolean(body.allowPartial),
         chatId: String(body.chatId || ''),
@@ -260,22 +263,67 @@ async function resolveStmbChatStateForRange(request, chatRef, rangeStart = null,
     });
 }
 
+/** Resolves and loads a stable UUID-bounded SQLite chat range. */
+async function resolveStmbChatStateForUuidRange(request, chatRef, rangeStartUuid, rangeEndUuid) {
+    return resolveSqliteLogicalChatReference(request.user.directories, chatRef, {
+        rangeStartUuid,
+        rangeEndUuid,
+        includeMessages: true,
+    });
+}
+
+/** Adds stable UUID boundaries from the authoritative SQLite scene range. */
+async function addAuthoritativeSceneBoundaryUuids(request, sceneContext, chatRef) {
+    const sceneStart = Number(sceneContext?.sceneStart);
+    const sceneEnd = Number(sceneContext?.sceneEnd);
+    if (!Number.isInteger(sceneStart) || !Number.isInteger(sceneEnd) || sceneStart < 0 || sceneEnd < sceneStart || !chatRef) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'A valid chat reference and scene range are required to save a memory.');
+    }
+    const chatState = await resolveStmbChatStateForRange(request, chatRef, sceneStart, sceneEnd);
+    assertSqliteChatStorageAvailable(chatState);
+    const sceneStartUuid = chatState.messages?.[sceneStart]?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    const sceneEndUuid = chatState.messages?.[sceneEnd]?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    if (!isValidAikobotsUuid(sceneStartUuid) || !isValidAikobotsUuid(sceneEndUuid)) {
+        throw createStmbRequestError(409, 'StmbMessageIdentityUnavailable', 'The scene message identities could not be resolved. Reload the chat and try again.');
+    }
+    return { ...sceneContext, sceneStartUuid, sceneEndUuid };
+}
+
 async function resolveCapturedScene(request, normalizedRequest) {
-    if (!Number.isInteger(normalizedRequest.sceneStart) || !Number.isInteger(normalizedRequest.sceneEnd)) {
+    const hasUuidRange = Boolean(normalizedRequest.sceneStartUuid || normalizedRequest.sceneEndUuid);
+    if (hasUuidRange && (!isValidAikobotsUuid(normalizedRequest.sceneStartUuid) || !isValidAikobotsUuid(normalizedRequest.sceneEndUuid))) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'sceneStartUuid and sceneEndUuid must be valid message identities.');
+    }
+    if (!hasUuidRange && (!Number.isInteger(normalizedRequest.sceneStart) || !Number.isInteger(normalizedRequest.sceneEnd))) {
         throw createStmbRequestError(400, 'StmbBadRequest', 'sceneStart and sceneEnd are required.');
     }
 
-    if (normalizedRequest.sceneStart < 0 || normalizedRequest.sceneEnd < 0 || normalizedRequest.sceneStart > normalizedRequest.sceneEnd) {
+    if (!hasUuidRange && (normalizedRequest.sceneStart < 0 || normalizedRequest.sceneEnd < 0 || normalizedRequest.sceneStart > normalizedRequest.sceneEnd)) {
         throw createStmbRequestError(400, 'StmbInvalidRange', 'Start message cannot be greater than end message.');
     }
 
-    const chatState = await resolveStmbChatStateForRange(
-        request,
-        normalizedRequest.chatRef,
-        normalizedRequest.sceneStart,
-        normalizedRequest.sceneEnd,
-    );
+    const chatState = hasUuidRange
+        ? await resolveStmbChatStateForUuidRange(
+            request,
+            normalizedRequest.chatRef,
+            normalizedRequest.sceneStartUuid,
+            normalizedRequest.sceneEndUuid,
+        )
+        : await resolveStmbChatStateForRange(
+            request,
+            normalizedRequest.chatRef,
+            normalizedRequest.sceneStart,
+            normalizedRequest.sceneEnd,
+        );
     assertSqliteChatStorageAvailable(chatState);
+    if (hasUuidRange && chatState.rangeIdentityMissing) {
+        throw createStmbRequestError(409, 'StmbMessageIdentityUnavailable', 'The original scene message identities could not be resolved.');
+    }
+    const sceneStart = hasUuidRange ? chatState.resolvedRangeStart : normalizedRequest.sceneStart;
+    const sceneEnd = hasUuidRange ? chatState.resolvedRangeEnd : normalizedRequest.sceneEnd;
+    if (!Number.isInteger(sceneStart) || !Number.isInteger(sceneEnd) || sceneStart < 0 || sceneEnd < sceneStart) {
+        throw createStmbRequestError(409, 'StmbMessageIdentityUnavailable', 'The original scene message identities no longer form a valid range.');
+    }
     const totalLogicalMessages = Number(chatState?.totalMessages) || 0;
 
     if (totalLogicalMessages === 0) {
@@ -287,14 +335,14 @@ async function resolveCapturedScene(request, normalizedRequest) {
         });
     }
 
-    if (normalizedRequest.sceneEnd >= totalLogicalMessages) {
+    if (sceneEnd >= totalLogicalMessages) {
         throw createStmbRequestError(
             400,
             'StmbRangeOutOfBounds',
             `Message IDs out of range. Valid range: 0-${Math.max(totalLogicalMessages - 1, 0)}`,
             {
-                requestedStart: normalizedRequest.sceneStart,
-                requestedEnd: normalizedRequest.sceneEnd,
+                requestedStart: sceneStart,
+                requestedEnd: sceneEnd,
                 totalLogicalMessages,
                 lastAvailableMessageId: chatState?.lastAvailableMessageId ?? -1,
                 storageMode: chatState?.storageMode,
@@ -303,18 +351,18 @@ async function resolveCapturedScene(request, normalizedRequest) {
         );
     }
 
-    const missingRanges = intersectRanges(chatState?.missingRanges, normalizedRequest.sceneStart, normalizedRequest.sceneEnd);
+    const missingRanges = intersectRanges(chatState?.missingRanges, sceneStart, sceneEnd);
     if (!normalizedRequest.allowPartial && missingRanges.length > 0) {
         const firstMissing = missingRanges[0];
         throw createStmbRequestError(
             409,
             'StmbRangeUnavailable',
-            `Cannot capture messages ${normalizedRequest.sceneStart}-${normalizedRequest.sceneEnd} because messages ${firstMissing.start}-${firstMissing.end} are unavailable in chat storage.`,
+            `Cannot capture messages ${sceneStart}-${sceneEnd} because messages ${firstMissing.start}-${firstMissing.end} are unavailable in chat storage.`,
             {
                 code: 'MISSING_CHAT_SEGMENT',
                 missingRanges,
-                requestedStart: normalizedRequest.sceneStart,
-                requestedEnd: normalizedRequest.sceneEnd,
+                requestedStart: sceneStart,
+                requestedEnd: sceneEnd,
                 totalLogicalMessages,
                 lastAvailableMessageId: chatState?.lastAvailableMessageId ?? -1,
                 storageMode: chatState?.storageMode,
@@ -326,8 +374,8 @@ async function resolveCapturedScene(request, normalizedRequest) {
     const compiledScene = compileScene(
         chatState.messages,
         {
-            sceneStart: normalizedRequest.sceneStart,
-            sceneEnd: normalizedRequest.sceneEnd,
+            sceneStart,
+            sceneEnd,
             chatId: normalizedRequest.chatId,
             characterName: normalizedRequest.characterName,
             userName: normalizedRequest.userName,
@@ -339,14 +387,23 @@ async function resolveCapturedScene(request, normalizedRequest) {
             groupParticipants: normalizedRequest.groupParticipants,
         },
     );
+    const sceneStartUuid = chatState.messages?.[sceneStart]?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    const sceneEndUuid = chatState.messages?.[sceneEnd]?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    if (!isValidAikobotsUuid(sceneStartUuid) || !isValidAikobotsUuid(sceneEndUuid)) {
+        throw createStmbRequestError(409, 'StmbMessageIdentityUnavailable', 'The scene message identities could not be resolved.');
+    }
+    compiledScene.metadata.sceneStartUuid = sceneStartUuid;
+    compiledScene.metadata.sceneEndUuid = sceneEndUuid;
 
     return {
         compiledScene,
         capture: {
-            requestedStart: normalizedRequest.sceneStart,
-            requestedEnd: normalizedRequest.sceneEnd,
-            capturedStart: compiledScene?.metadata?.sceneStart ?? normalizedRequest.sceneStart,
-            capturedEnd: compiledScene?.metadata?.sceneEnd ?? normalizedRequest.sceneEnd,
+            requestedStart: sceneStart,
+            requestedEnd: sceneEnd,
+            capturedStart: compiledScene?.metadata?.sceneStart ?? sceneStart,
+            capturedEnd: compiledScene?.metadata?.sceneEnd ?? sceneEnd,
+            sceneStartUuid,
+            sceneEndUuid,
             totalLogicalMessages,
             lastAvailableMessageId: chatState?.lastAvailableMessageId ?? -1,
             hiddenMessagesSkipped: compiledScene?.metadata?.hiddenMessagesSkipped ?? 0,
@@ -537,6 +594,7 @@ function normalizeRegenerationRequest(body, user) {
     const uid = body?.uid === undefined || body?.uid === null ? '' : String(body.uid).trim();
     const expectedTargetHash = String(body?.expectedTargetHash || '').trim().toLowerCase();
     const replacement = body?.replacement;
+    const replacementMode = String(body?.replacementMode || 'full').trim();
     if (!lorebookName || !uid || !/^[a-f0-9]{8}$/i.test(expectedTargetHash) || !replacement || typeof replacement !== 'object' || Array.isArray(replacement)) {
         throw createStmbRequestError(400, 'StmbBadRequest', 'lorebookName, uid, replacement, and expectedTargetHash are required.');
     }
@@ -546,16 +604,21 @@ function normalizeRegenerationRequest(body, user) {
     if (isReservedRecommendedTemplateSource(user?.profile?.handle, lorebookName)) {
         throw createStmbRequestError(400, 'StmbBadRequest', 'A designated blank lorebook template cannot be regenerated.');
     }
+    if (!['full', 'content-only'].includes(replacementMode)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'replacementMode must be "full" or "content-only".');
+    }
 
     const title = String(replacement.title || '').trim();
     const content = String(replacement.content || '').trim();
-    if (!title || !content || title.length > 1000 || content.length > 1_000_000) {
+    if (!content || content.length > 1_000_000 || (replacementMode === 'full' && (!title || title.length > 1000))) {
         throw createStmbRequestError(400, 'StmbBadRequest', 'replacement title and content are required and must be within size limits.');
     }
-    if (!Array.isArray(replacement.keywords) || replacement.keywords.length > 100) {
+    if (replacementMode === 'full' && (!Array.isArray(replacement.keywords) || replacement.keywords.length > 100)) {
         throw createStmbRequestError(400, 'StmbBadRequest', 'replacement keywords must be an array with no more than 100 items.');
     }
-    const keywords = replacement.keywords.map(value => String(value || '').trim()).filter(Boolean);
+    const keywords = replacementMode === 'full'
+        ? replacement.keywords.map(value => String(value || '').trim()).filter(Boolean)
+        : [];
     if (keywords.some(value => value.length > 500)) {
         throw createStmbRequestError(400, 'StmbBadRequest', 'replacement keywords must be within size limits.');
     }
@@ -584,6 +647,7 @@ function normalizeRegenerationRequest(body, user) {
         sourceUids,
         sourceHashes,
         replacement: { title, content, keywords },
+        replacementMode,
         chatRef: body?.chatRef,
         expectedChatRevision: Number.isInteger(expectedChatRevision) && expectedChatRevision >= 0 ? expectedChatRevision : null,
         currentChatId: String(body?.currentChatId || '').trim(),
@@ -618,7 +682,13 @@ function assertRegenerationEntryState(lorebookData, requestData) {
     if (!eligibility.eligible) {
         throw createStmbRequestError(409, 'StmbRegenerationEligibilityChanged', 'The memory entry is no longer eligible for regeneration.');
     }
-    if (parseSequenceFromTitle(requestData.replacement.title) !== eligibility.sequenceNumber) {
+    if (eligibility.kind === 'sidePrompt' && requestData.replacementMode !== 'content-only') {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'Side-prompt regeneration requires content-only replacement.');
+    }
+    if (eligibility.kind !== 'sidePrompt' && requestData.replacementMode !== 'full') {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'Memory regeneration requires a full replacement.');
+    }
+    if (eligibility.kind !== 'sidePrompt' && parseSequenceFromTitle(requestData.replacement.title) !== eligibility.sequenceNumber) {
         throw createStmbRequestError(400, 'StmbBadRequest', 'The replacement title must preserve the original sequence number.');
     }
 
@@ -892,10 +962,10 @@ router.post('/capture-scene', async (request, response) => {
 router.post('/save-memory', async (request, response) => {
     const lorebookContext = getLorebookContext(request);
     const memoryObject = request.body?.memoryObject;
-    const sceneContext = request.body?.sceneContext;
+    const requestedSceneContext = request.body?.sceneContext;
     const profile = request.body?.profile || {};
 
-    if (!lorebookContext || !memoryObject || !sceneContext) {
+    if (!lorebookContext || !memoryObject || !requestedSceneContext) {
         return response.status(400).send({
             error: {
                 type: 'StmbBadRequest',
@@ -905,6 +975,7 @@ router.post('/save-memory', async (request, response) => {
     }
 
     try {
+        const sceneContext = await addAuthoritativeSceneBoundaryUuids(request, requestedSceneContext, request.body?.chatRef);
         const { data: lorebookData, metadata } = await getLorebookForManagement(
             request.user,
             lorebookContext.lorebookName,
@@ -1023,7 +1094,7 @@ router.post('/sync-group-stlo', async (request, response) => {
 router.post('/save-group-memory', async (request, response) => {
     let primary;
     let targets;
-    const sceneContext = request.body?.sceneContext;
+    let sceneContext = request.body?.sceneContext;
     const profile = request.body?.profile || {};
     try {
         const rawTargets = request.body?.targets;
@@ -1054,6 +1125,7 @@ router.post('/save-group-memory', async (request, response) => {
     }
 
     try {
+        sceneContext = await addAuthoritativeSceneBoundaryUuids(request, sceneContext, request.body?.chatRef);
         const result = await withLorebookManagementTransaction(async transaction => {
             const requested = [primary, ...targets];
             const lorebooks = [];
@@ -1251,6 +1323,7 @@ router.post('/regenerate-entry', async (request, response) => {
                 applyRegenerationReplacement(target, requestData.replacement, {
                     lorebookData,
                     sourceUids: eligibility.sourceUids,
+                    contentOnly: eligibility.kind === 'sidePrompt',
                 });
                 await request.activeSessionOperation?.assertAllowed();
                 await transaction.save(request.user, metadata.name, lorebookData, 'user');
@@ -1262,13 +1335,15 @@ router.post('/regenerate-entry', async (request, response) => {
                 };
             };
 
-            if (initialState.eligibility.kind !== 'memory') {
+            if (initialState.eligibility.kind === 'consolidation') {
                 return await saveReplacement();
             }
             if (!requestData.chatRef || requestData.expectedChatRevision === null || !requestData.currentChatId) {
-                throw createStmbRequestError(400, 'StmbBadRequest', 'Base-memory regeneration requires chatRef, currentChatId, and expectedChatRevision.');
+                throw createStmbRequestError(400, 'StmbBadRequest', 'Chat-backed regeneration requires chatRef, currentChatId, and expectedChatRevision.');
             }
-            const storedChatId = String(initialState.target.STMB_chatId || '').trim();
+            const storedChatId = initialState.eligibility.kind === 'sidePrompt'
+                ? String(initialState.eligibility.snapshot?.chatId || '').trim()
+                : String(initialState.target.STMB_chatId || '').trim();
             if (storedChatId && storedChatId !== requestData.currentChatId) {
                 throw createStmbRequestError(409, 'StmbRegenerationChatChanged', 'The memory does not belong to the current chat.');
             }
@@ -1276,19 +1351,39 @@ router.post('/regenerate-entry', async (request, response) => {
             const unlockedChatState = await resolveStmbChatState(request, requestData.chatRef);
             assertSqliteChatStorageAvailable(unlockedChatState);
             return await withChatSaveLock(unlockedChatState.sqlitePath, async () => {
-                const chatState = await resolveStmbChatStateForRange(
-                    request,
-                    requestData.chatRef,
-                    initialState.eligibility.sceneStart,
-                    initialState.eligibility.sceneEnd,
-                );
+                const chatState = initialState.eligibility.kind === 'sidePrompt'
+                    ? await resolveStmbChatStateForUuidRange(
+                        request,
+                        requestData.chatRef,
+                        initialState.eligibility.snapshot.sceneStartUuid,
+                        initialState.eligibility.snapshot.sceneEndUuid,
+                    )
+                    : await resolveStmbChatStateForRange(
+                        request,
+                        requestData.chatRef,
+                        initialState.eligibility.sceneStart,
+                        initialState.eligibility.sceneEnd,
+                    );
                 assertSqliteChatStorageAvailable(chatState);
+                if (chatState.rangeIdentityMissing) {
+                    throw createStmbRequestError(409, 'StmbRegenerationChatChanged', 'The original message range is no longer available.');
+                }
+                if (initialState.eligibility.kind === 'sidePrompt' && (
+                    !Number.isInteger(chatState.resolvedRangeStart)
+                    || !Number.isInteger(chatState.resolvedRangeEnd)
+                    || chatState.resolvedRangeStart < 0
+                    || chatState.resolvedRangeEnd < chatState.resolvedRangeStart
+                )) {
+                    throw createStmbRequestError(409, 'StmbRegenerationChatChanged', 'The original message range is no longer available.');
+                }
                 const currentRevision = Math.max(0, Math.trunc(Number(chatState?.header?.chat_revision) || 0));
                 if (currentRevision !== requestData.expectedChatRevision) {
                     throw createStmbRequestError(409, 'StmbRegenerationChatChanged', 'The chat changed before regeneration could be saved.');
                 }
                 if (
-                    initialState.eligibility.sceneEnd >= Number(chatState?.totalMessages || 0) ||
+                    (initialState.eligibility.kind === 'sidePrompt'
+                        ? chatState.resolvedRangeEnd
+                        : initialState.eligibility.sceneEnd) >= Number(chatState?.totalMessages || 0) ||
                     (Array.isArray(chatState?.missingRanges) && chatState.missingRanges.length > 0)
                 ) {
                     throw createStmbRequestError(409, 'StmbRegenerationChatChanged', 'The original message range is no longer available.');

@@ -399,6 +399,8 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
 
     const snapshotAssembly = snapshot?.assembly && typeof snapshot.assembly === 'object' ? snapshot.assembly : null;
     const serverItemization = snapshot?.itemization || snapshotAssembly?.itemization || itemizedPrompt.serverAssemblyDebugDump?.assembly?.itemization;
+    const cachedInputTokens = snapshot?.cacheUsage?.cachedInputTokens;
+    const hasCacheUsage = Number.isSafeInteger(cachedInputTokens) && cachedInputTokens >= 0;
     const rawWorldInfoEntries = getPromptWorldInfoEntries(itemizedPrompt, incomingMesId, snapshot);
     const params = {
         charDescriptionTokens: serverItemization ? toNumber(serverItemization.charDescriptionTokens) : await getTokenCountAsync(itemizedPrompt.charDescription),
@@ -424,6 +426,8 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         presetName: itemizedPrompt.presetName || t`(Unknown)`,
         messagesCount: String(snapshotAssembly?.messagesCount ?? itemizedPrompt.messagesCount ?? ''),
         examplesCount: String(snapshotAssembly?.examplesCount ?? itemizedPrompt.examplesCount ?? ''),
+        hasCacheUsage,
+        cachedInputTokens: hasCacheUsage ? cachedInputTokens : 0,
         worldInfoEntries: [],
     };
     const allWorldInfoEntries = rawWorldInfoEntries.map(entry => {

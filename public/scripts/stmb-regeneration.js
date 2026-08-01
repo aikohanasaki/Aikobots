@@ -1,6 +1,63 @@
 import { stableHashString } from './hashing.js';
+import { isValidAikobotsUuid } from './chat-identities.js';
 import { parseSequenceFromTitle, STMB_MANAGED_FLAG } from './stmb-core.js';
 import { getEntrySummaryTier } from './stmb-summary.js';
+
+export const SIDE_PROMPT_REGENERATION_METADATA_KEY = 'STMB_sidePromptRegeneration';
+export const SIDE_PROMPT_REGENERATION_SNAPSHOT_VERSION = 1;
+
+const SIDE_PROMPT_TITLE_SUFFIXES = [
+    ' (STMB SidePrompt)',
+    ' (STMB Plotpoints)',
+    ' (STMB Scoreboard)',
+    ' (STMB Tracker)',
+];
+
+/** Returns whether an entry title belongs to a side-prompt output. */
+export function isSidePromptRegenerationEntry(entry) {
+    const title = String(entry?.comment || entry?.title || '').trimEnd();
+    return SIDE_PROMPT_TITLE_SUFFIXES.some(suffix => title.endsWith(suffix));
+}
+
+/** Captures the compact inputs needed to repeat one side-prompt run. */
+export function buildSidePromptRegenerationSnapshot({
+    templateKey,
+    priorContent = '',
+    compiledScene,
+    runtimeMacros = {},
+} = {}) {
+    const metadata = compiledScene?.metadata || {};
+    return {
+        version: SIDE_PROMPT_REGENERATION_SNAPSHOT_VERSION,
+        templateKey: String(templateKey || '').trim(),
+        priorContent: String(priorContent || ''),
+        sceneStart: Number(metadata.sceneStart),
+        sceneEnd: Number(metadata.sceneEnd),
+        sceneStartUuid: String(metadata.sceneStartUuid || ''),
+        sceneEndUuid: String(metadata.sceneEndUuid || ''),
+        chatId: String(metadata.chatId || ''),
+        runtimeMacros: Object.fromEntries(
+            Object.entries(runtimeMacros || {}).map(([key, value]) => [String(key), String(value ?? '')]),
+        ),
+    };
+}
+
+/** Returns a valid persisted side-prompt run snapshot, or null. */
+export function getSidePromptRegenerationSnapshot(entry) {
+    const snapshot = entry?.[SIDE_PROMPT_REGENERATION_METADATA_KEY];
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+    if (snapshot.version !== SIDE_PROMPT_REGENERATION_SNAPSHOT_VERSION) return null;
+    if (typeof snapshot.templateKey !== 'string' || !snapshot.templateKey.trim()) return null;
+    if (typeof snapshot.priorContent !== 'string' || snapshot.priorContent.length > 1_000_000) return null;
+    if (!Number.isInteger(snapshot.sceneStart) || snapshot.sceneStart < 0) return null;
+    if (!Number.isInteger(snapshot.sceneEnd) || snapshot.sceneEnd < snapshot.sceneStart) return null;
+    if (!isValidAikobotsUuid(snapshot.sceneStartUuid) || !isValidAikobotsUuid(snapshot.sceneEndUuid)) return null;
+    if (typeof snapshot.chatId !== 'string' || !snapshot.chatId.trim()) return null;
+    if (!snapshot.runtimeMacros || typeof snapshot.runtimeMacros !== 'object' || Array.isArray(snapshot.runtimeMacros)) return null;
+    const macroEntries = Object.entries(snapshot.runtimeMacros);
+    if (macroEntries.length > 100 || macroEntries.some(([key, value]) => key.length > 500 || typeof value !== 'string' || value.length > 10_000)) return null;
+    return snapshot;
+}
 
 /** Returns a stable string UID for a lorebook entry. */
 export function getRegenerationEntryUid(entry) {
@@ -86,6 +143,19 @@ export function getRegenerationSourceUids(entry, indexes) {
 
 /** Determines whether an entry can be safely regenerated from recoverable inputs. */
 export function getRegenerationEligibility(entry, lorebookData, indexes = null) {
+    if (entry && Object.hasOwn(entry, SIDE_PROMPT_REGENERATION_METADATA_KEY)) {
+        const snapshot = getSidePromptRegenerationSnapshot(entry);
+        if (!snapshot || !isSidePromptRegenerationEntry(entry)) {
+            return { eligible: false, reason: 'invalid-sideprompt-snapshot' };
+        }
+        return {
+            eligible: true,
+            kind: 'sidePrompt',
+            sceneStart: snapshot.sceneStart,
+            sceneEnd: snapshot.sceneEnd,
+            snapshot,
+        };
+    }
     if (!entry || entry[STMB_MANAGED_FLAG] !== true) {
         return { eligible: false, reason: 'not-memory' };
     }
@@ -179,6 +249,10 @@ export function hashRegenerationEntry(entry) {
 
 /** Applies an approved replacement while preserving the entry identity and unrelated metadata. */
 export function applyRegenerationReplacement(entry, replacement, options = {}) {
+    if (options.contentOnly === true) {
+        entry.content = String(replacement?.content || '').trim();
+        return entry;
+    }
     entry.comment = String(replacement?.title || '').trim();
     entry.content = String(replacement?.content || '').trim();
     entry.key = Array.isArray(replacement?.keywords)

@@ -5,6 +5,8 @@ const transactionSave = jest.fn();
 const resolveSqliteLogicalChatReference = jest.fn();
 const withChatSaveLock = jest.fn(async (_path, callback) => await callback());
 const isReservedRecommendedTemplateSource = jest.fn(() => false);
+const START_UUID = '11111111-1111-4111-8111-111111111111';
+const END_UUID = '22222222-2222-4222-8222-222222222222';
 
 class MockLorebookRepositoryError extends Error {
     constructor(type, message, status = 400) {
@@ -72,6 +74,9 @@ beforeEach(() => {
         totalMessages: 40,
         missingRanges: [],
         messages: [],
+        resolvedRangeStart: 10,
+        resolvedRangeEnd: 20,
+        rangeIdentityMissing: false,
     });
     withChatSaveLock.mockClear();
     isReservedRecommendedTemplateSource.mockClear();
@@ -103,6 +108,28 @@ function baseEntry(overrides = {}) {
         STMB_end: 20,
         STMB_chatId: 'chat-1',
         order: 12,
+        ...overrides,
+    };
+}
+
+function sidePromptEntry(overrides = {}) {
+    return {
+        uid: 8,
+        comment: 'Relationships (STMB SidePrompt)',
+        content: 'Current output',
+        key: ['relationship'],
+        order: 222,
+        STMB_sidePromptRegeneration: {
+            version: 1,
+            templateKey: 'relationship-tracker',
+            priorContent: 'Previous output',
+            sceneStart: 10,
+            sceneEnd: 20,
+            sceneStartUuid: START_UUID,
+            sceneEndUuid: END_UUID,
+            chatId: 'chat-1',
+            runtimeMacros: { npc: 'Alice' },
+        },
         ...overrides,
     };
 }
@@ -144,7 +171,12 @@ describe('STMB regeneration route', () => {
             totalMessages: 102,
             lastAvailableMessageId: 101,
             messages: Array.from({ length: 102 }, (_value, index) => index >= 100
-                ? { name: 'Alice', mes: `Server row ${index}`, is_system: false }
+                ? {
+                    name: 'Alice',
+                    mes: `Server row ${index}`,
+                    is_system: false,
+                    aikobots_message_uuid: index === 100 ? START_UUID : END_UUID,
+                }
                 : undefined),
             missingRanges: [],
             storageMode: 'sqlite',
@@ -170,6 +202,8 @@ describe('STMB regeneration route', () => {
             requestedEnd: 101,
             chatRevision: 11,
             storageMode: 'sqlite',
+            sceneStartUuid: START_UUID,
+            sceneEndUuid: END_UUID,
         });
         expect(res.payload.compiledScene.messages).toHaveLength(2);
     });
@@ -194,6 +228,114 @@ describe('STMB regeneration route', () => {
             order: 12,
         });
         expect(JSON.stringify(res.payload)).not.toContain('New content');
+    });
+
+    it('atomically replaces only side-prompt content using its UUID range', async () => {
+        const entry = sidePromptEntry();
+        loadBook({ 8: entry });
+        const request = requestFor(entry, {
+            replacementMode: 'content-only',
+            replacement: { content: 'Regenerated output' },
+        });
+        const res = response();
+
+        await handler(request, res);
+
+        expect(res.payload).toEqual({ ok: true, lorebookName: 'Book', storage: 'user', uid: 8 });
+        expect(resolveSqliteLogicalChatReference).toHaveBeenCalledWith(undefined, request.body.chatRef, expect.objectContaining({
+            rangeStartUuid: START_UUID,
+            rangeEndUuid: END_UUID,
+            includeMessages: true,
+        }));
+        const savedEntry = transactionSave.mock.calls[0][2].entries[8];
+        expect(savedEntry).toMatchObject({
+            comment: entry.comment,
+            content: 'Regenerated output',
+            key: entry.key,
+            order: entry.order,
+            STMB_sidePromptRegeneration: entry.STMB_sidePromptRegeneration,
+        });
+        expect(JSON.stringify(res.payload)).not.toContain('Regenerated output');
+    });
+
+    it('rejects side-prompt identity loss and full replacement without mutation', async () => {
+        const entry = sidePromptEntry();
+        loadBook({ 8: entry });
+        resolveSqliteLogicalChatReference
+            .mockResolvedValueOnce({
+                sqlitePath: 'chat.sqlite',
+                header: { chat_revision: 7 },
+                sqliteMissing: false,
+            })
+            .mockResolvedValueOnce({
+                sqlitePath: 'chat.sqlite',
+                header: { chat_revision: 7 },
+                sqliteMissing: false,
+                totalMessages: 40,
+                missingRanges: [],
+                messages: [],
+                rangeIdentityMissing: true,
+            });
+        const missingRangeResponse = response();
+        await handler(requestFor(entry, {
+            replacementMode: 'content-only',
+            replacement: { content: 'Regenerated output' },
+        }), missingRangeResponse);
+        expect(missingRangeResponse.statusCode).toBe(409);
+        expect(transactionSave).not.toHaveBeenCalled();
+
+        loadBook({ 8: entry });
+        const fullResponse = response();
+        await handler(requestFor(entry), fullResponse);
+        expect(fullResponse.statusCode).toBe(400);
+        expect(transactionSave).not.toHaveBeenCalled();
+    });
+
+    it('rejects reversed side-prompt UUID boundaries without mutation', async () => {
+        const entry = sidePromptEntry();
+        loadBook({ 8: entry });
+        resolveSqliteLogicalChatReference
+            .mockResolvedValueOnce({
+                sqlitePath: 'chat.sqlite',
+                header: { chat_revision: 7 },
+                sqliteMissing: false,
+            })
+            .mockResolvedValueOnce({
+                sqlitePath: 'chat.sqlite',
+                header: { chat_revision: 7 },
+                sqliteMissing: false,
+                totalMessages: 40,
+                missingRanges: [],
+                messages: [],
+                resolvedRangeStart: 20,
+                resolvedRangeEnd: 10,
+                rangeIdentityMissing: false,
+            });
+        const res = response();
+
+        await handler(requestFor(entry, {
+            replacementMode: 'content-only',
+            replacement: { content: 'Regenerated output' },
+        }), res);
+
+        expect(res.statusCode).toBe(409);
+        expect(transactionSave).not.toHaveBeenCalled();
+    });
+
+    it('rejects a side-prompt snapshot from another chat without mutation', async () => {
+        const entry = sidePromptEntry();
+        loadBook({ 8: entry });
+        const res = response();
+
+        await handler(requestFor(entry, {
+            replacementMode: 'content-only',
+            replacement: { content: 'Regenerated output' },
+            currentChatId: 'chat-2',
+        }), res);
+
+        expect(res.statusCode).toBe(409);
+        expect(withChatSaveLock).not.toHaveBeenCalled();
+        expect(transactionSave).not.toHaveBeenCalled();
     });
 
     it('accepts uppercase target and source hashes', async () => {
@@ -307,9 +449,11 @@ describe('STMB regeneration route', () => {
         req.activeSessionOperation.assertAllowed.mockRejectedValue(new Error('sensitive internal state'));
         const res = response();
         const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        let loggedText = '';
         try {
             await handler(req, res);
         } finally {
+            loggedText = JSON.stringify(consoleSpy.mock.calls);
             consoleSpy.mockRestore();
         }
 
@@ -322,5 +466,6 @@ describe('STMB regeneration route', () => {
             },
         });
         expect(JSON.stringify(res.payload)).not.toContain('sensitive internal state');
+        expect(loggedText).not.toContain(entry.content);
     });
 });

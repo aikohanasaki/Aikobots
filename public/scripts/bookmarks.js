@@ -1,6 +1,5 @@
 import {
     characters,
-    saveChat,
     this_chid,
     openCharacterChat,
     openManageChatsOwnerChat,
@@ -14,13 +13,13 @@ import {
     saveItemizedPrompts,
     getTotalChatMessages,
     isChatMessageLoaded,
-    isChatFullyHydrated,
-    hydrateCurrentChatForEditing,
+    jumpToMessageWindow,
     hasActiveMessageEditSession,
     isHistoricalChatMessage,
-    syncSwipeToMes,
     handleManageChatsBulkRowClick,
     getCurrentChatId,
+    getChatSaveRevision,
+    getChatSaveSessionId,
     CHAT_SAVE_RESULT,
 } from '../script.js';
 import { saveMetadataDebounced } from './extensions.js';
@@ -45,10 +44,12 @@ import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { createTagMapFromList } from './tags.js';
 import { renderTemplateAsync } from './templates.js';
 import { t, translate } from './i18n.js';
+import { AIKOBOTS_MESSAGE_UUID_KEY, AIKOBOTS_SWIPE_UUID_KEY } from './chat-identities.js';
 
 import {
     getUniqueName,
     isTrueBoolean,
+    uuidv4,
 } from './utils.js';
 import { event_types, eventSource } from './events.js';
 
@@ -59,6 +60,143 @@ const LARGE_JUMP_BOOKMARK_THRESHOLD = 500;
 let currentNamedBookmarksPopup = null;
 let namedBookmarksSortAscending = true;
 let currentNamedBookmarks = [];
+
+async function chooseStmbChatCopyMode(kind) {
+    const { hasStmbChatCopyBindings, isStmbChatCopyEnabled } = await import('./stmb.js');
+    if (!isStmbChatCopyEnabled() || !hasStmbChatCopyBindings(chat_metadata)) {
+        return { copyMemoryBooks: false, prompted: false };
+    }
+
+    const isCheckpoint = kind === 'checkpoint';
+    const content = '<p data-i18n="Choose whether to copy the Memory Books bound to this chat.">Choose whether to copy the Memory Books bound to this chat.</p>';
+    const popup = new Popup(content, POPUP_TYPE.CONFIRM, '', {
+        okButton: isCheckpoint
+            ? translate('Create checkpoint and copy Memory Books')
+            : translate('Branch chat and copy Memory Books'),
+        cancelButton: isCheckpoint
+            ? translate('Create checkpoint only')
+            : translate('Branch chat only'),
+        customButtons: [{
+            text: translate('Cancel'),
+            result: POPUP_RESULT.CANCELLED,
+            appendAtEnd: true,
+        }],
+        defaultResult: POPUP_RESULT.AFFIRMATIVE,
+    });
+    const result = await popup.show();
+    if (result === POPUP_RESULT.AFFIRMATIVE) return { copyMemoryBooks: true, prompted: true };
+    if (result === POPUP_RESULT.NEGATIVE) return { copyMemoryBooks: false, prompted: true };
+    return null;
+}
+
+async function confirmStmbChatOnlyFallback(kind, message) {
+    const isCheckpoint = kind === 'checkpoint';
+    const result = await Popup.show.confirm(
+        isCheckpoint ? translate('Checkpoint Memory Book copy failed') : translate('Branch Memory Book copy failed'),
+        `<p>${String(message || translate('Memory Books could not be copied.'))}</p>`,
+        {
+            okButton: isCheckpoint ? translate('Create checkpoint only') : translate('Branch chat only'),
+            cancelButton: translate('Cancel'),
+        },
+    );
+    return result === POPUP_RESULT.AFFIRMATIVE;
+}
+
+function showCopiedDerivedEntriesNotice() {
+    toastr.warning(
+        translate('Copied Side Prompt, Topical Clip, or Clip entries may include information from later messages. Recreate those entries for this chat.'),
+        'STMB',
+        { timeOut: 0, extendedTimeOut: 0, tapToDismiss: true, closeButton: true },
+    );
+}
+
+function getSelectedSwipeUuid(message, requestedSwipeId = null) {
+    const swipeId = requestedSwipeId === null ? Number(message?.swipe_id) : Number(requestedSwipeId);
+    return Number.isInteger(swipeId) ? String(message?.swipe_info?.[swipeId]?.[AIKOBOTS_SWIPE_UUID_KEY] || '') : '';
+}
+
+async function saveDirectChatCopy({ name, mesId, metadata, kind, copyMemoryBooks, swipeId = null, operationId = uuidv4() }) {
+    const sourceChatId = getCurrentChatId();
+    const character = characters[this_chid];
+    const message = chat[mesId];
+    if (!sourceChatId || !character?.avatar) {
+        return { ok: false, error: 'source_chat_not_found' };
+    }
+
+    const saveResult = await saveChatConditional();
+    if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+        return { ok: false, error: 'source_chat_save_failed' };
+    }
+
+    const response = await fetch('/api/chats/save-prefix', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            avatar_url: character.avatar,
+            source_file: sourceChatId,
+            target_file: name,
+            prefix_end_id: mesId,
+            header_overrides: { chat_metadata: metadata },
+            copy_kind: kind,
+            copy_memory_books: copyMemoryBooks,
+            selected_message_uuid: message?.[AIKOBOTS_MESSAGE_UUID_KEY] || undefined,
+            selected_swipe_uuid: getSelectedSwipeUuid(message, swipeId) || undefined,
+            base_revision: getChatSaveRevision(),
+            save_session_id: getChatSaveSessionId(),
+            operation_id: operationId,
+        }),
+    });
+    const data = await response.json().catch(() => ({}));
+    return response.ok ? { ok: true, ...data } : { ok: false, ...data };
+}
+
+function getSafeStmbCopyFailureMessage(errorCode) {
+    return errorCode === 'stmb_copy_ambiguous_legacy'
+        ? translate('This Memory Book cannot be copied safely at the selected message. Nothing was created. Create the chat copy without Memory Books or cancel.')
+        : translate('Memory Books cannot be copied for this chat. Nothing was created. Create the chat copy without Memory Books or cancel.');
+}
+
+async function runBookmarkChatCopy({ name, mesId, metadata, kind, copyMemoryBooks, swipeId = null }) {
+    const run = async (includeMemoryBooks, operationId) => selected_group
+        ? await saveGroupBookmarkChat(selected_group, name, metadata, mesId, {
+            copyKind: kind,
+            copyMemoryBooks: includeMemoryBooks,
+            swipeId,
+            operationId,
+        })
+        : await saveDirectChatCopy({
+            name,
+            mesId,
+            metadata,
+            kind,
+            copyMemoryBooks: includeMemoryBooks,
+            swipeId,
+            operationId,
+        });
+
+    const safeRun = async includeMemoryBooks => {
+        const operationId = uuidv4();
+        try {
+            return await run(includeMemoryBooks, operationId);
+        } catch {
+            try {
+                return await run(includeMemoryBooks, operationId);
+            } catch {
+                return { ok: false, error: 'chat_copy_request_failed' };
+            }
+        }
+    };
+
+    let result = await safeRun(copyMemoryBooks);
+    if (!result.ok && copyMemoryBooks && String(result.error || '').startsWith('stmb_copy_')) {
+        const chatOnly = await confirmStmbChatOnlyFallback(kind, getSafeStmbCopyFailureMessage(result.error));
+        if (!chatOnly) return null;
+        result = await safeRun(false);
+    }
+    if (!result.ok) return result;
+    if (copyMemoryBooks && result.has_derived_entries === true) showCopiedDerivedEntriesNotice();
+    return result;
+}
 
 function hasActiveChatContext() {
     return selected_group || this_chid !== undefined;
@@ -638,9 +776,9 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         return;
     }
 
-    if (isHistoricalChatMessage(mesId) || (selectedSwipeId !== null && !isChatFullyHydrated())) {
-        const hydrated = await hydrateCurrentChatForEditing();
-        if (!hydrated) {
+    if (isHistoricalChatMessage(mesId)) {
+        await jumpToMessageWindow(mesId, 1);
+        if (!isChatMessageLoaded(mesId)) {
             return null;
         }
     }
@@ -651,59 +789,12 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         return;
     }
 
+    const copyChoice = await chooseStmbChatCopyMode('branch');
+    if (!copyChoice) return null;
+
     const mainChat = selected_group ? groups?.find(x => x.id == selected_group)?.chat_id : characters[this_chid].chat;
     const newMetadata = { main_chat: mainChat };
-    const targetChatMetadata = { ...chat_metadata, ...newMetadata };
     let name = `Branch #${mesId} - ${humanizedDateTime()}`;
-
-    const originalSwipeState = selectedSwipeId === null ? null : {
-        swipe_id: lastMes.swipe_id,
-        mes: lastMes.mes,
-        send_date: lastMes.send_date,
-        gen_started: lastMes.gen_started,
-        gen_finished: lastMes.gen_finished,
-        extra: structuredClone(lastMes.extra),
-    };
-
-    if (selected_group && selectedSwipeId !== null) {
-        const saveResult = await saveChatConditional();
-        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            toastr.warning(translate('Could not save the current chat before branching.'), translate('Branch creation failed'));
-            return null;
-        }
-    }
-
-    try {
-        if (selectedSwipeId !== null && !syncSwipeToMes(mesId, selectedSwipeId, lastMes)) {
-            toastr.warning(translate('Could not prepare the selected swipe for branching.'), translate('Branch creation failed'));
-            return;
-        }
-
-        if (selected_group) {
-            const saved = await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId, {
-                messageOverride: selectedSwipeId !== null ? lastMes : null,
-                skipSourceSave: selectedSwipeId !== null,
-            });
-            if (!saved) {
-                return null;
-            }
-        } else {
-            const saveResult = await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
-            if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-                toastr.warning(translate('Could not create the branch chat.'), translate('Branch creation failed'));
-                return null;
-            }
-        }
-    } finally {
-        if (originalSwipeState) {
-            lastMes.swipe_id = originalSwipeState.swipe_id;
-            lastMes.mes = originalSwipeState.mes;
-            lastMes.send_date = originalSwipeState.send_date;
-            lastMes.gen_started = originalSwipeState.gen_started;
-            lastMes.gen_finished = originalSwipeState.gen_finished;
-            lastMes.extra = originalSwipeState.extra;
-        }
-    }
 
     // append to branches list if it exists
     // otherwise create it
@@ -714,6 +805,20 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         lastMes.extra['branches'] = [];
     }
     lastMes.extra['branches'].push(name);
+    const result = await runBookmarkChatCopy({
+        name,
+        mesId,
+        metadata: newMetadata,
+        kind: 'branch',
+        copyMemoryBooks: copyChoice.copyMemoryBooks,
+        swipeId: selectedSwipeId,
+    });
+    if (!result?.ok) {
+        lastMes.extra.branches = lastMes.extra.branches.filter(branchName => branchName !== name);
+        await saveChatConditional();
+        toastr.warning(translate('Could not create the branch chat.'), translate('Branch creation failed'));
+        return null;
+    }
     return name;
 }
 
@@ -735,8 +840,8 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
         return null;
     }
     if (isHistoricalChatMessage(mesId)) {
-        const hydrated = await hydrateCurrentChatForEditing();
-        if (!hydrated) {
+        await jumpToMessageWindow(mesId, 1);
+        if (!isChatMessageLoaded(mesId)) {
             return null;
         }
     }
@@ -758,32 +863,33 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
         return null;
     }
 
+    const copyChoice = await chooseStmbChatCopyMode('checkpoint');
+    if (!copyChoice) return null;
+
     const mainChat = selected_group ? groups?.find(x => x.id == selected_group)?.chat_id : characters[this_chid].chat;
     const newMetadata = { main_chat: mainChat };
-    const targetChatMetadata = { ...chat_metadata, ...newMetadata };
-    await saveItemizedPrompts(name);
-
-    if (selected_group) {
-        const saved = await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId, {
-            replaceTarget: Boolean(isReplace),
-        });
-        if (!saved) {
-            return null;
-        }
-    } else {
-        const saveResult = await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
-        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            toastr.warning(translate('Could not create the checkpoint chat.'), translate('Checkpoint creation failed'));
-            return null;
-        }
+    const previousBookmarkLink = lastMes.extra.bookmark_link;
+    lastMes.extra['bookmark_link'] = name;
+    const result = await runBookmarkChatCopy({
+        name,
+        mesId,
+        metadata: newMetadata,
+        kind: 'checkpoint',
+        copyMemoryBooks: copyChoice.copyMemoryBooks,
+    });
+    if (!result?.ok) {
+        if (previousBookmarkLink) lastMes.extra.bookmark_link = previousBookmarkLink;
+        else delete lastMes.extra.bookmark_link;
+        await saveChatConditional();
+        toastr.warning(translate('Could not create the checkpoint chat.'), translate('Checkpoint creation failed'));
+        return null;
     }
 
-    lastMes.extra['bookmark_link'] = name;
+    await saveItemizedPrompts(name);
 
     const mes = $(`.mes[mesid="${mesId}"]`);
     updateBookmarkDisplay(mes, name);
 
-    await saveChatConditional();
     await eventSource.emit(event_types.CHECKPOINT_CREATED, { mesId, fileName: name });
     toastr.success(translate('Click the flag icon next to the message to open the checkpoint chat.'), translate('Create Checkpoint'), { timeOut: 10000 });
     return name;

@@ -82,6 +82,24 @@ import {
     recordOperationReceipt,
     readChatActivityData,
 } from '../sqlite-manager.js';
+import {
+    listLorebookNamesForAllocation,
+    hasOrdinaryUserLorebookForGeneration,
+    resolveLorebookWithMetadata,
+    withLorebookManagementTransaction,
+} from '../lorebook-repository.js';
+import {
+    StmbChatCopyError,
+    allocateStmbLorebookCopyName,
+    clearStmbChatMetadataBindings,
+    collectManagedMemoryBoundaryUuids,
+    collectStmbChatLorebookNames,
+    finalizeStmbLorebookCopy,
+    getStmbLorebookCopyRoot,
+    projectStmbLorebookForChatCopy,
+    rewriteManagedMemoryBoundaryUuids,
+    rewriteStmbChatMetadataForCopy,
+} from '../stmb-chat-copy.js';
 
 const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean');
 const maxTotalChatBackups = Number(getConfigValue('backups.chat.maxTotalBackups', -1, 'number'));
@@ -3865,6 +3883,8 @@ function createSparseLogicalMessages(totalMessages, rangeStart, rangeMessages) {
  * @param {object} [options] Range loading options.
  * @param {number|null} [options.rangeStart] First zero-based logical message id to load.
  * @param {number|null} [options.rangeEnd] Last zero-based logical message id to load.
+ * @param {string|null} [options.rangeStartUuid] Stable identity of the first message to load.
+ * @param {string|null} [options.rangeEndUuid] Stable identity of the last message to load.
  * @param {boolean} [options.includeMessages] Whether to populate the requested range in a sparse message array.
  * @returns {Promise<object>} SQLite-backed logical chat state.
  */
@@ -3906,9 +3926,20 @@ export async function resolveSqliteLogicalChatReference(directories, chatRef, op
             const header = getChatHeader(db);
             const totalMessages = getMessageCount(db);
             const lastAvailableMessageId = totalMessages > 0 ? totalMessages - 1 : -1;
-            const rangeStart = Number(options.rangeStart);
-            const rangeEnd = Number(options.rangeEnd);
+            const requestedStartUuid = String(options.rangeStartUuid || '').trim();
+            const requestedEndUuid = String(options.rangeEndUuid || '').trim();
+            const startRow = requestedStartUuid && isValidAikobotsUuid(requestedStartUuid)
+                ? getLogicalMessageRowByUuid(db, requestedStartUuid)
+                : null;
+            const endRow = requestedEndUuid && isValidAikobotsUuid(requestedEndUuid)
+                ? getLogicalMessageRowByUuid(db, requestedEndUuid)
+                : null;
+            const hasUuidRange = Boolean(requestedStartUuid || requestedEndUuid);
+            const rangeStart = hasUuidRange ? Number(startRow?.logicalIndex) : Number(options.rangeStart);
+            const rangeEnd = hasUuidRange ? Number(endRow?.logicalIndex) : Number(options.rangeEnd);
+            const rangeIdentityMissing = hasUuidRange && (!startRow || !endRow);
             const shouldLoadRange = options.includeMessages === true
+                && !rangeIdentityMissing
                 && Number.isInteger(rangeStart)
                 && Number.isInteger(rangeEnd)
                 && rangeStart >= 0
@@ -3937,6 +3968,11 @@ export async function resolveSqliteLogicalChatReference(directories, chatRef, op
                 sqliteMissing: false,
                 loadedRangeStart: shouldLoadRange ? rangeStart : null,
                 loadedRangeEnd: shouldLoadRange ? clampedRangeEnd : null,
+                resolvedRangeStart: Number.isInteger(rangeStart) ? rangeStart : null,
+                resolvedRangeEnd: Number.isInteger(rangeEnd) ? rangeEnd : null,
+                rangeStartUuid: requestedStartUuid || null,
+                rangeEndUuid: requestedEndUuid || null,
+                rangeIdentityMissing,
             };
             db.run('COMMIT');
             return result;
@@ -5453,6 +5489,339 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
     }
 });
 
+const STMB_COPY_LEGACY_MESSAGE = 'This Memory Book cannot be copied safely at the selected message. Nothing was created. Create the chat copy without Memory Books or cancel.';
+const STMB_COPY_INELIGIBLE_MESSAGE = 'Memory Books cannot be copied for this chat. Nothing was created. Create the chat copy without Memory Books or cancel.';
+
+function normalizeStmbCopyKind(requestBody) {
+    const kind = String(requestBody?.copy_kind || '').trim().toLowerCase();
+    if (!kind) return '';
+    if (kind !== 'branch' && kind !== 'checkpoint') {
+        throw new ChatMutationError(400, 'invalid_copy_kind');
+    }
+    return kind;
+}
+
+function getStmbCopyMarker(header) {
+    const marker = header?.aikobots_chat_copy;
+    return _.isPlainObject(marker) ? marker : null;
+}
+
+async function getStmbCopyReplay(targetPath, operationId, requestBody) {
+    if (!hasPrimaryChatStorageFile(targetPath)) return null;
+    const sqlitePath = replaceChatStorageExtension(targetPath, '.sqlite');
+    let marker;
+    let header;
+    if (fs.existsSync(sqlitePath)) {
+        const db = await loadDb(sqlitePath);
+        try {
+            if (!getOperationReceipt(db, operationId, requestBody)) return null;
+            header = getChatHeader(db);
+            marker = getStmbCopyMarker(header);
+        } catch (error) {
+            if (error?.code === 'operation_id_reused') {
+                throw new ChatMutationError(409, 'operation_id_reused', error.message);
+            }
+            throw error;
+        } finally {
+            db.close();
+        }
+    } else {
+        const segments = await getChatSegments(targetPath);
+        header = segments?.header;
+        marker = getStmbCopyMarker(header);
+    }
+    if (marker?.operation_id !== operationId) return null;
+    return {
+        ok: true,
+        chat_revision: getChatRevision(header),
+        memory_book_count: Math.max(0, Math.trunc(Number(marker.memory_book_count) || 0)),
+        has_derived_entries: marker.has_derived_entries === true,
+        duplicate_operation: true,
+    };
+}
+
+function applyRequestedSwipeToPrefix(messages, prefixEndId, requestBody) {
+    const sourceMessage = messages[prefixEndId];
+    if (requestBody.selected_message_uuid) {
+        const selectedMessageUuid = assertValidMessageUuid(requestBody.selected_message_uuid);
+        if (sourceMessage?.[AIKOBOTS_MESSAGE_UUID_KEY] !== selectedMessageUuid) {
+            throw new ChatMutationError(409, 'selected_message_changed');
+        }
+    }
+
+    const selectedSwipeUuid = String(requestBody.selected_swipe_uuid || '').trim();
+    if (!selectedSwipeUuid) return;
+    if (!isValidAikobotsUuid(selectedSwipeUuid)) {
+        throw new ChatMutationError(400, 'invalid_swipe_uuid');
+    }
+    const swipeIndex = Array.isArray(sourceMessage.swipe_info)
+        ? sourceMessage.swipe_info.findIndex(info => info?.[AIKOBOTS_SWIPE_UUID_KEY] === selectedSwipeUuid)
+        : -1;
+    if (swipeIndex < 0 || typeof sourceMessage.swipes?.[swipeIndex] !== 'string') {
+        throw new ChatMutationError(409, 'selected_swipe_changed');
+    }
+
+    const swipeInfo = sourceMessage.swipe_info[swipeIndex];
+    sourceMessage.swipe_id = swipeIndex;
+    sourceMessage.mes = sourceMessage.swipes[swipeIndex];
+    sourceMessage.send_date = swipeInfo?.send_date;
+    sourceMessage.gen_started = swipeInfo?.gen_started;
+    sourceMessage.gen_finished = swipeInfo?.gen_finished;
+    sourceMessage.extra = structuredClone(
+        _.isPlainObject(swipeInfo?.extra)
+            ? swipeInfo.extra
+            : (_.isPlainObject(sourceMessage.extra) ? sourceMessage.extra : {}),
+    );
+}
+
+/** Reads only the requested prefix and any stable boundary identities needed by Memory Books. */
+async function readChatPrefixForCopy(sourcePath, prefixEndId, boundaryUuids) {
+    const sourceSqlitePath = replaceChatStorageExtension(sourcePath, '.sqlite');
+    if (fs.existsSync(sourceSqlitePath)) {
+        const db = await loadDb(sourceSqlitePath);
+        try {
+            const sourceHeader = getChatHeader(db);
+            if (prefixEndId >= getMessageCount(db)) {
+                throw new ChatMutationError(400, 'invalid_message_id');
+            }
+            const messages = getMessageRange(db, 0, prefixEndId + 1);
+            const uuidIndexes = new Map();
+            for (const uuid of boundaryUuids) {
+                const row = getLogicalMessageRowByUuid(db, uuid);
+                if (row) uuidIndexes.set(uuid, row.logicalIndex);
+            }
+            return { sourceHeader, messages, uuidIndexes };
+        } finally {
+            db.close();
+        }
+    }
+
+    const logicalChat = await getLogicalChatData(sourcePath);
+    const sourceHeader = logicalChat[0];
+    const allMessages = logicalChat.slice(1);
+    if (prefixEndId >= allMessages.length) {
+        throw new ChatMutationError(400, 'invalid_message_id');
+    }
+    const uuidIndexes = new Map();
+    allMessages.forEach((message, index) => {
+        const uuid = message?.[AIKOBOTS_MESSAGE_UUID_KEY];
+        if (boundaryUuids.has(uuid)) uuidIndexes.set(uuid, index);
+    });
+    return { sourceHeader, messages: allMessages.slice(0, prefixEndId + 1), uuidIndexes };
+}
+
+function getChatMetadataMainOverride(requestBody, isGroup) {
+    const metadata = isGroup ? requestBody?.chat_metadata : requestBody?.header_overrides?.chat_metadata;
+    return typeof metadata?.main_chat === 'string' ? metadata.main_chat : null;
+}
+
+function buildCopiedChatHeader({ sourceHeader, requestBody, isGroup, chatMetadata, marker }) {
+    const mainChat = getChatMetadataMainOverride(requestBody, isGroup);
+    const targetMetadata = structuredClone(_.isPlainObject(chatMetadata) ? chatMetadata : {});
+    if (mainChat !== null) targetMetadata.main_chat = mainChat;
+
+    const baseHeader = isGroup
+        ? buildGroupChatHeader(targetMetadata, sourceHeader)
+        : { ...stripChatStorage(sourceHeader), chat_metadata: targetMetadata };
+    baseHeader.aikobots_chat_copy = marker;
+    return setChatRevision(baseHeader, 1, getRequestSaveSessionId(requestBody));
+}
+
+function createSafeStmbCopyError(error) {
+    if (error instanceof ChatMutationError || isActiveSessionError(error) || isUnsupportedSplitTailChatError(error) || isChatPathValidationError(error)) {
+        return error;
+    }
+    if (error instanceof StmbChatCopyError && error.code === 'stmb_copy_ambiguous_legacy') {
+        return new StmbChatCopyError(error.code, STMB_COPY_LEGACY_MESSAGE, error.status);
+    }
+    if (error instanceof StmbChatCopyError) return error;
+    return new StmbChatCopyError('stmb_copy_ineligible', STMB_COPY_INELIGIBLE_MESSAGE, 409);
+}
+
+/** Coordinates a revision-checked chat prefix and its ordinary Memory Book copies under shared locks. */
+async function copyPrefixWithMemoryBooks({
+    request,
+    sourcePath,
+    targetPath,
+    targetChatId,
+    prefixEndId,
+    isGroup,
+    allowExistingTarget = false,
+    routeName,
+    operationType,
+}) {
+    const kind = normalizeStmbCopyKind(request.body);
+    const operationId = requireRequestOperationId(request.body);
+    const replay = await getStmbCopyReplay(targetPath, operationId, request.body);
+    if (replay) return replay;
+    if (hasPrimaryChatStorageFile(targetPath) && !allowExistingTarget) {
+        throw new ChatMutationError(409, 'target_chat_exists');
+    }
+
+    const copyMemoryBooks = kind && request.body.copy_memory_books === true;
+    return await withLorebookManagementTransaction(async transaction => {
+        const existingNames = new Set(listLorebookNamesForAllocation(request.user));
+
+        return await withChatSaveLocks([sourcePath, targetPath], async () => {
+            const replayInsideLock = await getStmbCopyReplay(targetPath, operationId, request.body);
+            if (replayInsideLock) return replayInsideLock;
+            if (hasPrimaryChatStorageFile(targetPath) && !allowExistingTarget) {
+                throw new ChatMutationError(409, 'target_chat_exists');
+            }
+
+            let { sourceHeader, messages } = await readChatPrefixForCopy(sourcePath, prefixEndId, new Set());
+            requireChatMutationRequest(request.body, sourceHeader);
+            if (!sourceHeader || messages.length !== prefixEndId + 1) {
+                throw new ChatMutationError(400, 'invalid_message_id');
+            }
+            applyRequestedSwipeToPrefix(messages, prefixEndId, request.body);
+
+            const sources = [];
+            const aliasesByResolvedName = new Map();
+            if (copyMemoryBooks) {
+                const requestedNames = collectStmbChatLorebookNames(sourceHeader.chat_metadata);
+                for (const requestedName of requestedNames) {
+                    let loaded;
+                    try {
+                        if (!hasOrdinaryUserLorebookForGeneration(request.user, requestedName)) {
+                            throw new StmbChatCopyError('stmb_copy_ineligible', STMB_COPY_INELIGIBLE_MESSAGE, 409);
+                        }
+                        loaded = resolveLorebookWithMetadata(request.user, requestedName, {
+                            allowDummy: false,
+                            storage: 'user',
+                        });
+                    } catch {
+                        throw new StmbChatCopyError('stmb_copy_ineligible', STMB_COPY_INELIGIBLE_MESSAGE, 409);
+                    }
+                    if (loaded?.metadata?.storage !== 'user') {
+                        throw new StmbChatCopyError('stmb_copy_ineligible', STMB_COPY_INELIGIBLE_MESSAGE, 409);
+                    }
+                    const resolvedName = loaded.metadata.name;
+                    if (!aliasesByResolvedName.has(resolvedName)) {
+                        aliasesByResolvedName.set(resolvedName, new Set([resolvedName]));
+                        sources.push({ name: resolvedName, data: loaded.data });
+                    }
+                    aliasesByResolvedName.get(resolvedName).add(requestedName);
+                }
+            }
+
+            const nameMap = new Map();
+            for (const source of sources) {
+                source.rootName = getStmbLorebookCopyRoot(source.data, source.name);
+                const allocation = allocateStmbLorebookCopyName(source.rootName, kind, existingNames);
+                source.targetName = allocation.name;
+                source.sequence = allocation.sequence;
+                existingNames.add(allocation.name);
+                for (const alias of aliasesByResolvedName.get(source.name) || [source.name]) nameMap.set(alias, allocation.name);
+            }
+
+            const boundaryUuids = new Set();
+            sources.forEach(source => collectManagedMemoryBoundaryUuids(source.data).forEach(uuid => boundaryUuids.add(uuid)));
+            let uuidIndexes = new Map();
+            if (boundaryUuids.size > 0) {
+                ({ uuidIndexes } = await readChatPrefixForCopy(sourcePath, prefixEndId, boundaryUuids));
+            }
+            const resolveMessageIndex = uuid => uuidIndexes.get(uuid);
+
+            const projectedSources = sources.map(source => {
+                const projection = projectStmbLorebookForChatCopy(source.data, {
+                    cutoffIndex: prefixEndId,
+                    resolveMessageIndex,
+                });
+                return { ...source, ...projection };
+            });
+
+            const targetMessages = structuredClone(messages);
+            const targetTailExtra = targetMessages[prefixEndId]?.extra;
+            if (_.isPlainObject(targetTailExtra)) {
+                if (kind === 'branch' && Array.isArray(targetTailExtra.branches)) {
+                    targetTailExtra.branches = targetTailExtra.branches.filter(name => name !== targetChatId);
+                }
+                if (kind === 'checkpoint' && targetTailExtra.bookmark_link === targetChatId) {
+                    delete targetTailExtra.bookmark_link;
+                }
+            }
+            regenerateChatIdentities(targetMessages, { generateUuid: uuidv4 });
+            const hasDerivedEntries = projectedSources.some(source => source.hasDerivedEntries);
+            const createdNames = [];
+            try {
+                for (const source of projectedSources) {
+                    rewriteManagedMemoryBoundaryUuids(source.data, targetMessages, resolveMessageIndex, {
+                        targetChatId,
+                    });
+                    const finalized = finalizeStmbLorebookCopy(source.data, {
+                        nameMap,
+                        targetChatId,
+                        rootName: source.rootName,
+                        sourceName: source.name,
+                        kind,
+                        sequence: source.sequence,
+                        operationId,
+                    });
+                    transaction.createUser(request.user, source.targetName, finalized);
+                    createdNames.push(source.targetName);
+                }
+
+                const copiedMetadata = copyMemoryBooks
+                    ? rewriteStmbChatMetadataForCopy(sourceHeader.chat_metadata, nameMap, prefixEndId)
+                    : clearStmbChatMetadataBindings(sourceHeader.chat_metadata);
+                const marker = {
+                    version: 1,
+                    operation_id: operationId,
+                    kind,
+                    memory_book_count: projectedSources.length,
+                    has_derived_entries: hasDerivedEntries,
+                };
+                const targetHeader = buildCopiedChatHeader({
+                    sourceHeader,
+                    requestBody: request.body,
+                    isGroup,
+                    chatMetadata: copiedMetadata,
+                    marker,
+                });
+                await request.activeSessionOperation?.assertAllowed();
+                const writeResult = await writeLogicalChat(targetPath, targetHeader, targetMessages, {
+                    regenerateIdentities: false,
+                    allowExistingSqliteFullReplacement: allowExistingTarget,
+                    routeName,
+                    operationType,
+                    requestBody: request.body,
+                    isPrivilegedOperation: allowExistingTarget,
+                    activityTimestamp: Date.now(),
+                });
+                return {
+                    ok: true,
+                    chat_revision: getChatRevision(targetHeader),
+                    memory_book_count: projectedSources.length,
+                    has_derived_entries: hasDerivedEntries,
+                    fullJsonl: writeResult.fullJsonl,
+                };
+            } catch (error) {
+                let rollbackFailed = false;
+                try {
+                    const createdChat = await getStmbCopyReplay(targetPath, operationId, request.body);
+                    if (createdChat && !allowExistingTarget) {
+                        deleteChatStorageCompanions(targetPath);
+                    }
+                } catch {
+                    rollbackFailed = true;
+                }
+                for (const name of createdNames.reverse()) {
+                    try {
+                        transaction.removeCreatedUser(request.user, name);
+                    } catch {
+                        rollbackFailed = true;
+                    }
+                }
+                if (rollbackFailed) {
+                    throw new StmbChatCopyError('stmb_copy_rollback_failed', 'The copy failed and could not be rolled back completely.', 500);
+                }
+                throw error;
+            }
+        });
+    });
+}
+
 router.post('/save-prefix', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const dirName = normalizeCharacterChatDirectoryName(request.body.avatar_url);
@@ -5463,6 +5832,34 @@ router.post('/save-prefix', validateAvatarUrlMiddleware, async function (request
 
         if ((!fs.existsSync(sourcePath) && !fs.existsSync(replaceChatStorageExtension(sourcePath, '.sqlite'))) || !Number.isInteger(prefixEndId) || prefixEndId < 0) {
             return response.sendStatus(400);
+        }
+
+        if (normalizeStmbCopyKind(request.body)) {
+            let result;
+            try {
+                result = await copyPrefixWithMemoryBooks({
+                    request,
+                    sourcePath,
+                    targetPath,
+                    targetChatId: String(request.body.target_file),
+                    prefixEndId,
+                    isGroup: false,
+                    routeName: '/api/chats/save-prefix',
+                    operationType: 'chat_copy_prefix',
+                });
+            } catch (error) {
+                throw createSafeStmbCopyError(error);
+            }
+            if (result.fullJsonl) {
+                try {
+                    getBackupFunction(request.user.profile.handle)(request.user.directories.backups, dirName, result.fullJsonl);
+                } catch {
+                    console.warn('Chat copy completed, but its optional backup could not be written.');
+                }
+            }
+            const payload = { ...result };
+            delete payload.fullJsonl;
+            return response.send(payload);
         }
 
         return await withChatSaveLocks([sourcePath, targetPath], async () => {
@@ -5510,6 +5907,15 @@ router.post('/save-prefix', validateAvatarUrlMiddleware, async function (request
             return response.send({ ok: true });
         });
     } catch (error) {
+        if (error instanceof StmbChatCopyError) {
+            return response.status(error.status || 409).send({ error: error.code, message: error.message });
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
         if (isUnsupportedSplitTailChatError(error)) {
             return sendUnsupportedSplitTailChatError(response, error);
         }
@@ -6201,10 +6607,39 @@ router.post('/group/copy-prefix', async (request, response) => {
             return response.status(404).send({ error: 'source_chat_not_found' });
         }
 
+        const stmbCopyKind = normalizeStmbCopyKind(request.body);
         const allowExistingTarget = request.body.replace_target === true;
-        const targetPath = assertNewGroupChatTarget(request.user, targetId, { allowExisting: allowExistingTarget });
+        const targetPath = assertNewGroupChatTarget(request.user, targetId, { allowExisting: allowExistingTarget || Boolean(stmbCopyKind) });
         if (!fs.existsSync(request.user.directories.groupChats)) {
             fs.mkdirSync(request.user.directories.groupChats, { recursive: true });
+        }
+
+        if (stmbCopyKind) {
+            let result;
+            try {
+                result = await copyPrefixWithMemoryBooks({
+                    request,
+                    sourcePath,
+                    targetPath,
+                    targetChatId: targetId,
+                    prefixEndId,
+                    isGroup: true,
+                    routeName: '/api/chats/group/copy-prefix',
+                    operationType: 'group_copy_prefix',
+                });
+            } catch (error) {
+                throw createSafeStmbCopyError(error);
+            }
+            if (result.fullJsonl) {
+                try {
+                    getBackupFunction(request.user.profile.handle)(request.user.directories.backups, targetId, result.fullJsonl);
+                } catch {
+                    console.warn('Group chat copy completed, but its optional backup could not be written.');
+                }
+            }
+            const payload = { ...result };
+            delete payload.fullJsonl;
+            return response.send(payload);
         }
 
         return await withChatSaveLock(sourcePath, async () => {
@@ -6259,6 +6694,9 @@ router.post('/group/copy-prefix', async (request, response) => {
             });
         });
     } catch (error) {
+        if (error instanceof StmbChatCopyError) {
+            return response.status(error.status || 409).send({ error: error.code, message: error.message });
+        }
         if (isActiveSessionError(error)) {
             return sendActiveSessionRequired(response);
         }

@@ -2160,6 +2160,27 @@ export function listLorebooksForManagement(user) {
     return items.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Returns content-free occupied lorebook names for allocation under the mutation lock. */
+export function listLorebookNamesForAllocation(user) {
+    const names = new Set([
+        ...Object.keys(readSecureIndex().books),
+        ...Object.keys(readSharedSecureIndex().books),
+    ]);
+    if (fs.existsSync(user.directories.worlds)) {
+        for (const file of fs.readdirSync(user.directories.worlds)) {
+            if (path.extname(file).toLowerCase() === '.json') names.add(path.parse(file).name);
+        }
+    }
+    return [...names];
+}
+
+/** Checks whether generation would resolve a name to an eligible ordinary user lorebook without reading its content. */
+export function hasOrdinaryUserLorebookForGeneration(user, name) {
+    const canonicalName = assertCanonicalName(name);
+    return !isReservedRecommendedTemplateSource(user?.profile?.handle, canonicalName)
+        && Boolean(getUserLorebookRecord(user?.profile?.handle, canonicalName));
+}
+
 /**
  * Resolves a lorebook using a consistent repository-level access policy.
  * `preferUser` is used by generation to allow local shadowing. `storage='secure'`
@@ -2565,14 +2586,24 @@ export async function saveLorebookForManagement(user, name, data, storage = 'use
 /**
  * Runs a multi-lorebook management operation under the shared mutation lock.
  * The callback must use the supplied save function to avoid reacquiring the lock.
- * @param {(transaction: {save: typeof saveLorebookForManagementUnlocked}) => Promise<any>} operation
+ * @param {(transaction: {
+ *   save: typeof saveLorebookForManagementUnlocked,
+ *   createUser: typeof createUserLorebookForManagementUnlocked,
+ *   removeCreatedUser: (user: import('./users.js').User, name: string) => boolean,
+ * }) => Promise<any>} operation
  * @returns {Promise<any>}
  */
 export async function withLorebookManagementTransaction(operation) {
     if (typeof operation !== 'function') {
         throw new TypeError('Lorebook management transaction callback is required.');
     }
-    return runWithSecureLorebookMutationLock(() => operation({ save: saveLorebookForManagementUnlocked }));
+    return runWithSecureLorebookMutationLock(() => operation({
+        save: saveLorebookForManagementUnlocked,
+        createUser: createUserLorebookForManagementUnlocked,
+        removeCreatedUser(user, name) {
+            return removeUserLorebookCopy(user?.profile?.handle, name);
+        },
+    }));
 }
 
 /**

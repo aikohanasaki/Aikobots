@@ -54,6 +54,11 @@ import {
     STMB_CONTEXT_NONE_KEY,
     STMB_CONTEXT_SOURCE_MODES,
 } from './stmb-context-settings.js';
+import {
+    buildSidePromptRegenerationSnapshot,
+    getSidePromptRegenerationSnapshot,
+    SIDE_PROMPT_REGENERATION_METADATA_KEY,
+} from './stmb-regeneration.js';
 
 let trackerEvaluationPromise = null;
 let previewQueue = Promise.resolve();
@@ -574,14 +579,29 @@ async function runSidePromptAttempt({
     }
 }
 
-async function prepareSidePromptRun({ template, lorebookName, lorebookData, compiledScene, settings, profile = null, runtimeMacros = {}, fallbackKinds = [], contextSettingKey, signal = null }) {
+async function prepareSidePromptRun({
+    template,
+    lorebookName,
+    lorebookData,
+    compiledScene,
+    settings,
+    profile = null,
+    runtimeMacros = {},
+    fallbackKinds = [],
+    contextSettingKey,
+    signal = null,
+    priorContentOverride = undefined,
+}) {
     const unifiedTitle = getUnifiedSidePromptTitle(template, runtimeMacros);
     const existing = findFirstLorebookEntryByTitle(lorebookData, getSidePromptLookupTitles(template, runtimeMacros, fallbackKinds));
+    const priorContent = priorContentOverride === undefined
+        ? String(existing?.content || '')
+        : String(priorContentOverride || '');
     const previousMemories = fetchPreviousMemories(lorebookData, Number(template?.settings?.previousMemoriesCount ?? 0));
     const additionalContextEntries = await resolveSidePromptAdditionalContextEntries(template, { contextSettingKey });
     const finalPrompt = buildSidePromptText(
         template.prompt,
-        existing?.content || '',
+        priorContent,
         compiledScene,
         template.responseFormat,
         previousMemories,
@@ -597,9 +617,66 @@ async function prepareSidePromptRun({ template, lorebookName, lorebookData, comp
     return {
         unifiedTitle,
         existing,
+        priorContent,
         finalPrompt: String(finalPrompt || ''),
         profile: resolvedProfile,
     };
+}
+
+/** Builds validated regeneration metadata for a completed side-prompt run. */
+function getSidePromptRegenerationMetadata(template, priorContent, compiledScene, runtimeMacros = {}) {
+    const snapshot = buildSidePromptRegenerationSnapshot({
+        templateKey: template?.key,
+        priorContent,
+        compiledScene,
+        runtimeMacros,
+    });
+    if (!getSidePromptRegenerationSnapshot({ [SIDE_PROMPT_REGENERATION_METADATA_KEY]: snapshot })) {
+        throw new Error(translate('The side-prompt message range could not be saved. Reload the chat and try again.'));
+    }
+    return { [SIDE_PROMPT_REGENERATION_METADATA_KEY]: snapshot };
+}
+
+/** Regenerates one persisted side-prompt run with the current template and settings. */
+export async function generateSidePromptFromSnapshot({
+    snapshot,
+    lorebookName,
+    lorebookData,
+    compiledScene,
+    settings,
+    signal = null,
+} = {}) {
+    const template = await getTemplate(snapshot?.templateKey);
+    if (!template) {
+        const error = new Error('The side-prompt template used for this run no longer exists.');
+        error.code = 'STMB_SIDE_PROMPT_TEMPLATE_MISSING';
+        throw error;
+    }
+    const prepared = await prepareSidePromptRun({
+        template,
+        lorebookName,
+        lorebookData,
+        compiledScene,
+        settings,
+        runtimeMacros: snapshot.runtimeMacros,
+        contextSettingKey: getChatContextSettingKey(),
+        signal,
+        priorContentOverride: snapshot.priorContent,
+    });
+    const content = await runSidePromptAttempt({
+        template,
+        taskLabel: `SidePrompt:regenerate:${getSidePromptTaskKey(template)}`,
+        finalPrompt: prepared.finalPrompt,
+        settings,
+        profile: prepared.profile,
+        signal,
+    });
+    if (!String(content || '').trim()) {
+        const error = new Error('The regenerated side prompt was blank.');
+        error.code = 'STMB_SIDE_PROMPT_REGENERATION_BLANK';
+        throw error;
+    }
+    return String(content).trim();
 }
 
 async function compileRange(sceneStart, sceneEnd, settings = null, options = {}) {
@@ -1059,7 +1136,10 @@ async function runTemplateForCompiledScene({
             {
                 defaults,
                 entryOverrides,
-                metadataUpdates,
+                metadataUpdates: {
+                    ...metadataUpdates,
+                    ...getSidePromptRegenerationMetadata(template, prepared.priorContent, compiledScene, runtimeMacros),
+                },
                 refreshEditor: settings?.moduleSettings?.refreshEditor !== false,
                 signal,
             },
@@ -1644,7 +1724,15 @@ async function executeSidePromptJob(job, context) {
         {
             defaults,
             entryOverrides,
-            metadataUpdates: payload.metadataUpdates || {},
+            metadataUpdates: {
+                ...(payload.metadataUpdates || {}),
+                ...getSidePromptRegenerationMetadata(
+                    template,
+                    prepared.priorContent,
+                    compiledScene,
+                    payload.runtimeMacros || {},
+                ),
+            },
             refreshEditor: settings?.moduleSettings?.refreshEditor !== false,
             signal,
         },
@@ -1836,7 +1924,15 @@ async function executeSidePromptBatchJob(job, context) {
             title: prepared.unifiedTitle,
             content: resultText,
             defaults,
-            metadataUpdates: input?.metadataUpdates || {},
+            metadataUpdates: {
+                ...(input?.metadataUpdates || {}),
+                ...getSidePromptRegenerationMetadata(
+                    template,
+                    prepared.priorContent,
+                    compiledScene,
+                    input?.runtimeMacros || {},
+                ),
+            },
             entryOverrides,
             templateName: String(input?.displayName || template?.name || 'Unknown'),
         });
