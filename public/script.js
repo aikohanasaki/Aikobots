@@ -278,6 +278,7 @@ import { AudioPlayer } from './scripts/audio-player.js';
 import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
+import { canGenerateHistoricalSwipe } from './scripts/swipe-policy.js';
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
@@ -971,6 +972,8 @@ export let swipeState = SWIPE_STATE.NONE;
 export let swipesHidden = false;
 export let lastSwipeInfo = { now: performance.now(), direction: SWIPE_DIRECTION.RIGHT };
 export let recentSwipes = 0;
+const HISTORICAL_SWIPE_WARNING_DISABLED_KEY = 'HistoricalSwipeWarningDisabled';
+let historicalSwipeConfirmationPending = false;
 let chatSaveTimeout;
 let importFlashTimeout;
 export let isChatSaving = false;
@@ -17704,12 +17707,54 @@ export function isMessageSwipeable(messageId, message = undefined) {
 
     return Boolean(
         ((messageId > (this_edit_mes_id ?? -1)) && (swipeState !== SWIPE_STATE.EDITING)) &&
-        messageId === chat.length - 1 &&
         message &&
         !message?.extra?.isSmallSys &&
         !(message?.extra?.swipeable === false) &&
         !message.is_user
     );
+}
+
+/** Confirms that the user understands later messages are not changed by a historical swipe selection. */
+async function confirmHistoricalSwipeSelection() {
+    if (accountStorage.getItem(HISTORICAL_SWIPE_WARNING_DISABLED_KEY) === 'true') {
+        return true;
+    }
+    if (historicalSwipeConfirmationPending) {
+        return false;
+    }
+
+    const disableWarningInputId = 'historical_swipe_warning_disabled';
+    let disableWarning = false;
+    let result;
+    historicalSwipeConfirmationPending = true;
+    try {
+        result = await Popup.show.confirm(
+            t`About changing an earlier response`,
+            t`The response you choose will become active. Later messages will stay exactly as they are.`,
+            {
+                okButton: t`Change response`,
+                cancelButton: t`Cancel`,
+                customInputs: [{
+                    id: disableWarningInputId,
+                    type: 'checkbox',
+                    label: t`Don't show this again`,
+                }],
+                onClose: popup => {
+                    disableWarning = Boolean(popup.inputResults.get(disableWarningInputId) ?? false);
+                },
+            },
+        );
+    } finally {
+        historicalSwipeConfirmationPending = false;
+    }
+
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return false;
+    }
+    if (disableWarning) {
+        accountStorage.setItem(HISTORICAL_SWIPE_WARNING_DISABLED_KEY, 'true');
+    }
+    return true;
 }
 
 /**
@@ -17721,6 +17766,17 @@ export function isMessageSwipeable(messageId, message = undefined) {
  */
 export function getOverswipeBehavior(messageId, message = undefined) {
     message ??= chat[messageId];
+
+    if (messageId < chat.length - 1) {
+        // Selecting an existing historical swipe is semantically equivalent to editing the
+        // message after generation: keep later messages and generate only when they are hidden.
+        const canGenerate = canGenerateHistoricalSwipe(
+            chat,
+            messageId,
+            candidate => isPromptHiddenChatMessage(candidate, { allowToolInvocations: true }),
+        );
+        return canGenerate ? OVERSWIPE_BEHAVIOR.REGENERATE : OVERSWIPE_BEHAVIOR.NONE;
+    }
 
     const isPristine = !chat_metadata?.tainted;
     const isGreeting = messageId === 0;
@@ -17763,7 +17819,9 @@ export function refreshSwipeButtons(updateCounters = false, fade = true) {
             const hasSwipes = (message?.swipes?.length ?? 0) > 1;
             const overswipe = getOverswipeBehavior(messageId, message);
             const pristineGreeting = overswipe === OVERSWIPE_BEHAVIOR.PRISTINE_GREETING;
+            const historicalOverswipeRequest = messageId < chat.length - 1 && !isPromptHiddenChatMessage(message, { allowToolInvocations: true });
             const isOverswipeable = isLastSwipe && (
+                historicalOverswipeRequest ||
                 overswipe === OVERSWIPE_BEHAVIOR.REGENERATE ||
                 overswipe === OVERSWIPE_BEHAVIOR.EDIT_GENERATE
             );
@@ -18917,6 +18975,18 @@ export async function swipe(event, direction, { source, repeated, message = chat
         return;
     }
 
+    const currentSwipeId = Number(message?.swipe_id ?? 0);
+    const existingSwipeCount = Array.isArray(message?.swipes) ? message.swipes.length : 0;
+    let requestedSwipeId = Number(forceSwipeId ?? (direction === SWIPE_DIRECTION.LEFT ? currentSwipeId - 1 : currentSwipeId + 1));
+    if (direction === SWIPE_DIRECTION.LEFT && requestedSwipeId < 0) {
+        requestedSwipeId = Math.max(0, existingSwipeCount - 1);
+    }
+    const selectsHistoricalSwipe = (
+        mesId < chat.length - 1 &&
+        requestedSwipeId !== currentSwipeId &&
+        requestedSwipeId >= 0 &&
+        requestedSwipeId < existingSwipeCount
+    );
     const thisMesDiv = chatElement.children('.mes').filter(`[mesid="${mesId}"]`);
     const thisMesText = thisMesDiv.find('.mes_block .mes_text');
     const thisMesDivHeight = thisMesDiv[0]?.scrollHeight;
@@ -18937,6 +19007,16 @@ export async function swipe(event, direction, { source, repeated, message = chat
         }
         if (!isMessageSwipeable(mesId, message)) {
             console.info(`Message #${mesId} cannot be swiped.`, message);
+            return;
+        }
+    }
+
+    if (selectsHistoricalSwipe && source !== SWIPE_SOURCE.DELETE && source !== SWIPE_SOURCE.BACK) {
+        if (hasActiveMessageEditSession()) {
+            toastr.warning(t`Finish or cancel the current edit before switching swipes.`);
+            return;
+        }
+        if (!await confirmHistoricalSwipeSelection()) {
             return;
         }
     }
@@ -19098,10 +19178,9 @@ export async function swipe(event, direction, { source, repeated, message = chat
             return;
         }
 
-        const maximumAnimated = 100;
         const swipedMessagesDiv = chatElement.children('.mes[mesid]').filter((_, div) => {
             const divMessageId = Number(div.getAttribute('mesid'));
-            return divMessageId >= messageId && divMessageId < messageId + maximumAnimated;
+            return divMessageId === messageId;
         });
 
         if (swipedMessagesDiv.length > 0) {
@@ -19276,6 +19355,9 @@ export async function swipe(event, direction, { source, repeated, message = chat
                 const overswipe = getOverswipeBehavior(mesId);
 
                 if (overswipe === OVERSWIPE_BEHAVIOR.NONE) {
+                    if (mesId < chat.length - 1 && !isPromptHiddenChatMessage(chat[mesId], { allowToolInvocations: true })) {
+                        toastr.info(t`To generate a new swipe here, exclude all later messages from prompts first. They will be preserved.`);
+                    }
                     await endSwipe();
                     return;
                 } else if (overswipe === OVERSWIPE_BEHAVIOR.REGENERATE) {
@@ -20144,9 +20226,8 @@ jQuery(async function () {
 
     ///// SWIPE BUTTON CLICKS ///////
 
-    //limit swiping to only last message clicks
-    $(document).on('click', '.last_mes .swipe_right', async (e, data) => await swipe(e, SWIPE_DIRECTION.RIGHT, data));
-    $(document).on('click', '.last_mes .swipe_left', async (e, data) => await swipe(e, SWIPE_DIRECTION.LEFT, data));
+    $(document).on('click', '#chat .mes .swipe_right', async (e, data) => await swipe(e, SWIPE_DIRECTION.RIGHT, data));
+    $(document).on('click', '#chat .mes .swipe_left', async (e, data) => await swipe(e, SWIPE_DIRECTION.LEFT, data));
 
     initCharacterSearch();
 

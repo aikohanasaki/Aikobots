@@ -1625,7 +1625,7 @@ body.swipeAllMessages .mes:not(.last_mes) .swipes-counter {
     transition: opacity calc(var(--animation-duration) * 2) ease-in;
 }
 
-body:not(.swipeAllMessages) .mes:not(.last_mes) :is(.swipe_left, .swipe_right, .swipes-counter),
+body:not(.swipeAllMessages) .mes:not(.last_mes) .swipes-counter,
 .mes:not(.swipes_visible) .swipe_left,
 .mes:not(.swipes_visible, .last_swipe) .swipe_right,
 body.hideAllSwipeButtons :is(.swipe_left, .swipe_right),

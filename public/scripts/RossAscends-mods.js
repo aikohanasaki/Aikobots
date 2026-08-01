@@ -1321,12 +1321,9 @@ export function initRossMods() {
             // as swipe gestures
             return;
         }
-        var SwipeButR = $('.swipe_right:last');
-        var SwipeTargetMesClassParent = $(e.target).closest('.last_mes');
-        if (SwipeTargetMesClassParent !== null) {
-            if (SwipeButR.css('display') === 'flex') {
-                SwipeButR.trigger('click');
-            }
+        const swipeButton = $(e.target).closest('.mes').find('.swipe_right');
+        if (swipeButton.css('display') === 'flex') {
+            swipeButton.trigger('click');
         }
     });
     document.addEventListener('swiped-right', function (e) {
@@ -1345,12 +1342,9 @@ export function initRossMods() {
             // as swipe gestures
             return;
         }
-        var SwipeButL = $('.swipe_left:last');
-        var SwipeTargetMesClassParent = $(e.target).closest('.last_mes');
-        if (SwipeTargetMesClassParent !== null) {
-            if (SwipeButL.css('display') === 'flex') {
-                SwipeButL.trigger('click');
-            }
+        const swipeButton = $(e.target).closest('.mes').find('.swipe_left');
+        if (swipeButton.css('display') === 'flex') {
+            swipeButton.trigger('click');
         }
     });
 
