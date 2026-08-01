@@ -1474,5 +1474,16 @@
     "The regenerated side prompt was blank. Nothing was overwritten.": "O prompt secundário regenerado estava vazio. Nada foi substituído.",
     "The side-prompt message range could not be saved. Reload the chat and try again.": "Não foi possível guardar o intervalo de mensagens do prompt secundário. Recarregue a conversa e tente novamente.",
     "No capturable messages remain in the original range.": "Não restam mensagens capturáveis no intervalo original.",
-    "Memory regeneration failed.": "A regeneração da memória falhou."
+    "Memory regeneration failed.": "A regeneração da memória falhou.",
+    "Locked Memory Book \"{{lorebookName}}\" is missing. Unlock this character to repair the assignment.": "O Livro de Memória bloqueado \"{{lorebookName}}\" está em falta. Desbloqueie esta personagem para reparar a atribuição.",
+    "Unlock {{characterName}} from \"{{lorebookName}}\"": "Desbloquear {{characterName}} de \"{{lorebookName}}\"",
+    "Select a valid character Memory Book before locking.": "Selecione um Livro de Memória de personagem válido antes de bloquear.",
+    "Always use \"{{lorebookName}}\" as {{characterName}}'s Memory Book": "Usar sempre \"{{lorebookName}}\" como Livro de Memória de {{characterName}}",
+    "{{characterName}} no longer has a locked Memory Book.": "{{characterName}} deixou de ter um Livro de Memória bloqueado.",
+    "{{characterName}} will always use \"{{lorebookName}}\" as their Memory Book in manual mode.": "{{characterName}} usará sempre \"{{lorebookName}}\" como Livro de Memória no modo manual.",
+    "Unlock this character before changing their manual Memory Book.": "Desbloqueie esta personagem antes de alterar o seu Livro de Memória manual.",
+    "The locked Memory Book \"{{lorebookName}}\" no longer exists. Unlock this character and choose a valid Memory Book.": "O Livro de Memória bloqueado \"{{lorebookName}}\" já não existe. Desbloqueie esta personagem e escolha um Livro de Memória válido.",
+    "The locked Memory Book \"{{lorebookName}}\" could not be loaded. Unlock this character and choose a valid Memory Book.": "Não foi possível carregar o Livro de Memória bloqueado \"{{lorebookName}}\". Desbloqueie esta personagem e escolha um Livro de Memória válido.",
+    "{{characterName}}: locked Memory Book \"{{lorebookName}}\" not found; unlock and repair this assignment": "{{characterName}}: o Livro de Memória bloqueado \"{{lorebookName}}\" não foi encontrado; desbloqueie e repare esta atribuição",
+    "Missing: ${0}": "Em falta: ${0}"
 }

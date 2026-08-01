@@ -190,6 +190,16 @@ import { getTokenCountAsync } from './tokenizers.js';
 import { cloneStloSettings } from './stlo-utils.js';
 import { initStmbMacros, refreshStmbMacroCache } from './stmb-macros.js';
 import {
+    getCharacterMemoryBookLock,
+    getCharacterMemoryBookLockStatus,
+    moveCharacterMemoryBookLock,
+    refreshCharacterMemoryBookLockName,
+    removeCharacterMemoryBookLock,
+    resolveManualGroupCharacterBindings,
+    resolveManualLorebookForCharacter,
+    setCharacterMemoryBookLock,
+} from './stmb-character-memory-book-locks.js';
+import {
     applyConnectionProfileSnapshot,
     createConnectionProfileRequestSnapshot,
     getSupportedConnectionProfiles,
@@ -2117,10 +2127,57 @@ function getStmbSelectableLorebookNames() {
     return (Array.isArray(world_names) ? world_names : []).filter(name => !isReservedTemplateWorldName(name));
 }
 
+function getCurrentSoloCharacter(sceneContext = buildStmbSceneContext()) {
+    if (sceneContext?.isGroupChat) return null;
+    const characterKey = String(sceneContext?.chatRef?.avatarUrl || '').trim();
+    if (!characterKey) return null;
+    return { characterKey, characterName: String(sceneContext?.characterName || characterKey).trim() };
+}
+
+function getCurrentManualLorebookResolution(sceneContext = buildStmbSceneContext(), state = getStmbState(sceneContext)) {
+    const character = getCurrentSoloCharacter(sceneContext);
+    return resolveManualLorebookForCharacter({
+        manualModeEnabled: Boolean(getModuleSettings().manualModeEnabled),
+        isGroupChat: Boolean(sceneContext?.isGroupChat),
+        characterKey: character?.characterKey,
+        manualLorebook: state.manualLorebook,
+        locks: stmbSettings.characterMemoryBookLocks,
+    });
+}
+
+function formatCharacterLockText(text, values = {}) {
+    return Object.entries(values).reduce(
+        (result, [key, value]) => result.replaceAll(`{{${key}}}`, String(value ?? '')),
+        translate(text),
+    );
+}
+
+function renderCharacterMemoryBookLockButton({ characterKey, characterName, selectedLorebook, extraAttributes = '' }) {
+    const status = getCharacterMemoryBookLockStatus(stmbSettings.characterMemoryBookLocks, characterKey, world_names);
+    const lock = status.lock;
+    const validSelection = Boolean(selectedLorebook && world_names.includes(selectedLorebook));
+    const title = status.state === 'broken'
+        ? formatCharacterLockText('Locked Memory Book "{{lorebookName}}" is missing. Unlock this character to repair the assignment.', { lorebookName: lock.lorebookName })
+        : lock
+            ? formatCharacterLockText('Unlock {{characterName}} from "{{lorebookName}}"', { characterName, lorebookName: lock.lorebookName })
+            : validSelection
+                ? formatCharacterLockText('Always use "{{lorebookName}}" as {{characterName}}\'s Memory Book', { characterName, lorebookName: selectedLorebook })
+                : translate('Select a valid character Memory Book before locking.');
+    const icon = status.state === 'broken' ? 'fa-triangle-exclamation' : lock ? 'fa-lock' : 'fa-lock-open';
+    return `<button type="button" class="menu_button menu_button_icon fa-solid ${icon} stmb-character-memory-book-lock" data-character-key="${escapeHtml(characterKey)}" data-character-name="${escapeHtml(characterName)}" data-selected-lorebook="${escapeHtml(selectedLorebook)}" aria-pressed="${lock ? 'true' : 'false'}" aria-label="${escapeHtml(title)}" title="${escapeHtml(title)}" ${!lock && !validSelection ? 'disabled' : ''} ${extraAttributes}>${translate(lock ? 'Unlock' : 'Lock')}</button>`;
+}
+
 function getManualPrimaryLorebookNames(sceneContext = buildStmbSceneContext()) {
     if (!sceneContext?.isGroupChat) return getStmbSelectableLorebookNames();
+    const state = getStmbState(sceneContext);
+    const resolved = resolveManualGroupCharacterBindings({
+        manualModeEnabled: true,
+        members: getStmbGroupMembers(sceneContext),
+        chatBindings: getManualCharacterLorebookBindings(state),
+        locks: stmbSettings.characterMemoryBookLocks,
+    });
     const assignedCharacterBooks = new Set(
-        Object.values(getManualCharacterLorebookBindings(getStmbState(sceneContext)))
+        Object.values(resolved.bindings)
             .map(value => String(value || '').trim())
             .filter(Boolean),
     );
@@ -2129,27 +2186,40 @@ function getManualPrimaryLorebookNames(sceneContext = buildStmbSceneContext()) {
 
 function renderManualGroupLorebookBindingsHtml(manualMode) {
     const sceneContext = buildStmbSceneContext();
-    if (!manualMode || !sceneContext.isGroupChat) return '';
+    if (!sceneContext.isGroupChat) return '';
+    if (!manualMode) return '<div id="stmb-settings-manual-group-lorebooks" class="displayNone"></div>';
     const members = getStmbGroupMembers(sceneContext);
-    const bindings = getManualCharacterLorebookBindings();
+    const localBindings = getManualCharacterLorebookBindings();
+    const { bindings, locksByMemberKey } = resolveManualGroupCharacterBindings({
+        manualModeEnabled: manualMode,
+        members,
+        chatBindings: localBindings,
+        locks: stmbSettings.characterMemoryBookLocks,
+    });
     const canonicalLorebookName = String(getStmbState(sceneContext).manualLorebook || '').trim();
     if (members.length === 0) {
         return '<small class="opacity50p" data-i18n="No group members are available for manual lorebook setup.">No group members are available for manual lorebook setup.</small>';
     }
     const rows = members.map(member => {
         const current = String(bindings[member.key] || '');
+        const localLorebook = String(localBindings[member.key] || '');
+        const lock = locksByMemberKey[member.key];
         const currentConflicts = Boolean(current && current === canonicalLorebookName);
         const options = [
             `<option value="" ${current ? '' : 'selected'} disabled data-i18n="None selected">None selected</option>`,
             ...(currentConflicts ? [`<option value="${escapeHtml(current)}" selected disabled>${escapeHtml(current)} (unavailable: group Memory Book)</option>`] : []),
+            ...(current && !currentConflicts && !world_names.includes(current) ? [`<option value="${escapeHtml(current)}" selected>${t`Missing: ${escapeHtml(current)}`}</option>`] : []),
             ...getStmbSelectableLorebookNames()
                 .filter(name => name !== canonicalLorebookName)
                 .map(name => `<option value="${escapeHtml(name)}" ${name === current ? 'selected' : ''}>${escapeHtml(name)}</option>`),
         ].join('');
         return `<div class="stmb-manual-group-lorebook-row">
             <label class="stmb-manual-group-lorebook-label" for="stmb-member-lorebook-${escapeHtml(member.key)}">${escapeHtml(member.name)}</label>
-            <select id="stmb-member-lorebook-${escapeHtml(member.key)}" class="text_pole stmb-manual-group-lorebook-select" data-member-key="${escapeHtml(member.key)}">${options}</select>
-            <button type="button" class="menu_button stmb-manual-group-lorebook-clear" data-member-key="${escapeHtml(member.key)}" ${current ? '' : 'disabled'} data-i18n="Clear">Clear</button>
+            <select id="stmb-member-lorebook-${escapeHtml(member.key)}" class="text_pole stmb-manual-group-lorebook-select" data-member-key="${escapeHtml(member.key)}" ${lock ? `disabled title="${escapeHtml(translate('Unlock this character before changing their manual Memory Book.'))}"` : ''}>${options}</select>
+            <div class="buttons_block gap10px">
+                <button type="button" class="menu_button stmb-manual-group-lorebook-clear" data-member-key="${escapeHtml(member.key)}" ${!localLorebook || lock ? 'disabled' : ''} data-i18n="Clear">Clear</button>
+                ${renderCharacterMemoryBookLockButton({ characterKey: member.avatar, characterName: member.name, selectedLorebook: localLorebook, extraAttributes: `data-member-key="${escapeHtml(member.key)}"` })}
+            </div>
         </div>`;
     }).join('');
     return `<div id="stmb-settings-manual-group-lorebooks" class="marginTop10">
@@ -2227,6 +2297,9 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
     const usesCustomTitleFormat = !titleFormats.includes(currentTitleFormat);
     const activeLorebook = resolveLorebookName();
     const manualMode = Boolean(moduleSettings.manualModeEnabled);
+    const sceneContext = buildStmbSceneContext();
+    const soloCharacter = getCurrentSoloCharacter(sceneContext);
+    const rawManualLorebook = String(getStmbState(sceneContext).manualLorebook || '').trim();
     const summaryOrderMode = String(moduleSettings.summaryOrderMode || moduleSettings.summaryEntrySettings?.orderMode || 'auto').toLowerCase();
     const summaryOrderValue = Number.isFinite(Number(moduleSettings.summaryOrderValue))
         ? Math.trunc(Number(moduleSettings.summaryOrderValue))
@@ -2328,6 +2401,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
                 <div id="stmb-settings-manual-buttons" class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap" style="display:${manualMode ? 'flex' : 'none'}">
                     <div id="stmb-settings-select-lorebook" class="menu_button interactable" data-i18n="Select Lorebook">Select Lorebook</div>
                     <div id="stmb-settings-clear-lorebook" class="menu_button interactable" data-i18n="Clear Selection">Clear Selection</div>
+                    ${soloCharacter ? renderCharacterMemoryBookLockButton({ ...soloCharacter, selectedLorebook: rawManualLorebook }) : ''}
                 </div>
                 <div id="stmb-settings-automatic-info" class="marginTop5 ${manualMode ? 'displayNone' : ''}">
                     <small class="opacity50p">${activeLorebook ? t`Using chat-bound lorebook "${escapeHtml(activeLorebook)}"` : translate('No chat-bound lorebook. Memory creation will prompt for recovery when needed.')}</small>
@@ -2525,6 +2599,34 @@ async function refreshOpenSettingsPopupSceneState() {
     }
 }
 
+function refreshSettingsPopupCharacterLocks(dialog) {
+    const sceneContext = buildStmbSceneContext();
+    const manualMode = Boolean(getModuleSettings().manualModeEnabled);
+    const groupSection = dialog.querySelector('#stmb-settings-manual-group-lorebooks');
+    if (groupSection && sceneContext.isGroupChat) {
+        groupSection.outerHTML = DOMPurify.sanitize(renderManualGroupLorebookBindingsHtml(manualMode));
+        applyLocale(dialog);
+        return;
+    }
+
+    const character = getCurrentSoloCharacter(sceneContext);
+    if (!character) return;
+    const state = getStmbState(sceneContext);
+    const rawManualLorebook = String(state.manualLorebook || '').trim();
+    const lock = getCharacterMemoryBookLock(stmbSettings.characterMemoryBookLocks, character.characterKey);
+    const lockButton = dialog.querySelector('.stmb-character-memory-book-lock');
+    if (lockButton) {
+        lockButton.outerHTML = DOMPurify.sanitize(renderCharacterMemoryBookLockButton({ ...character, selectedLorebook: rawManualLorebook }));
+    }
+    for (const selector of ['#stmb-settings-select-lorebook', '#stmb-settings-clear-lorebook']) {
+        const control = dialog.querySelector(selector);
+        if (!control) continue;
+        control.classList.toggle('interactable', !lock);
+        control.setAttribute('aria-disabled', lock ? 'true' : 'false');
+        control.title = lock ? translate('Unlock this character before changing their manual Memory Book.') : '';
+    }
+}
+
 function updateSettingsPopupDynamicState(dialog, currentUiConnection) {
     if (!dialog) {
         return;
@@ -2556,6 +2658,7 @@ function updateSettingsPopupDynamicState(dialog, currentUiConnection) {
     if (manualButtons) {
         manualButtons.style.display = manualMode ? 'flex' : 'none';
     }
+    refreshSettingsPopupCharacterLocks(dialog);
 
     if (automaticInfo) {
         automaticInfo.classList.toggle('displayNone', manualMode);
@@ -4034,9 +4137,7 @@ function buildSidePromptProfileOptionsHtml(selectedIndex) {
 }
 
 function getSidePromptMemoryLorebookName() {
-    return getModuleSettings().manualModeEnabled
-        ? String(getStmbState().manualLorebook || '').trim()
-        : String(chat_metadata?.[METADATA_KEY] || '').trim();
+    return resolveLorebookName();
 }
 
 function getChatSidePromptLorebookOverrides() {
@@ -5701,7 +5802,11 @@ async function showMainEntryPopup(view = 'main', options = {}) {
         if (target.matches('#stmb-settings-manual-mode-enabled')) {
             if (target.checked) {
                 const state = getStmbState();
-                if (!String(state.manualLorebook || '').trim()) {
+                const soloCharacter = getCurrentSoloCharacter();
+                const soloLock = soloCharacter
+                    ? getCharacterMemoryBookLock(stmbSettings.characterMemoryBookLocks, soloCharacter.characterKey)
+                    : null;
+                if (!String(state.manualLorebook || '').trim() && !soloLock) {
                     const chatBoundLorebook = String(chat_metadata[METADATA_KEY] || '').trim();
                     if (chatBoundLorebook && !isReservedTemplateWorldName(chatBoundLorebook)) {
                         const setupPopup = new Popup(DOMPurify.sanitize(`
@@ -5758,6 +5863,12 @@ async function showMainEntryPopup(view = 'main', options = {}) {
         if (target.matches('.stmb-manual-group-lorebook-select')) {
             const memberKey = String(target.dataset.memberKey || '').trim();
             const lorebookName = String(target.value || '').trim();
+            const member = getStmbGroupMembers().find(item => item.key === memberKey);
+            if (member && getCharacterMemoryBookLock(stmbSettings.characterMemoryBookLocks, member.avatar)) {
+                toastr.warning(translate('Unlock this character before changing their manual Memory Book.'), 'STMB');
+                updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+                return;
+            }
             if (lorebookName && lorebookName === String(getStmbState().manualLorebook || '').trim()) {
                 toastr.error(translate('A character lorebook cannot be the group Memory Book.'), 'STMB');
                 target.value = '';
@@ -5766,7 +5877,6 @@ async function showMainEntryPopup(view = 'main', options = {}) {
             if (memberKey && lorebookName) {
                 const bindings = getManualCharacterLorebookBindings();
                 const previousLorebookName = String(bindings[memberKey] || '').trim();
-                const member = getStmbGroupMembers().find(item => item.key === memberKey);
                 target.disabled = true;
                 try {
                     await syncStmbGroupStloMetadata({
@@ -5786,6 +5896,7 @@ async function showMainEntryPopup(view = 'main', options = {}) {
                 } finally {
                     target.disabled = false;
                 }
+                updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
             }
             return;
         }
@@ -5885,6 +5996,11 @@ async function showMainEntryPopup(view = 'main', options = {}) {
         }
 
         if (target.closest('#stmb-settings-select-lorebook')) {
+            const soloCharacter = getCurrentSoloCharacter();
+            if (soloCharacter && getCharacterMemoryBookLock(stmbSettings.characterMemoryBookLocks, soloCharacter.characterKey)) {
+                toastr.warning(translate('Unlock this character before changing their manual Memory Book.'), 'STMB');
+                return;
+            }
             const selectedLorebook = await showLorebookPickerPopup(getManualPrimaryLorebookNames(), {
                 title: 'Select Lorebook',
                 emptyMessage: 'No existing lorebooks are available.',
@@ -5899,15 +6015,45 @@ async function showMainEntryPopup(view = 'main', options = {}) {
         }
 
         if (target.closest('#stmb-settings-clear-lorebook')) {
+            const soloCharacter = getCurrentSoloCharacter();
+            if (soloCharacter && getCharacterMemoryBookLock(stmbSettings.characterMemoryBookLocks, soloCharacter.characterKey)) {
+                toastr.warning(translate('Unlock this character before changing their manual Memory Book.'), 'STMB');
+                return;
+            }
             delete getStmbState().manualLorebook;
             saveMetadataDebounced();
             void refreshStmbMacroCache();
             updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
             return;
         }
+        const characterLockButton = target.closest('.stmb-character-memory-book-lock');
+        if (characterLockButton) {
+            const characterKey = String(characterLockButton.dataset.characterKey || '').trim();
+            const characterName = String(characterLockButton.dataset.characterName || characterKey).trim();
+            const selectedLorebook = String(characterLockButton.dataset.selectedLorebook || '').trim();
+            const currentLock = getCharacterMemoryBookLock(stmbSettings.characterMemoryBookLocks, characterKey);
+            if (currentLock) {
+                removeCharacterMemoryBookLock(stmbSettings.characterMemoryBookLocks, characterKey);
+                toastr.success(formatCharacterLockText('{{characterName}} no longer has a locked Memory Book.', { characterName }), 'STMB');
+            } else if (selectedLorebook && world_names.includes(selectedLorebook)) {
+                setCharacterMemoryBookLock(stmbSettings.characterMemoryBookLocks, characterKey, characterName, selectedLorebook);
+                toastr.success(formatCharacterLockText('{{characterName}} will always use "{{lorebookName}}" as their Memory Book in manual mode.', { characterName, lorebookName: selectedLorebook }), 'STMB');
+            } else {
+                toastr.warning(translate('Select a valid character Memory Book before locking.'), 'STMB');
+                return;
+            }
+            persistSettings();
+            void refreshStmbMacroCache();
+            return;
+        }
         const groupLorebookClear = target.closest('.stmb-manual-group-lorebook-clear');
         if (groupLorebookClear) {
             const memberKey = String(groupLorebookClear.dataset.memberKey || '').trim();
+            const member = getStmbGroupMembers().find(item => item.key === memberKey);
+            if (member && getCharacterMemoryBookLock(stmbSettings.characterMemoryBookLocks, member.avatar)) {
+                toastr.warning(translate('Unlock this character before changing their manual Memory Book.'), 'STMB');
+                return;
+            }
             if (memberKey) {
                 delete getManualCharacterLorebookBindings()[memberKey];
                 saveMetadataDebounced();
@@ -5915,6 +6061,7 @@ async function showMainEntryPopup(view = 'main', options = {}) {
                 if (select) select.value = '';
                 groupLorebookClear.disabled = true;
                 toastr.warning(translate('Character lorebook cleared. Its STLO character filter was retained; remove it in STLO if it is no longer needed.'), 'STMB');
+                updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
             }
             return;
         }
@@ -6280,8 +6427,27 @@ export function isStmbChatCopyEnabled() {
     return getModuleSettings().copyMemoryBooksWithChatCopies !== false;
 }
 
+/** Returns content-free lock exclusions for coordinated branch and checkpoint copying. */
+export function getStmbChatCopyLockContext() {
+    if (!getModuleSettings().manualModeEnabled) {
+        return { soloMemoryBookLocked: false, lockedCharacterBindingKeys: [] };
+    }
+    const sceneContext = buildStmbSceneContext();
+    if (sceneContext.isGroupChat) {
+        const snapshot = getManualGroupBindingSnapshot(sceneContext);
+        return {
+            soloMemoryBookLocked: false,
+            lockedCharacterBindingKeys: Object.keys(snapshot.locksByMemberKey || {}),
+        };
+    }
+    return {
+        soloMemoryBookLocked: Boolean(getCurrentManualLorebookResolution(sceneContext).lock),
+        lockedCharacterBindingKeys: [],
+    };
+}
+
 /** Returns whether the active chat metadata contains at least one STMB lorebook binding. */
-export function hasStmbChatCopyBindings(metadata = chat_metadata) {
+export function hasStmbChatCopyBindings(metadata = chat_metadata, lockContext = getStmbChatCopyLockContext()) {
     const state = metadata?.[STMB_METADATA_KEY];
     if (!state || typeof state !== 'object' || Array.isArray(state)) return false;
     const hasValue = value => {
@@ -6290,10 +6456,10 @@ export function hasStmbChatCopyBindings(metadata = chat_metadata) {
         if (!value || typeof value !== 'object') return false;
         return hasValue(value.lorebookName) || hasValue(value.name);
     };
-    return (!hasValue(state.manualLorebook) && hasValue(metadata?.world_info))
-        || hasValue(state.manualLorebook)
-        || Object.values(state.manualCharacterLorebooks || {}).some(hasValue)
-        || Object.values(state.sidePromptLorebookOverrides || {}).some(hasValue);
+    if (Object.values(state.sidePromptLorebookOverrides || {}).some(hasValue)) return true;
+    if (!lockContext.soloMemoryBookLocked && ((!hasValue(state.manualLorebook) && hasValue(metadata?.world_info)) || hasValue(state.manualLorebook))) return true;
+    const lockedKeys = new Set(lockContext.lockedCharacterBindingKeys || []);
+    return Object.entries(state.manualCharacterLorebooks || {}).some(([key, value]) => !lockedKeys.has(key) && hasValue(value));
 }
 
 function getPersistedStmbState() {
@@ -6617,9 +6783,17 @@ function getStmbGroupMembers(sceneContext = buildStmbSceneContext()) {
 }
 
 function getManualGroupBindingSnapshot(sceneContext = buildStmbSceneContext(), state = getStmbState(sceneContext)) {
+    const members = structuredClone(getStmbGroupMembers(sceneContext));
+    const resolved = resolveManualGroupCharacterBindings({
+        manualModeEnabled: Boolean(getModuleSettings().manualModeEnabled),
+        members,
+        chatBindings: getManualCharacterLorebookBindings(state),
+        locks: stmbSettings.characterMemoryBookLocks,
+    });
     return {
-        members: structuredClone(getStmbGroupMembers(sceneContext)),
-        bindings: structuredClone(getManualCharacterLorebookBindings(state)),
+        members,
+        bindings: structuredClone(resolved.bindings),
+        locksByMemberKey: structuredClone(resolved.locksByMemberKey),
         canonicalLorebookName: String(state.manualLorebook || '').trim(),
     };
 }
@@ -6679,7 +6853,11 @@ function validateManualGroupBindingSnapshot(snapshot) {
         const lorebookName = String(bindings[member.key] || '').trim();
         if (!lorebookName) issues.push(`${member.name}: no lorebook selected`);
         else if (canonicalLorebookName && lorebookName === canonicalLorebookName) issues.push(`${member.name}: character lorebook cannot be the group Memory Book`);
-        else if (!world_names.includes(lorebookName) || isReservedTemplateWorldName(lorebookName)) issues.push(`${member.name}: "${lorebookName}" not found`);
+        else if (!world_names.includes(lorebookName) || isReservedTemplateWorldName(lorebookName)) {
+            issues.push(snapshot?.locksByMemberKey?.[member.key]
+                ? formatCharacterLockText('{{characterName}}: locked Memory Book "{{lorebookName}}" not found; unlock and repair this assignment', { characterName: member.name, lorebookName })
+                : `${member.name}: "${lorebookName}" not found`);
+        }
     }
     if (issues.length > 0) {
         throw new Error(`Group manual lorebooks are incomplete: ${issues.join('; ')}`);
@@ -7239,7 +7417,8 @@ async function resolveAutoSummaryLorebook(options = {}) {
     }
 
     const state = getStmbState(sceneContext);
-    let lorebookName = String(state.manualLorebook || '').trim();
+    const manualResolution = getCurrentManualLorebookResolution(sceneContext || buildStmbSceneContext(), state);
+    let lorebookName = String(manualResolution.lorebookName || '').trim();
     if (!lorebookName) {
         const decision = await showAutoSummaryDecisionPopup();
         if (decision.action !== 'select') {
@@ -7276,6 +7455,7 @@ async function resolveAutoSummaryLorebook(options = {}) {
         const resolvedLorebookName = await ensureResolvedLorebookName({
             manualMode: true,
             getManualLorebook: () => state.manualLorebook,
+            getLockedManualLorebook: () => manualResolution.lock?.lorebookName,
             setManualLorebook: async selectedLorebook => {
                 state.manualLorebook = String(selectedLorebook || '').trim();
                 saveMetadataDebounced();
@@ -7432,8 +7612,7 @@ function handleMessageDeletion(deletedId) {
 
 function resolveLorebookName() {
     if (getModuleSettings().manualModeEnabled) {
-        const manualLorebook = String(getStmbState().manualLorebook || '').trim();
-        return manualLorebook;
+        return String(getCurrentManualLorebookResolution().lorebookName || '').trim();
     }
 
     const chatLorebook = String(chat_metadata[METADATA_KEY] || '').trim();
@@ -7479,6 +7658,7 @@ function handleLorebookReferencesUpdated(payloadOrOperation = {}, oldNameArg = '
     }
 
     let metadataChanged = false;
+    let settingsChanged = false;
     const state = getPersistedStmbState();
     const migratedManualLorebook = migrateStmbLorebookReferenceValue(state.manualLorebook, target, replacement);
     if (migratedManualLorebook !== state.manualLorebook) {
@@ -7519,12 +7699,25 @@ function handleLorebookReferencesUpdated(payloadOrOperation = {}, oldNameArg = '
         }
     }
 
+    if (operation === 'rename') {
+        for (const lock of Object.values(stmbSettings.characterMemoryBookLocks || {})) {
+            if (String(lock?.lorebookName || '').trim() !== target) continue;
+            lock.lorebookName = replacement;
+            settingsChanged = true;
+        }
+    }
+
     updateStmbJobsForLorebookReference({ operation, oldName: target, newName: replacement });
     migrateStmbContextSettingsLorebookReference({ operation, oldName: target, newName: replacement }).catch(error => {
         console.warn('STMB context settings lorebook reference migration failed', error);
     });
     if (metadataChanged) {
         saveMetadataDebounced();
+        void refreshStmbMacroCache();
+    }
+    if (settingsChanged) {
+        stmbSettings = normalizeStmbSettings(stmbSettings);
+        saveSettingsDebounced();
         void refreshStmbMacroCache();
     }
 }
@@ -7538,9 +7731,11 @@ function renderLorebookNameFromTemplate() {
 }
 
 async function ensureLorebookName(createContext = 'chat') {
+    const manualResolution = getCurrentManualLorebookResolution();
     return ensureResolvedLorebookName({
         manualMode: getModuleSettings().manualModeEnabled,
         getManualLorebook: () => getStmbState().manualLorebook,
+        getLockedManualLorebook: () => manualResolution.lock?.lorebookName,
         setManualLorebook: async selectedLorebook => {
             getStmbState().manualLorebook = String(selectedLorebook || '').trim();
             saveMetadataDebounced();
@@ -10396,10 +10591,12 @@ function getRegenerationDisabledMessage(eligibility) {
 
 function getCurrentRegenerationLorebookNames() {
     const state = getStmbState();
+    const sceneContext = buildStmbSceneContext();
+    const groupBindings = sceneContext.isGroupChat ? getManualGroupBindingSnapshot(sceneContext, state).bindings : {};
     const names = new Set([
         String(chat_metadata?.[METADATA_KEY] || '').trim(),
-        String(state.manualLorebook || '').trim(),
-        ...Object.values(getManualCharacterLorebookBindings(state)).map(value => String(value || '').trim()),
+        String(resolveLorebookName() || '').trim(),
+        ...Object.values(groupBindings).map(value => String(value || '').trim()),
     ]);
     names.delete('');
     return names;
@@ -10408,10 +10605,11 @@ function getCurrentRegenerationLorebookNames() {
 async function findLinkedManualGroupLorebooks(lorebookName, entry) {
     if (!entry?.STMB_inclusionGroup && !entry?.STMB_canonicalEntryUid) return [];
     const state = getStmbState();
+    const effectiveBindings = getManualGroupBindingSnapshot().bindings;
     const candidates = new Set([
         String(entry?.STMB_canonicalLorebook || '').trim(),
         String(state.manualLorebook || '').trim(),
-        ...Object.values(getManualCharacterLorebookBindings(state)).map(value => String(value || '').trim()),
+        ...Object.values(effectiveBindings).map(value => String(value || '').trim()),
     ]);
     candidates.delete('');
     candidates.delete(lorebookName);
@@ -10696,7 +10894,7 @@ export function initStmb() {
     configureClipRuntime();
     initStmbMacros({
         getSettings: () => stmbSettings,
-        getManualLorebook: () => getStmbState().manualLorebook,
+        getManualLorebook: () => resolveLorebookName(),
     });
     ensurePlannerStatusUi();
     void pollCurrentChatPlannerState();
@@ -10759,6 +10957,24 @@ export function initStmb() {
     });
 
     eventSource.on(event_types.LOREBOOK_REFERENCES_UPDATED, handleLorebookReferencesUpdated);
+    eventSource.on(event_types.CHARACTER_RENAMED, (oldAvatar, newAvatar) => {
+        const renamedCharacter = getContext()?.characters?.find?.(character => character?.avatar === newAvatar);
+        if (!moveCharacterMemoryBookLock(stmbSettings.characterMemoryBookLocks, oldAvatar, newAvatar, renamedCharacter?.name)) return;
+        saveSettingsDebounced();
+        void refreshStmbMacroCache();
+    });
+    eventSource.on(event_types.CHARACTER_EDITED, payload => {
+        const character = payload?.detail?.character || payload?.character;
+        if (!character?.avatar || !refreshCharacterMemoryBookLockName(stmbSettings.characterMemoryBookLocks, character.avatar, character.name)) return;
+        saveSettingsDebounced();
+        void refreshStmbMacroCache();
+    });
+    eventSource.on(event_types.CHARACTER_DELETED, payload => {
+        const character = payload?.detail?.character || payload?.character;
+        if (!character?.avatar || !removeCharacterMemoryBookLock(stmbSettings.characterMemoryBookLocks, character.avatar)) return;
+        saveSettingsDebounced();
+        void refreshStmbMacroCache();
+    });
     eventSource.on(event_types.MESSAGE_RECEIVED, (messageId) => {
         const messageElement = chatElement.find(`.mes[mesid="${messageId}"]`).get(0);
         if (messageElement) {

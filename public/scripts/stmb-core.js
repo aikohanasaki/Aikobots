@@ -1,11 +1,12 @@
 import { cloneStloSettings } from './stlo-utils.js';
+import { normalizeCharacterMemoryBookLocks } from './stmb-character-memory-book-locks.js';
 
 export const STMB_PARITY = Object.freeze({
     sourceRepo: 'aikohanasaki/SillyTavern-MemoryBooks',
     sourceCommit: 'cae7ee71d1730b6ee7f6829b955a2b53566a9b02',
 });
 
-export const STMB_SETTINGS_VERSION = 5;
+export const STMB_SETTINGS_VERSION = 6;
 export const STMB_METADATA_KEY = 'STMemoryBooks';
 export const STMB_MANAGED_FLAG = 'stmemorybooks';
 export const STMB_DEFAULT_PROFILE_NAME = 'Current SillyTavern Settings';
@@ -612,6 +613,7 @@ export function createDefaultStmbSettings() {
         arcPromptPresetMetadata: {},
         profiles: [],
         defaultProfile: 0,
+        characterMemoryBookLocks: {},
         migrationVersion: STMB_SETTINGS_VERSION,
     };
 }
@@ -857,6 +859,7 @@ export function importLegacyStmbSettings(legacySettings) {
             : { ...defaults.arcPromptPresetMetadata },
         profiles: Array.isArray(legacySettings.profiles) ? legacySettings.profiles : defaults.profiles,
         defaultProfile: legacySettings.defaultProfile ?? defaults.defaultProfile,
+        characterMemoryBookLocks: normalizeCharacterMemoryBookLocks(legacySettings.characterMemoryBookLocks).locks,
         migrationVersion: Number.isFinite(Number(legacySettings.migrationVersion))
             ? Number(legacySettings.migrationVersion)
             : defaults.migrationVersion,
@@ -967,7 +970,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         titleFormat,
     });
     // Profile validation also migrates legacy connection fields to the v5 override shape.
-    if (migrationVersion < 5) {
+    if (migrationVersion < STMB_SETTINGS_VERSION) {
         migrationVersion = STMB_SETTINGS_VERSION;
     }
     defaultProfile = profileValidation.settings.defaultProfile;
@@ -996,6 +999,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
             : { ...defaults.arcPromptPresetMetadata },
         profiles: profileValidation.settings.profiles,
         defaultProfile,
+        characterMemoryBookLocks: normalizeCharacterMemoryBookLocks(source.characterMemoryBookLocks).locks,
         migrationVersion,
     };
 }

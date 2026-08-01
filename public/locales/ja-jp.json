@@ -6060,5 +6060,16 @@
     "The regenerated side prompt was blank. Nothing was overwritten.": "再生成されたサイドプロンプトが空でした。何も上書きされていません。",
     "The side-prompt message range could not be saved. Reload the chat and try again.": "サイドプロンプトのメッセージ範囲を保存できませんでした。チャットを再読み込みして、もう一度お試しください。",
     "No capturable messages remain in the original range.": "元の範囲に取得可能なメッセージが残っていません。",
-    "Memory regeneration failed.": "メモリの再生成に失敗しました。"
+    "Memory regeneration failed.": "メモリの再生成に失敗しました。",
+    "Locked Memory Book \"{{lorebookName}}\" is missing. Unlock this character to repair the assignment.": "ロックされたメモリーブック「{{lorebookName}}」がありません。割り当てを修復するには、このキャラクターのロックを解除してください。",
+    "Unlock {{characterName}} from \"{{lorebookName}}\"": "{{characterName}} と「{{lorebookName}}」のロックを解除",
+    "Select a valid character Memory Book before locking.": "ロックする前に、有効なキャラクターのメモリーブックを選択してください。",
+    "Always use \"{{lorebookName}}\" as {{characterName}}'s Memory Book": "「{{lorebookName}}」を常に {{characterName}} のメモリーブックとして使用",
+    "{{characterName}} no longer has a locked Memory Book.": "{{characterName}} のメモリーブックのロックを解除しました。",
+    "{{characterName}} will always use \"{{lorebookName}}\" as their Memory Book in manual mode.": "手動モードでは、{{characterName}} は常に「{{lorebookName}}」をメモリーブックとして使用します。",
+    "Unlock this character before changing their manual Memory Book.": "手動メモリーブックを変更する前に、このキャラクターのロックを解除してください。",
+    "The locked Memory Book \"{{lorebookName}}\" no longer exists. Unlock this character and choose a valid Memory Book.": "ロックされたメモリーブック「{{lorebookName}}」は存在しません。このキャラクターのロックを解除し、有効なメモリーブックを選択してください。",
+    "The locked Memory Book \"{{lorebookName}}\" could not be loaded. Unlock this character and choose a valid Memory Book.": "ロックされたメモリーブック「{{lorebookName}}」を読み込めませんでした。このキャラクターのロックを解除し、有効なメモリーブックを選択してください。",
+    "{{characterName}}: locked Memory Book \"{{lorebookName}}\" not found; unlock and repair this assignment": "{{characterName}}：ロックされたメモリーブック「{{lorebookName}}」が見つかりません。この割り当てを解除して修復してください",
+    "Missing: ${0}": "見つかりません：${0}"
 }

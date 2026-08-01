@@ -6117,5 +6117,16 @@
     "The regenerated side prompt was blank. Nothing was overwritten.": "Le prompt secondaire régénéré était vide. Rien n’a été remplacé.",
     "The side-prompt message range could not be saved. Reload the chat and try again.": "La plage de messages du prompt secondaire n’a pas pu être enregistrée. Rechargez le chat et réessayez.",
     "No capturable messages remain in the original range.": "Il ne reste aucun message capturable dans la plage d’origine.",
-    "Memory regeneration failed.": "La régénération de la mémoire a échoué."
+    "Memory regeneration failed.": "La régénération de la mémoire a échoué.",
+    "Locked Memory Book \"{{lorebookName}}\" is missing. Unlock this character to repair the assignment.": "Le Memory Book verrouillé « {{lorebookName}} » est manquant. Déverrouillez ce personnage pour réparer l’attribution.",
+    "Unlock {{characterName}} from \"{{lorebookName}}\"": "Déverrouiller {{characterName}} de « {{lorebookName}} »",
+    "Select a valid character Memory Book before locking.": "Sélectionnez un Memory Book de personnage valide avant de le verrouiller.",
+    "Always use \"{{lorebookName}}\" as {{characterName}}'s Memory Book": "Toujours utiliser « {{lorebookName}} » comme Memory Book de {{characterName}}",
+    "{{characterName}} no longer has a locked Memory Book.": "{{characterName}} n’a plus de Memory Book verrouillé.",
+    "{{characterName}} will always use \"{{lorebookName}}\" as their Memory Book in manual mode.": "{{characterName}} utilisera toujours « {{lorebookName}} » comme Memory Book en mode manuel.",
+    "Unlock this character before changing their manual Memory Book.": "Déverrouillez ce personnage avant de modifier son Memory Book manuel.",
+    "The locked Memory Book \"{{lorebookName}}\" no longer exists. Unlock this character and choose a valid Memory Book.": "Le Memory Book verrouillé « {{lorebookName}} » n’existe plus. Déverrouillez ce personnage et choisissez un Memory Book valide.",
+    "The locked Memory Book \"{{lorebookName}}\" could not be loaded. Unlock this character and choose a valid Memory Book.": "Le Memory Book verrouillé « {{lorebookName}} » n’a pas pu être chargé. Déverrouillez ce personnage et choisissez un Memory Book valide.",
+    "{{characterName}}: locked Memory Book \"{{lorebookName}}\" not found; unlock and repair this assignment": "{{characterName}} : le Memory Book verrouillé « {{lorebookName}} » est introuvable ; déverrouillez et réparez cette attribution",
+    "Missing: ${0}": "Manquant : ${0}"
 }

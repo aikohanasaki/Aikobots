@@ -62,9 +62,14 @@ let namedBookmarksSortAscending = true;
 let currentNamedBookmarks = [];
 
 async function chooseStmbChatCopyMode(kind) {
-    const { hasStmbChatCopyBindings, isStmbChatCopyEnabled } = await import('./stmb.js');
-    if (!isStmbChatCopyEnabled() || !hasStmbChatCopyBindings(chat_metadata)) {
+    const { getStmbChatCopyLockContext, hasStmbChatCopyBindings, isStmbChatCopyEnabled } = await import('./stmb.js');
+    if (!isStmbChatCopyEnabled()) {
         return { copyMemoryBooks: false, prompted: false };
+    }
+    const lockContext = getStmbChatCopyLockContext();
+    if (!hasStmbChatCopyBindings(chat_metadata, lockContext)) {
+        const hasLocks = lockContext.soloMemoryBookLocked || lockContext.lockedCharacterBindingKeys.length > 0;
+        return { copyMemoryBooks: Boolean(hasLocks), prompted: false };
     }
 
     const isCheckpoint = kind === 'checkpoint';
@@ -115,7 +120,7 @@ function getSelectedSwipeUuid(message, requestedSwipeId = null) {
     return Number.isInteger(swipeId) ? String(message?.swipe_info?.[swipeId]?.[AIKOBOTS_SWIPE_UUID_KEY] || '') : '';
 }
 
-async function saveDirectChatCopy({ name, mesId, metadata, kind, copyMemoryBooks, swipeId = null, operationId = uuidv4() }) {
+async function saveDirectChatCopy({ name, mesId, metadata, kind, copyMemoryBooks, stmbCopyLockContext = null, swipeId = null, operationId = uuidv4() }) {
     const sourceChatId = getCurrentChatId();
     const character = characters[this_chid];
     const message = chat[mesId];
@@ -139,6 +144,8 @@ async function saveDirectChatCopy({ name, mesId, metadata, kind, copyMemoryBooks
             header_overrides: { chat_metadata: metadata },
             copy_kind: kind,
             copy_memory_books: copyMemoryBooks,
+            solo_memory_book_locked: stmbCopyLockContext?.soloMemoryBookLocked === true,
+            locked_character_binding_keys: stmbCopyLockContext?.lockedCharacterBindingKeys || [],
             selected_message_uuid: message?.[AIKOBOTS_MESSAGE_UUID_KEY] || undefined,
             selected_swipe_uuid: getSelectedSwipeUuid(message, swipeId) || undefined,
             base_revision: getChatSaveRevision(),
@@ -157,10 +164,14 @@ function getSafeStmbCopyFailureMessage(errorCode) {
 }
 
 async function runBookmarkChatCopy({ name, mesId, metadata, kind, copyMemoryBooks, swipeId = null }) {
+    const stmbCopyLockContext = copyMemoryBooks
+        ? (await import('./stmb.js')).getStmbChatCopyLockContext()
+        : null;
     const run = async (includeMemoryBooks, operationId) => selected_group
         ? await saveGroupBookmarkChat(selected_group, name, metadata, mesId, {
             copyKind: kind,
             copyMemoryBooks: includeMemoryBooks,
+            stmbCopyLockContext,
             swipeId,
             operationId,
         })
@@ -170,6 +181,7 @@ async function runBookmarkChatCopy({ name, mesId, metadata, kind, copyMemoryBook
             metadata,
             kind,
             copyMemoryBooks: includeMemoryBooks,
+            stmbCopyLockContext,
             swipeId,
             operationId,
         });

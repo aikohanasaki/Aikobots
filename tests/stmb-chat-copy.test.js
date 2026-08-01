@@ -96,6 +96,41 @@ test('UUID ranges remain authoritative when numeric message positions changed', 
 
     assert.equal(result.data.entries[1].STMB_startUuid, 'target-1');
     assert.equal(result.data.entries[1].STMB_endUuid, 'target-3');
+    assert.equal(result.data.entries[1].STMB_start, 1);
+    assert.equal(result.data.entries[1].STMB_end, 3);
+});
+
+test('a locked solo book stays on its original book during a branch copy', () => {
+    const metadata = {
+        world_info: 'Solo',
+        STMemoryBooks: {
+            manualLorebook: 'Solo',
+            sidePromptLorebookOverrides: { tracker: 'Tracker' },
+        },
+    };
+    const options = { soloMemoryBookLocked: true };
+    assert.deepEqual(collectStmbChatLorebookNames(metadata, options), ['Tracker']);
+    const rewritten = rewriteStmbChatMetadataForCopy(metadata, new Map([
+        ['Solo', 'Solo Branch 1'],
+        ['Tracker', 'Tracker Branch 1'],
+    ]), 10, options);
+    assert.equal(rewritten.world_info, 'Solo');
+    assert.equal(rewritten.STMemoryBooks.manualLorebook, 'Solo');
+    assert.equal(rewritten.STMemoryBooks.sidePromptLorebookOverrides.tracker, 'Tracker Branch 1');
+});
+
+test('locked group members stay original while unlocked member books are branched', () => {
+    const metadata = {
+        STMemoryBooks: { manualCharacterLorebooks: { alice: 'Alice', bob: 'Bob' } },
+    };
+    const options = { lockedCharacterBindingKeys: ['alice'] };
+    assert.deepEqual(collectStmbChatLorebookNames(metadata, options), ['Bob']);
+    const rewritten = rewriteStmbChatMetadataForCopy(metadata, new Map([
+        ['Alice', 'Alice Branch 1'],
+        ['Bob', 'Bob Branch 1'],
+    ]), 10, options);
+    assert.equal(rewritten.STMemoryBooks.manualCharacterLorebooks.alice, 'Alice');
+    assert.equal(rewritten.STMemoryBooks.manualCharacterLorebooks.bob, 'Bob Branch 1');
 });
 
 test('legacy arc consolidations use source relationships instead of message ranges', () => {

@@ -25,6 +25,7 @@ import {
     STMB_METADATA_KEY,
 } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
+import { resolveManualLorebookForCharacter } from './stmb-character-memory-book-locks.js';
 import { applyStmbIncomingRegex, buildSidePromptText, fetchPreviousMemories } from './stmb-prompt-assembly.js';
 import {
     applySidePromptMacros,
@@ -307,9 +308,18 @@ function renderLorebookNameFromTemplate(settings) {
 }
 
 async function ensureLorebookName(settings) {
+    const sceneContext = buildStmbSceneContext();
+    const resolution = resolveManualLorebookForCharacter({
+        manualModeEnabled: Boolean(settings?.moduleSettings?.manualModeEnabled),
+        isGroupChat: Boolean(sceneContext.isGroupChat),
+        characterKey: sceneContext?.chatRef?.avatarUrl,
+        manualLorebook: getStmbChatState().manualLorebook,
+        locks: settings?.characterMemoryBookLocks,
+    });
     return ensureResolvedLorebookName({
         manualMode: Boolean(settings?.moduleSettings?.manualModeEnabled),
         getManualLorebook: () => getStmbChatState().manualLorebook,
+        getLockedManualLorebook: () => resolution.lock?.lorebookName,
         setManualLorebook: async selectedLorebook => {
             getStmbChatState().manualLorebook = String(selectedLorebook || '').trim();
             saveMetadataDebounced();

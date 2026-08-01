@@ -50,19 +50,21 @@ function addBookNameValues(names, value) {
 }
 
 /** Returns the distinct Memory Books referenced by authoritative chat metadata. */
-export function collectStmbChatLorebookNames(chatMetadata) {
+export function collectStmbChatLorebookNames(chatMetadata, { soloMemoryBookLocked = false, lockedCharacterBindingKeys = [] } = {}) {
     if (!isPlainObject(chatMetadata) || !isPlainObject(chatMetadata[STMB_METADATA_KEY])) {
         return [];
     }
 
     const names = new Set();
     const state = chatMetadata[STMB_METADATA_KEY];
-    if (!String(state.manualLorebook || '').trim()) {
+    const lockedKeys = new Set(Array.isArray(lockedCharacterBindingKeys) ? lockedCharacterBindingKeys.map(String) : []);
+    if (!soloMemoryBookLocked && !String(state.manualLorebook || '').trim()) {
         addBookNameValues(names, chatMetadata.world_info);
     }
-    addBookName(names, state.manualLorebook);
-    Object.values(isPlainObject(state.manualCharacterLorebooks) ? state.manualCharacterLorebooks : {})
-        .forEach(value => addBookNameValues(names, value));
+    if (!soloMemoryBookLocked) addBookName(names, state.manualLorebook);
+    Object.entries(isPlainObject(state.manualCharacterLorebooks) ? state.manualCharacterLorebooks : {})
+        .filter(([key]) => !lockedKeys.has(key))
+        .forEach(([, value]) => addBookNameValues(names, value));
     Object.values(isPlainObject(state.sidePromptLorebookOverrides) ? state.sidePromptLorebookOverrides : {})
         .forEach(value => addBookNameValues(names, value));
     return [...names];
@@ -243,6 +245,8 @@ export function rewriteManagedMemoryBoundaryUuids(data, targetMessages, resolveS
         }
         entry.STMB_startUuid = startUuid;
         entry.STMB_endUuid = endUuid;
+        entry.STMB_start = range.start;
+        entry.STMB_end = range.end;
     }
     return data;
 }
@@ -264,19 +268,26 @@ function replaceBookReference(value, nameMap) {
 }
 
 /** Rewrites copied-chat STMB bindings and clamps point-in-time processing state. */
-export function rewriteStmbChatMetadataForCopy(chatMetadata, nameMap, cutoffIndex) {
+export function rewriteStmbChatMetadataForCopy(chatMetadata, nameMap, cutoffIndex, { soloMemoryBookLocked = false, lockedCharacterBindingKeys = [] } = {}) {
     const metadata = structuredClone(isPlainObject(chatMetadata) ? chatMetadata : {});
     const state = metadata[STMB_METADATA_KEY];
     if (!isPlainObject(state)) {
         return metadata;
     }
 
-    metadata.world_info = replaceBookReference(metadata.world_info, nameMap);
-    if (typeof state.manualLorebook === 'string') state.manualLorebook = nameMap.get(state.manualLorebook) || state.manualLorebook;
-    for (const key of ['manualCharacterLorebooks', 'sidePromptLorebookOverrides']) {
-        if (!isPlainObject(state[key])) continue;
-        for (const [bindingKey, value] of Object.entries(state[key])) {
-            state[key][bindingKey] = replaceBookReference(value, nameMap);
+    const lockedKeys = new Set(Array.isArray(lockedCharacterBindingKeys) ? lockedCharacterBindingKeys.map(String) : []);
+    if (!soloMemoryBookLocked) {
+        metadata.world_info = replaceBookReference(metadata.world_info, nameMap);
+        if (typeof state.manualLorebook === 'string') state.manualLorebook = nameMap.get(state.manualLorebook) || state.manualLorebook;
+    }
+    if (isPlainObject(state.manualCharacterLorebooks)) {
+        for (const [bindingKey, value] of Object.entries(state.manualCharacterLorebooks)) {
+            if (!lockedKeys.has(bindingKey)) state.manualCharacterLorebooks[bindingKey] = replaceBookReference(value, nameMap);
+        }
+    }
+    if (isPlainObject(state.sidePromptLorebookOverrides)) {
+        for (const [bindingKey, value] of Object.entries(state.sidePromptLorebookOverrides)) {
+            state.sidePromptLorebookOverrides[bindingKey] = replaceBookReference(value, nameMap);
         }
     }
 

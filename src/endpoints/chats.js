@@ -5501,6 +5501,19 @@ function normalizeStmbCopyKind(requestBody) {
     return kind;
 }
 
+/** Normalizes content-free character-lock exclusions supplied by the active client. */
+function getStmbCopyLockOptions(requestBody, isGroup) {
+    const rawKeys = Array.isArray(requestBody?.locked_character_binding_keys)
+        ? requestBody.locked_character_binding_keys
+        : [];
+    return {
+        soloMemoryBookLocked: !isGroup && requestBody?.solo_memory_book_locked === true,
+        lockedCharacterBindingKeys: isGroup
+            ? [...new Set(rawKeys.slice(0, 1000).map(value => String(value || '').trim()).filter(value => value && value.length <= 512))]
+            : [],
+    };
+}
+
 function getStmbCopyMarker(header) {
     const marker = header?.aikobots_chat_copy;
     return _.isPlainObject(marker) ? marker : null;
@@ -5659,6 +5672,7 @@ async function copyPrefixWithMemoryBooks({
     }
 
     const copyMemoryBooks = kind && request.body.copy_memory_books === true;
+    const copyLockOptions = getStmbCopyLockOptions(request.body, isGroup);
     return await withLorebookManagementTransaction(async transaction => {
         const existingNames = new Set(listLorebookNamesForAllocation(request.user));
 
@@ -5679,7 +5693,7 @@ async function copyPrefixWithMemoryBooks({
             const sources = [];
             const aliasesByResolvedName = new Map();
             if (copyMemoryBooks) {
-                const requestedNames = collectStmbChatLorebookNames(sourceHeader.chat_metadata);
+                const requestedNames = collectStmbChatLorebookNames(sourceHeader.chat_metadata, copyLockOptions);
                 for (const requestedName of requestedNames) {
                     let loaded;
                     try {
@@ -5763,7 +5777,7 @@ async function copyPrefixWithMemoryBooks({
                 }
 
                 const copiedMetadata = copyMemoryBooks
-                    ? rewriteStmbChatMetadataForCopy(sourceHeader.chat_metadata, nameMap, prefixEndId)
+                    ? rewriteStmbChatMetadataForCopy(sourceHeader.chat_metadata, nameMap, prefixEndId, copyLockOptions)
                     : clearStmbChatMetadataBindings(sourceHeader.chat_metadata);
                 const marker = {
                     version: 1,

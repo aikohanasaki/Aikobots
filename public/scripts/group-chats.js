@@ -2709,6 +2709,7 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, {
     replaceTarget = false,
     copyKind = '',
     copyMemoryBooks = false,
+    stmbCopyLockContext = null,
     swipeId = null,
     operationId = uuidv4(),
 } = {}) {
@@ -2753,6 +2754,8 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, {
         const selectedSwipeId = swipeId === null ? Number(sourceMessage?.swipe_id) : Number(swipeId);
         body.copy_kind = copyKind;
         body.copy_memory_books = copyMemoryBooks === true;
+        body.solo_memory_book_locked = stmbCopyLockContext?.soloMemoryBookLocked === true;
+        body.locked_character_binding_keys = stmbCopyLockContext?.lockedCharacterBindingKeys || [];
         body.selected_message_uuid = sourceMessage?.[AIKOBOTS_MESSAGE_UUID_KEY] || undefined;
         body.selected_swipe_uuid = Number.isInteger(selectedSwipeId)
             ? sourceMessage?.swipe_info?.[selectedSwipeId]?.[AIKOBOTS_SWIPE_UUID_KEY]

@@ -6057,5 +6057,16 @@
     "The regenerated side prompt was blank. Nothing was overwritten.": "Der neu generierte Side-Prompt war leer. Es wurde nichts überschrieben.",
     "The side-prompt message range could not be saved. Reload the chat and try again.": "Der Nachrichtenbereich des Side-Prompts konnte nicht gespeichert werden. Lade den Chat neu und versuche es erneut.",
     "No capturable messages remain in the original range.": "Im ursprünglichen Bereich sind keine erfassbaren Nachrichten mehr vorhanden.",
-    "Memory regeneration failed.": "Die Neugenerierung des Speichers ist fehlgeschlagen."
+    "Memory regeneration failed.": "Die Neugenerierung des Speichers ist fehlgeschlagen.",
+    "Locked Memory Book \"{{lorebookName}}\" is missing. Unlock this character to repair the assignment.": "Das gesperrte Memory Book \"{{lorebookName}}\" fehlt. Entsperren Sie diesen Charakter, um die Zuweisung zu reparieren.",
+    "Unlock {{characterName}} from \"{{lorebookName}}\"": "{{characterName}} von \"{{lorebookName}}\" entsperren",
+    "Select a valid character Memory Book before locking.": "Wählen Sie vor dem Sperren ein gültiges Charakter-Memory-Book aus.",
+    "Always use \"{{lorebookName}}\" as {{characterName}}'s Memory Book": "\"{{lorebookName}}\" immer als Memory Book von {{characterName}} verwenden",
+    "{{characterName}} no longer has a locked Memory Book.": "{{characterName}} hat kein gesperrtes Memory Book mehr.",
+    "{{characterName}} will always use \"{{lorebookName}}\" as their Memory Book in manual mode.": "{{characterName}} verwendet im manuellen Modus immer \"{{lorebookName}}\" als Memory Book.",
+    "Unlock this character before changing their manual Memory Book.": "Entsperren Sie diesen Charakter, bevor Sie dessen manuelles Memory Book ändern.",
+    "The locked Memory Book \"{{lorebookName}}\" no longer exists. Unlock this character and choose a valid Memory Book.": "Das gesperrte Memory Book \"{{lorebookName}}\" existiert nicht mehr. Entsperren Sie diesen Charakter und wählen Sie ein gültiges Memory Book.",
+    "The locked Memory Book \"{{lorebookName}}\" could not be loaded. Unlock this character and choose a valid Memory Book.": "Das gesperrte Memory Book \"{{lorebookName}}\" konnte nicht geladen werden. Entsperren Sie diesen Charakter und wählen Sie ein gültiges Memory Book.",
+    "{{characterName}}: locked Memory Book \"{{lorebookName}}\" not found; unlock and repair this assignment": "{{characterName}}: Das gesperrte Memory Book \"{{lorebookName}}\" wurde nicht gefunden; entsperren und reparieren Sie diese Zuweisung",
+    "Missing: ${0}": "Fehlt: ${0}"
 }

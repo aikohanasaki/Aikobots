@@ -18,6 +18,7 @@ import { showLorebookPickerPopup, showLorebookRecoveryPopup } from './stmb-popup
 import { calculateLorebookStats as calculateLorebookStatsCore } from './stmb-core.js';
 import { applyStloDefaultsToLorebook } from './stlo-utils.js';
 import { getSanitizedFilename } from './utils.js';
+import { translate } from './i18n.js';
 
 export class StmbLorebookHandledError extends Error {
     constructor(message = '') {
@@ -64,6 +65,10 @@ function getSelectableLorebookNames() {
     return (Array.isArray(world_names) ? world_names : []).filter(name => !isReservedTemplateWorldName(name));
 }
 
+function formatLockedLorebookError(message, lorebookName) {
+    return translate(message).replaceAll('{{lorebookName}}', lorebookName);
+}
+
 /** Returns the next available lorebook name using STMB's Auto-create rules. */
 export async function suggestStmbLorebookName(template) {
     return await generateAutoLorebookName(template);
@@ -107,6 +112,7 @@ export async function getLorebookStats() {
 export async function ensureResolvedLorebookName({
     manualMode = false,
     getManualLorebook = () => '',
+    getLockedManualLorebook = () => '',
     setManualLorebook = async () => {},
     autoCreateLorebook = false,
     lorebookNameTemplate = 'LTM - {{char}} - {{chat}}',
@@ -117,8 +123,9 @@ export async function ensureResolvedLorebookName({
         ? 'After selecting a lorebook, retry memory generation.'
         : 'After selecting a lorebook in SillyTavern, retry memory generation.';
     const allowCreate = !manualMode && Boolean(autoCreateLorebook);
+    const lockedLorebookName = manualMode ? String(getLockedManualLorebook?.() || '').trim() : '';
     let lorebookName = manualMode
-        ? String(getManualLorebook?.() || '').trim()
+        ? lockedLorebookName || String(getManualLorebook?.() || '').trim()
         : String(chat_metadata[METADATA_KEY] || '').trim();
     let attempts = 0;
 
@@ -132,6 +139,9 @@ export async function ensureResolvedLorebookName({
         }
 
         if (reason) {
+            if (lockedLorebookName) {
+                throw new StmbLorebookHandledError(formatLockedLorebookError('The locked Memory Book "{{lorebookName}}" no longer exists. Unlock this character and choose a valid Memory Book.', lockedLorebookName));
+            }
             const recovery = await showLorebookRecoveryPopup({
                 manualMode,
                 lorebookName,
@@ -166,6 +176,10 @@ export async function ensureResolvedLorebookName({
         const lorebookData = await loadWorldInfo(lorebookName);
         if (lorebookData) {
             return lorebookName;
+        }
+
+        if (lockedLorebookName) {
+            throw new StmbLorebookHandledError(formatLockedLorebookError('The locked Memory Book "{{lorebookName}}" could not be loaded. Unlock this character and choose a valid Memory Book.', lockedLorebookName));
         }
 
         const recovery = await showLorebookRecoveryPopup({

@@ -7,6 +7,7 @@ import {
     createDefaultStmbProfile,
     normalizeStmbSettings,
     resolveStmbProfileConnectionSummary,
+    STMB_SETTINGS_VERSION,
 } from '../public/scripts/stmb-core.js';
 
 test('legacy direct profiles remain usable and migrate model and temperature to overrides', () => {
@@ -27,7 +28,7 @@ test('legacy direct profiles remain usable and migrate model and temperature to 
     });
     const profile = settings.profiles[1];
 
-    assert.equal(settings.migrationVersion, 5);
+    assert.equal(settings.migrationVersion, STMB_SETTINGS_VERSION);
     assert.equal(profile.modelOverride, 'legacy-model');
     assert.equal(profile.temperatureOverride, 0.7);
     assert.equal(profile.connection.api, 'openai');
@@ -55,7 +56,7 @@ test('a central profile binding keeps overrides and drops duplicated direct conn
     });
     const profile = settings.profiles[1];
 
-    assert.equal(settings.migrationVersion, 5);
+    assert.equal(settings.migrationVersion, STMB_SETTINGS_VERSION);
     assert.equal(profile.connectionProfileId, 'connection-1');
     assert.equal(profile.modelOverride, 'override-model');
     assert.equal(profile.temperatureOverride, 0);
