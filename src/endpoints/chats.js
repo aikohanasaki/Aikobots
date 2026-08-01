@@ -92,12 +92,10 @@ import {
     StmbChatCopyError,
     allocateStmbLorebookCopyName,
     clearStmbChatMetadataBindings,
-    collectManagedMemoryBoundaryUuids,
     collectStmbChatLorebookNames,
+    cloneStmbLorebookForChatCopy,
     finalizeStmbLorebookCopy,
     getStmbLorebookCopyRoot,
-    projectStmbLorebookForChatCopy,
-    rewriteManagedMemoryBoundaryUuids,
     rewriteStmbChatMetadataForCopy,
 } from '../stmb-chat-copy.js';
 
@@ -5489,7 +5487,6 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
     }
 });
 
-const STMB_COPY_LEGACY_MESSAGE = 'This Memory Book cannot be copied safely at the selected message. Nothing was created. Create the chat copy without Memory Books or cancel.';
 const STMB_COPY_INELIGIBLE_MESSAGE = 'Memory Books cannot be copied for this chat. Nothing was created. Create the chat copy without Memory Books or cancel.';
 
 function normalizeStmbCopyKind(requestBody) {
@@ -5587,8 +5584,8 @@ function applyRequestedSwipeToPrefix(messages, prefixEndId, requestBody) {
     );
 }
 
-/** Reads only the requested prefix and any stable boundary identities needed by Memory Books. */
-async function readChatPrefixForCopy(sourcePath, prefixEndId, boundaryUuids) {
+/** Reads only the requested chat prefix. */
+async function readChatPrefixForCopy(sourcePath, prefixEndId) {
     const sourceSqlitePath = replaceChatStorageExtension(sourcePath, '.sqlite');
     if (fs.existsSync(sourceSqlitePath)) {
         const db = await loadDb(sourceSqlitePath);
@@ -5598,12 +5595,7 @@ async function readChatPrefixForCopy(sourcePath, prefixEndId, boundaryUuids) {
                 throw new ChatMutationError(400, 'invalid_message_id');
             }
             const messages = getMessageRange(db, 0, prefixEndId + 1);
-            const uuidIndexes = new Map();
-            for (const uuid of boundaryUuids) {
-                const row = getLogicalMessageRowByUuid(db, uuid);
-                if (row) uuidIndexes.set(uuid, row.logicalIndex);
-            }
-            return { sourceHeader, messages, uuidIndexes };
+            return { sourceHeader, messages };
         } finally {
             db.close();
         }
@@ -5615,12 +5607,7 @@ async function readChatPrefixForCopy(sourcePath, prefixEndId, boundaryUuids) {
     if (prefixEndId >= allMessages.length) {
         throw new ChatMutationError(400, 'invalid_message_id');
     }
-    const uuidIndexes = new Map();
-    allMessages.forEach((message, index) => {
-        const uuid = message?.[AIKOBOTS_MESSAGE_UUID_KEY];
-        if (boundaryUuids.has(uuid)) uuidIndexes.set(uuid, index);
-    });
-    return { sourceHeader, messages: allMessages.slice(0, prefixEndId + 1), uuidIndexes };
+    return { sourceHeader, messages: allMessages.slice(0, prefixEndId + 1) };
 }
 
 function getChatMetadataMainOverride(requestBody, isGroup) {
@@ -5643,9 +5630,6 @@ function buildCopiedChatHeader({ sourceHeader, requestBody, isGroup, chatMetadat
 function createSafeStmbCopyError(error) {
     if (error instanceof ChatMutationError || isActiveSessionError(error) || isUnsupportedSplitTailChatError(error) || isChatPathValidationError(error)) {
         return error;
-    }
-    if (error instanceof StmbChatCopyError && error.code === 'stmb_copy_ambiguous_legacy') {
-        return new StmbChatCopyError(error.code, STMB_COPY_LEGACY_MESSAGE, error.status);
     }
     if (error instanceof StmbChatCopyError) return error;
     return new StmbChatCopyError('stmb_copy_ineligible', STMB_COPY_INELIGIBLE_MESSAGE, 409);
@@ -5683,7 +5667,7 @@ async function copyPrefixWithMemoryBooks({
                 throw new ChatMutationError(409, 'target_chat_exists');
             }
 
-            let { sourceHeader, messages } = await readChatPrefixForCopy(sourcePath, prefixEndId, new Set());
+            const { sourceHeader, messages } = await readChatPrefixForCopy(sourcePath, prefixEndId);
             requireChatMutationRequest(request.body, sourceHeader);
             if (!sourceHeader || messages.length !== prefixEndId + 1) {
                 throw new ChatMutationError(400, 'invalid_message_id');
@@ -5729,20 +5713,9 @@ async function copyPrefixWithMemoryBooks({
                 for (const alias of aliasesByResolvedName.get(source.name) || [source.name]) nameMap.set(alias, allocation.name);
             }
 
-            const boundaryUuids = new Set();
-            sources.forEach(source => collectManagedMemoryBoundaryUuids(source.data).forEach(uuid => boundaryUuids.add(uuid)));
-            let uuidIndexes = new Map();
-            if (boundaryUuids.size > 0) {
-                ({ uuidIndexes } = await readChatPrefixForCopy(sourcePath, prefixEndId, boundaryUuids));
-            }
-            const resolveMessageIndex = uuid => uuidIndexes.get(uuid);
-
-            const projectedSources = sources.map(source => {
-                const projection = projectStmbLorebookForChatCopy(source.data, {
-                    cutoffIndex: prefixEndId,
-                    resolveMessageIndex,
-                });
-                return { ...source, ...projection };
+            const copiedSources = sources.map(source => {
+                const copy = cloneStmbLorebookForChatCopy(source.data);
+                return { ...source, ...copy };
             });
 
             const targetMessages = structuredClone(messages);
@@ -5756,16 +5729,12 @@ async function copyPrefixWithMemoryBooks({
                 }
             }
             regenerateChatIdentities(targetMessages, { generateUuid: uuidv4 });
-            const hasDerivedEntries = projectedSources.some(source => source.hasDerivedEntries);
+            const hasDerivedEntries = copiedSources.some(source => source.hasDerivedEntries);
             const createdNames = [];
             try {
-                for (const source of projectedSources) {
-                    rewriteManagedMemoryBoundaryUuids(source.data, targetMessages, resolveMessageIndex, {
-                        targetChatId,
-                    });
+                for (const source of copiedSources) {
                     const finalized = finalizeStmbLorebookCopy(source.data, {
                         nameMap,
-                        targetChatId,
                         rootName: source.rootName,
                         sourceName: source.name,
                         kind,
@@ -5783,7 +5752,7 @@ async function copyPrefixWithMemoryBooks({
                     version: 1,
                     operation_id: operationId,
                     kind,
-                    memory_book_count: projectedSources.length,
+                    memory_book_count: copiedSources.length,
                     has_derived_entries: hasDerivedEntries,
                 };
                 const targetHeader = buildCopiedChatHeader({

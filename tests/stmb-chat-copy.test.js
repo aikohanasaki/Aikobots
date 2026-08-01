@@ -3,13 +3,11 @@ import test from 'node:test';
 import { createDefaultStmbSettings, createManagedLorebookEntryData, normalizeStmbSettings } from '../public/scripts/stmb-core.js';
 
 import {
-    StmbChatCopyError,
     allocateStmbLorebookCopyName,
     clearStmbChatMetadataBindings,
+    cloneStmbLorebookForChatCopy,
     collectStmbChatLorebookNames,
     finalizeStmbLorebookCopy,
-    projectStmbLorebookForChatCopy,
-    rewriteManagedMemoryBoundaryUuids,
     rewriteStmbChatMetadataForCopy,
 } from '../src/stmb-chat-copy.js';
 
@@ -45,120 +43,40 @@ test('new managed memories retain server-derived UUID boundaries', () => {
     assert.equal(entry.STMB_endUuid, 'end-uuid');
 });
 
-test('point-in-time projection preserves derived entries and removes future dependency chains', () => {
-    const source = {
-        entries: {
-            1: { uid: 1, stmemorybooks: true, STMB_start: 0, STMB_end: 2, disable: true, disabledBySummaryId: 3 },
-            2: { uid: 2, stmemorybooks: true, STMB_start: 5, STMB_end: 8, disable: true, disabledBySummaryId: 3 },
-            3: { uid: 3, stmemorybooks: true, stmbSummary: true, stmbSourceEntryUids: [1, 2] },
-            4: { uid: 4, comment: 'Tracker (STMB SidePrompt)', content: 'advanced', STMB_tracker_lastMsgId: 99, disable: true, disabledBySummaryId: 3 },
-            5: { uid: 5, comment: 'About topic [STMB Clip]', content: 'advanced clip' },
-            6: { uid: 6, comment: 'ordinary entry', content: 'keep me' },
-            7: { uid: 7, stmemorybooks: true, stmbSummary: true, stmbSourceEntryUids: [3] },
-        },
-    };
-
-    const result = projectStmbLorebookForChatCopy(source, {
-        cutoffIndex: 4,
-        resolveMessageIndex: () => undefined,
-    });
-
-    assert.deepEqual(Object.keys(result.data.entries), ['1', '4', '5', '6']);
-    assert.equal(result.data.entries[1].disable, false);
-    assert.equal('disabledBySummaryId' in result.data.entries[1], false);
-    assert.equal(result.data.entries[4].STMB_tracker_lastMsgId, 99);
-    assert.equal(result.data.entries[4].disabledBySummaryId, 3);
-    assert.equal(result.data.entries[4].disable, true);
-    assert.equal(result.hasDerivedEntries, true);
-    assert.equal(source.entries[1].disable, true, 'source book must not be mutated');
-});
-
-test('UUID ranges remain authoritative when numeric message positions changed', () => {
+test('Memory Book copies preserve every entry and all message metadata', () => {
     const source = {
         entries: {
             1: {
                 uid: 1,
                 stmemorybooks: true,
-                STMB_start: 30,
-                STMB_end: 40,
-                STMB_startUuid: 'start',
-                STMB_endUuid: 'end',
+                STMB_start: 336,
+                STMB_end: 350,
+                STMB_startUuid: 'source-start',
+                STMB_endUuid: 'source-end',
+                STMB_chatId: 'source-chat',
             },
-        },
-    };
-    const positions = new Map([['start', 1], ['end', 3]]);
-    const result = projectStmbLorebookForChatCopy(source, {
-        cutoffIndex: 3,
-        resolveMessageIndex: uuid => positions.get(uuid),
-    });
-    const targetMessages = [0, 1, 2, 3].map(index => ({ aikobots_message_uuid: `target-${index}` }));
-    rewriteManagedMemoryBoundaryUuids(result.data, targetMessages, uuid => positions.get(uuid));
-
-    assert.equal(result.data.entries[1].STMB_startUuid, 'target-1');
-    assert.equal(result.data.entries[1].STMB_endUuid, 'target-3');
-    assert.equal(result.data.entries[1].STMB_start, 1);
-    assert.equal(result.data.entries[1].STMB_end, 3);
-});
-
-test('an incomplete UUID range falls back to valid numeric message positions', () => {
-    const result = projectStmbLorebookForChatCopy({
-        entries: {
-            1: {
-                uid: 1,
-                stmemorybooks: true,
-                STMB_start: 1,
-                STMB_end: 3,
-                STMB_startUuid: 'start-only',
-            },
-        },
-    }, { cutoffIndex: 3, resolveMessageIndex: uuid => uuid === 'start-only' ? 1 : undefined });
-    const targetMessages = [0, 1, 2, 3].map(index => ({ aikobots_message_uuid: `target-${index}` }));
-
-    rewriteManagedMemoryBoundaryUuids(result.data, targetMessages, uuid => uuid === 'start-only' ? 1 : undefined);
-
-    assert.equal(result.data.entries[1].STMB_startUuid, 'target-1');
-    assert.equal(result.data.entries[1].STMB_endUuid, 'target-3');
-    assert.equal(result.data.entries[1].STMB_start, 1);
-    assert.equal(result.data.entries[1].STMB_end, 3);
-});
-
-test('an unresolvable UUID range falls back to valid numeric message positions', () => {
-    const result = projectStmbLorebookForChatCopy({
-        entries: {
-            1: {
-                uid: 1,
-                stmemorybooks: true,
-                STMB_start: 1,
-                STMB_end: 3,
-                STMB_startUuid: 'stale-start',
-                STMB_endUuid: 'stale-end',
-            },
-        },
-    }, { cutoffIndex: 3, resolveMessageIndex: () => undefined });
-    const targetMessages = [0, 1, 2, 3].map(index => ({ aikobots_message_uuid: `target-${index}` }));
-
-    rewriteManagedMemoryBoundaryUuids(result.data, targetMessages, () => undefined);
-
-    assert.equal(result.data.entries[1].STMB_startUuid, 'target-1');
-    assert.equal(result.data.entries[1].STMB_endUuid, 'target-3');
-    assert.equal(result.data.entries[1].STMB_start, 1);
-    assert.equal(result.data.entries[1].STMB_end, 3);
-});
-
-test('invalid UUID metadata still rejects without a valid numeric fallback', () => {
-    assert.throws(
-        () => projectStmbLorebookForChatCopy({
-            entries: {
-                1: {
-                    uid: 1,
-                    stmemorybooks: true,
-                    STMB_startUuid: 'stale-start',
-                    STMB_endUuid: 'stale-end',
+            2: { uid: 2, stmemorybooks: true, stmbSummary: true, type: 'arc' },
+            3: {
+                uid: 3,
+                comment: 'Tracker (STMB SidePrompt)',
+                STMB_sidePromptRegeneration: {
+                    sceneStart: 340,
+                    sceneEnd: 356,
+                    sceneStartUuid: 'tracker-start',
+                    sceneEndUuid: 'tracker-end',
+                    chatId: 'source-chat',
                 },
             },
-        }, { cutoffIndex: 3, resolveMessageIndex: () => undefined }),
-        error => error instanceof StmbChatCopyError && error.code === 'stmb_copy_ambiguous_legacy',
-    );
+            4: { uid: 4, comment: 'ordinary entry' },
+        },
+    };
+
+    const result = cloneStmbLorebookForChatCopy(source);
+
+    assert.deepEqual(result.data, source);
+    assert.notEqual(result.data, source);
+    assert.notEqual(result.data.entries[1], source.entries[1]);
+    assert.equal(result.hasDerivedEntries, true);
 });
 
 test('a locked solo book stays on its original book during a branch copy', () => {
@@ -194,28 +112,6 @@ test('locked group members stay original while unlocked member books are branche
     assert.equal(rewritten.STMemoryBooks.manualCharacterLorebooks.bob, 'Bob Branch 1');
 });
 
-test('legacy arc consolidations use source relationships instead of message ranges', () => {
-    const result = projectStmbLorebookForChatCopy({
-        entries: {
-            1: { uid: 1, stmemorybooks: true, STMB_start: 0, STMB_end: 2 },
-            2: { uid: 2, stmemorybooks: true, stmbArc: true, stmbSourceEntryUids: [1] },
-        },
-    }, { cutoffIndex: 2, resolveMessageIndex: () => undefined });
-
-    const targetMessages = [0, 1, 2].map(index => ({ aikobots_message_uuid: `target-${index}` }));
-    assert.doesNotThrow(() => rewriteManagedMemoryBoundaryUuids(result.data, targetMessages, () => undefined));
-    assert.equal(result.data.entries[2].stmbArc, true);
-});
-
-test('an overlapping or unclassifiable legacy memory aborts safely', () => {
-    assert.throws(
-        () => projectStmbLorebookForChatCopy({
-            entries: { 1: { uid: 1, stmemorybooks: true, STMB_start: 3, STMB_end: 7 } },
-        }, { cutoffIndex: 5, resolveMessageIndex: () => undefined }),
-        error => error instanceof StmbChatCopyError && error.code === 'stmb_copy_ambiguous_legacy',
-    );
-});
-
 test('copied metadata rewrites every STMB binding and clamps progress', () => {
     const nameMap = new Map([
         ['Memories', 'Memories Branch 2'],
@@ -247,7 +143,7 @@ test('copied metadata rewrites every STMB binding and clamps progress', () => {
     );
 });
 
-test('derived entry content and processing metadata stay unchanged in the finalized copy', () => {
+test('finalized copies preserve entry metadata while rewriting lorebook references', () => {
     const derived = {
         uid: 7,
         comment: 'Tracker (STMB SidePrompt)',
@@ -256,9 +152,16 @@ test('derived entry content and processing metadata stay unchanged in the finali
         STMB_chatId: 'parent chat',
         data: { extensions: { custom: { nested: true } } },
     };
-    const result = finalizeStmbLorebookCopy({ entries: { 7: derived } }, {
-        nameMap: new Map(),
-        targetChatId: 'child chat',
+    const managed = {
+        uid: 8,
+        stmemorybooks: true,
+        STMB_start: 336,
+        STMB_end: 350,
+        STMB_chatId: 'parent chat',
+        STMB_canonicalLorebook: 'Related',
+    };
+    const result = finalizeStmbLorebookCopy({ entries: { 7: derived, 8: managed } }, {
+        nameMap: new Map([['Related', 'Related Branch 1']]),
         rootName: 'Memories',
         sourceName: 'Memories',
         kind: 'branch',
@@ -266,83 +169,11 @@ test('derived entry content and processing metadata stay unchanged in the finali
         operationId: 'operation',
     });
     assert.deepEqual(result.entries[7], derived);
+    assert.equal(result.entries[8].STMB_chatId, 'parent chat');
+    assert.equal(result.entries[8].STMB_start, 336);
+    assert.equal(result.entries[8].STMB_end, 350);
+    assert.equal(result.entries[8].STMB_canonicalLorebook, 'Related Branch 1');
 });
-
-test('safe side-prompt snapshots rebind to copied message identities', () => {
-    const startUuid = '11111111-1111-4111-8111-111111111111';
-    const endUuid = '22222222-2222-4222-8222-222222222222';
-    const positions = new Map([[startUuid, 1], [endUuid, 3]]);
-    const projected = projectStmbLorebookForChatCopy({
-        entries: {
-            7: {
-                uid: 7,
-                comment: 'Tracker (STMB SidePrompt)',
-                content: 'Tracker output',
-                STMB_sidePromptRegeneration: {
-                    version: 1,
-                    templateKey: 'tracker',
-                    priorContent: 'Previous tracker',
-                    sceneStart: 10,
-                    sceneEnd: 20,
-                    sceneStartUuid: startUuid,
-                    sceneEndUuid: endUuid,
-                    chatId: 'parent chat',
-                    runtimeMacros: {},
-                },
-            },
-        },
-    }, { cutoffIndex: 3, resolveMessageIndex: uuid => positions.get(uuid) });
-    const targetMessages = [0, 1, 2, 3].map(index => ({
-        aikobots_message_uuid: `0000000${index}-0000-4000-8000-00000000000${index}`,
-    }));
-
-    rewriteManagedMemoryBoundaryUuids(projected.data, targetMessages, uuid => positions.get(uuid), {
-        targetChatId: 'child chat',
-    });
-
-    expectSnapshot(projected.data.entries[7].STMB_sidePromptRegeneration, {
-        sceneStart: 1,
-        sceneEnd: 3,
-        sceneStartUuid: targetMessages[1].aikobots_message_uuid,
-        sceneEndUuid: targetMessages[3].aikobots_message_uuid,
-        chatId: 'child chat',
-    });
-});
-
-test('post-cutoff or invalid side-prompt snapshots are stripped without removing derived content', () => {
-    const startUuid = '11111111-1111-4111-8111-111111111111';
-    const endUuid = '22222222-2222-4222-8222-222222222222';
-    const entry = {
-        uid: 7,
-        comment: 'Tracker (STMB SidePrompt)',
-        content: 'Keep this derived output',
-        STMB_sidePromptRegeneration: {
-            version: 1,
-            templateKey: 'tracker',
-            priorContent: '',
-            sceneStart: 1,
-            sceneEnd: 8,
-            sceneStartUuid: startUuid,
-            sceneEndUuid: endUuid,
-            chatId: 'parent chat',
-            runtimeMacros: {},
-        },
-    };
-    const result = projectStmbLorebookForChatCopy({ entries: { 7: entry } }, {
-        cutoffIndex: 4,
-        resolveMessageIndex: uuid => uuid === startUuid ? 1 : 8,
-    });
-
-    assert.equal(result.data.entries[7].content, 'Keep this derived output');
-    assert.equal('STMB_sidePromptRegeneration' in result.data.entries[7], false);
-    assert.equal(result.hasDerivedEntries, true);
-});
-
-function expectSnapshot(actual, expected) {
-    for (const [key, value] of Object.entries(expected)) {
-        assert.equal(actual?.[key], value);
-    }
-}
 
 test('chat-only copies remove STMB-owned bindings', () => {
     const result = clearStmbChatMetadataBindings({
