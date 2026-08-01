@@ -31,7 +31,6 @@ import {
     assertLorebookCheckoutForManagement,
     getLorebookForManagement,
     LorebookRepositoryError,
-    saveLorebookForManagement,
     withLorebookManagementTransaction,
 } from '../lorebook-repository.js';
 import { isReservedRecommendedTemplateSource } from '../recommended-chat-template-store.js';
@@ -976,37 +975,39 @@ router.post('/save-memory', async (request, response) => {
 
     try {
         const sceneContext = await addAuthoritativeSceneBoundaryUuids(request, requestedSceneContext, request.body?.chatRef);
-        const { data: lorebookData, metadata } = await getLorebookForManagement(
-            request.user,
-            lorebookContext.lorebookName,
-            false,
-            lorebookContext.storage,
-        );
-        ensureEntriesObject(lorebookData);
-        const orderClampNotifications = [];
+        return await withLorebookManagementTransaction(async transaction => {
+            const { data: lorebookData, metadata } = await getLorebookForManagement(
+                request.user,
+                lorebookContext.lorebookName,
+                false,
+                lorebookContext.storage,
+            );
+            ensureEntriesObject(lorebookData);
+            const orderClampNotifications = [];
 
-        const sequenceNumber = getNextManagedMemorySequenceNumber(
-            lorebookData.entries,
-            profile?.titleFormat || sceneContext?.titleFormat || null,
-        );
-        const entryPayload = createManagedLorebookEntryData(memoryObject, sceneContext, profile, sequenceNumber);
-        const entry = createLorebookEntry(lorebookData);
-        Object.assign(entry, entryPayload);
-        applyLorebookSettings(entry, profile, {
-            orderNumber: parseSequenceFromTitle(entry.comment || entry.title || '') || 1,
-            orderNumberLabel: 'memory',
-            onOrderClamped: notification => orderClampNotifications.push(notification),
-        });
+            const sequenceNumber = getNextManagedMemorySequenceNumber(
+                lorebookData.entries,
+                profile?.titleFormat || sceneContext?.titleFormat || null,
+            );
+            const entryPayload = createManagedLorebookEntryData(memoryObject, sceneContext, profile, sequenceNumber);
+            const entry = createLorebookEntry(lorebookData);
+            Object.assign(entry, entryPayload);
+            applyLorebookSettings(entry, profile, {
+                orderNumber: parseSequenceFromTitle(entry.comment || entry.title || '') || 1,
+                orderNumberLabel: 'memory',
+                onOrderClamped: notification => orderClampNotifications.push(notification),
+            });
 
-        await request.activeSessionOperation?.assertAllowed();
-        const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
-        return response.send({
-            ok: true,
-            lorebookName: savedMetadata.name,
-            storage: savedMetadata.storage,
-            entry,
-            sequenceNumber,
-            orderClampNotifications,
+            await request.activeSessionOperation?.assertAllowed();
+            const savedMetadata = await transaction.save(request.user, metadata.name, lorebookData, metadata.storage);
+            return response.send({
+                ok: true,
+                lorebookName: savedMetadata.name,
+                storage: savedMetadata.storage,
+                entry,
+                sequenceNumber,
+                orderClampNotifications,
+            });
         });
     } catch (error) {
         return sendStmbError(response, error);
@@ -1426,69 +1427,71 @@ router.post('/commit-summaries', async (request, response) => {
     }
 
     try {
-        const { data: lorebookData, metadata } = await getLorebookForManagement(
-            request.user,
-            lorebookContext.lorebookName,
-            false,
-            lorebookContext.storage,
-        );
-        ensureEntriesObject(lorebookData);
-        const schemaMigrated = migrateLorebookSummarySchema(lorebookData);
-        verifySummarySourceFingerprints(lorebookData, sourceFingerprints, sourceIds);
+        return await withLorebookManagementTransaction(async transaction => {
+            const { data: lorebookData, metadata } = await getLorebookForManagement(
+                request.user,
+                lorebookContext.lorebookName,
+                false,
+                lorebookContext.storage,
+            );
+            ensureEntriesObject(lorebookData);
+            const schemaMigrated = migrateLorebookSummarySchema(lorebookData);
+            verifySummarySourceFingerprints(lorebookData, sourceFingerprints, sourceIds);
 
-        let nextSummaryNumber = getNextSummaryNumber(lorebookData, targetTier);
-        const createdEntries = [];
-        const orderClampNotifications = [];
+            let nextSummaryNumber = getNextSummaryNumber(lorebookData, targetTier);
+            const createdEntries = [];
+            const orderClampNotifications = [];
 
-        for (const summaryCandidate of summaryCandidates) {
-            const entry = createLorebookEntry(lorebookData);
-            const entryPayload = createManagedSummaryEntryData(summaryCandidate, {
-                targetTier,
-                titleFormat,
-                sequenceNumber: nextSummaryNumber,
-                sourceEntries: Object.values(lorebookData.entries),
-                includeSourceUids: metadata.storage === 'user',
-            });
-            Object.assign(entry, entryPayload);
-            applyLorebookSettings(entry, summaryEntrySettings, {
-                orderNumber: nextSummaryNumber,
-                orderNumberLabel: getSummaryTierLabel(targetTier).toLowerCase(),
-                onOrderClamped: notification => orderClampNotifications.push(notification),
-            });
-            restoreManagedInclusionGroup(entry);
+            for (const summaryCandidate of summaryCandidates) {
+                const entry = createLorebookEntry(lorebookData);
+                const entryPayload = createManagedSummaryEntryData(summaryCandidate, {
+                    targetTier,
+                    titleFormat,
+                    sequenceNumber: nextSummaryNumber,
+                    sourceEntries: Object.values(lorebookData.entries),
+                    includeSourceUids: metadata.storage === 'user',
+                });
+                Object.assign(entry, entryPayload);
+                applyLorebookSettings(entry, summaryEntrySettings, {
+                    orderNumber: nextSummaryNumber,
+                    orderNumberLabel: getSummaryTierLabel(targetTier).toLowerCase(),
+                    onOrderClamped: notification => orderClampNotifications.push(notification),
+                });
+                restoreManagedInclusionGroup(entry);
 
-            if (disableOriginals) {
-                const sourceIds = new Set((summaryCandidate.memberIds || []).map(String));
-                for (const sourceEntry of Object.values(lorebookData.entries)) {
-                    if (sourceEntry && sourceIds.has(String(sourceEntry.uid))) {
-                        sourceEntry.disable = true;
-                        sourceEntry.disabledBySummaryId = entry.uid;
+                if (disableOriginals) {
+                    const sourceIds = new Set((summaryCandidate.memberIds || []).map(String));
+                    for (const sourceEntry of Object.values(lorebookData.entries)) {
+                        if (sourceEntry && sourceIds.has(String(sourceEntry.uid))) {
+                            sourceEntry.disable = true;
+                            sourceEntry.disabledBySummaryId = entry.uid;
+                        }
                     }
                 }
+
+                createdEntries.push(structuredClone(entry));
+                nextSummaryNumber++;
             }
 
-            createdEntries.push(structuredClone(entry));
-            nextSummaryNumber++;
-        }
+            if (createdEntries.length > 0 || migrated || schemaMigrated) {
+                await request.activeSessionOperation?.assertAllowed();
+                const savedMetadata = await transaction.save(request.user, metadata.name, lorebookData, metadata.storage);
+                return response.send({
+                    ok: true,
+                    lorebookName: savedMetadata.name,
+                    storage: savedMetadata.storage,
+                    createdEntries,
+                    orderClampNotifications,
+                });
+            }
 
-        if (createdEntries.length > 0 || migrated || schemaMigrated) {
-            await request.activeSessionOperation?.assertAllowed();
-            const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
             return response.send({
                 ok: true,
-                lorebookName: savedMetadata.name,
-                storage: savedMetadata.storage,
+                lorebookName: metadata.name,
+                storage: metadata.storage,
                 createdEntries,
                 orderClampNotifications,
             });
-        }
-
-        return response.send({
-            ok: true,
-            lorebookName: metadata.name,
-            storage: metadata.storage,
-            createdEntries,
-            orderClampNotifications,
         });
     } catch (error) {
         return sendStmbError(response, error);
@@ -1523,30 +1526,32 @@ router.post('/upsert-entry-by-title', async (request, response) => {
     }
 
     try {
-        const { data: lorebookData, metadata } = await getLorebookForManagement(
-            request.user,
-            lorebookContext.lorebookName,
-            false,
-            lorebookContext.storage,
-        );
-        ensureEntriesObject(lorebookData);
+        return await withLorebookManagementTransaction(async transaction => {
+            const { data: lorebookData, metadata } = await getLorebookForManagement(
+                request.user,
+                lorebookContext.lorebookName,
+                false,
+                lorebookContext.storage,
+            );
+            ensureEntriesObject(lorebookData);
 
-        const { created, entry } = upsertLorebookEntryByTitleData(lorebookData, {
-            title,
-            content,
-            defaults,
-            metadataUpdates,
-            entryOverrides,
-        });
+            const { created, entry } = upsertLorebookEntryByTitleData(lorebookData, {
+                title,
+                content,
+                defaults,
+                metadataUpdates,
+                entryOverrides,
+            });
 
-        await request.activeSessionOperation?.assertAllowed();
-        const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
-        return response.send({
-            ok: true,
-            lorebookName: savedMetadata.name,
-            storage: savedMetadata.storage,
-            created,
-            entry,
+            await request.activeSessionOperation?.assertAllowed();
+            const savedMetadata = await transaction.save(request.user, metadata.name, lorebookData, metadata.storage);
+            return response.send({
+                ok: true,
+                lorebookName: savedMetadata.name,
+                storage: savedMetadata.storage,
+                created,
+                entry,
+            });
         });
     } catch (error) {
         return sendStmbError(response, error);
@@ -1581,44 +1586,46 @@ router.post('/create-entry', async (request, response) => {
     }
 
     try {
-        const { data: lorebookData, metadata } = await getLorebookForManagement(
-            request.user,
-            lorebookContext.lorebookName,
-            false,
-            lorebookContext.storage,
-        );
-        ensureEntriesObject(lorebookData);
+        return await withLorebookManagementTransaction(async transaction => {
+            const { data: lorebookData, metadata } = await getLorebookForManagement(
+                request.user,
+                lorebookContext.lorebookName,
+                false,
+                lorebookContext.storage,
+            );
+            ensureEntriesObject(lorebookData);
 
-        const duplicate = Object.values(lorebookData.entries)
-            .find(entry => String(entry?.comment || '') === title);
-        if (duplicate) {
-            return response.status(409).send({
-                error: {
-                    type: 'StmbDuplicateEntryTitle',
-                    message: 'A lorebook entry with this title already exists.',
-                },
+            const duplicate = Object.values(lorebookData.entries)
+                .find(entry => String(entry?.comment || '') === title);
+            if (duplicate) {
+                return response.status(409).send({
+                    error: {
+                        type: 'StmbDuplicateEntryTitle',
+                        message: 'A lorebook entry with this title already exists.',
+                    },
+                });
+            }
+
+            const entry = createLorebookEntry(lorebookData);
+            initializeLorebookEntryDefaults(entry, defaults);
+            entry.comment = title;
+            entry.content = content;
+            for (const [key, value] of Object.entries(metadataUpdates)) {
+                entry[key] = value;
+            }
+            for (const [key, value] of Object.entries(entryOverrides)) {
+                entry[key] = value;
+            }
+
+            await request.activeSessionOperation?.assertAllowed();
+            const savedMetadata = await transaction.save(request.user, metadata.name, lorebookData, metadata.storage);
+            return response.send({
+                ok: true,
+                lorebookName: savedMetadata.name,
+                storage: savedMetadata.storage,
+                created: true,
+                entry,
             });
-        }
-
-        const entry = createLorebookEntry(lorebookData);
-        initializeLorebookEntryDefaults(entry, defaults);
-        entry.comment = title;
-        entry.content = content;
-        for (const [key, value] of Object.entries(metadataUpdates)) {
-            entry[key] = value;
-        }
-        for (const [key, value] of Object.entries(entryOverrides)) {
-            entry[key] = value;
-        }
-
-        await request.activeSessionOperation?.assertAllowed();
-        const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
-        return response.send({
-            ok: true,
-            lorebookName: savedMetadata.name,
-            storage: savedMetadata.storage,
-            created: true,
-            entry,
         });
     } catch (error) {
         return sendStmbError(response, error);
@@ -1667,64 +1674,66 @@ router.post('/update-entry-by-uid', async (request, response) => {
     }
 
     try {
-        const { data: lorebookData, metadata } = await getLorebookForManagement(
-            request.user,
-            lorebookContext.lorebookName,
-            false,
-            lorebookContext.storage,
-        );
-        ensureEntriesObject(lorebookData);
+        return await withLorebookManagementTransaction(async transaction => {
+            const { data: lorebookData, metadata } = await getLorebookForManagement(
+                request.user,
+                lorebookContext.lorebookName,
+                false,
+                lorebookContext.storage,
+            );
+            ensureEntriesObject(lorebookData);
 
-        const entry = findLorebookEntryByUid(lorebookData, uid);
-        if (!entry) {
-            return response.status(404).send({
-                error: {
-                    type: 'StmbEntryNotFound',
-                    message: 'Lorebook entry was not found.',
-                },
-            });
-        }
-
-        if (expectedContentHash && stableHashString(String(entry.content || '')) !== expectedContentHash) {
-            return response.status(409).send({
-                error: {
-                    type: 'StmbEntryContentChanged',
-                    code: 'TOPICAL_CLIP_TARGET_CHANGED',
-                    message: 'Lorebook entry content changed after draft generation.',
-                },
-            });
-        }
-
-        if (hasTitle) {
-            const duplicate = Object.values(lorebookData.entries)
-                .find(candidate => candidate !== entry && String(candidate?.comment || '') === title);
-            if (duplicate) {
-                return response.status(409).send({
+            const entry = findLorebookEntryByUid(lorebookData, uid);
+            if (!entry) {
+                return response.status(404).send({
                     error: {
-                        type: 'StmbDuplicateEntryTitle',
-                        message: 'A lorebook entry with this title already exists.',
+                        type: 'StmbEntryNotFound',
+                        message: 'Lorebook entry was not found.',
                     },
                 });
             }
-            entry.comment = title;
-        }
-        if (hasContent) {
-            entry.content = content;
-        }
-        for (const [key, value] of Object.entries(metadataUpdates)) {
-            entry[key] = value;
-        }
-        for (const [key, value] of Object.entries(entryOverrides)) {
-            entry[key] = value;
-        }
 
-        await request.activeSessionOperation?.assertAllowed();
-        const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
-        return response.send({
-            ok: true,
-            lorebookName: savedMetadata.name,
-            storage: savedMetadata.storage,
-            entry,
+            if (expectedContentHash && stableHashString(String(entry.content || '')) !== expectedContentHash) {
+                return response.status(409).send({
+                    error: {
+                        type: 'StmbEntryContentChanged',
+                        code: 'TOPICAL_CLIP_TARGET_CHANGED',
+                        message: 'Lorebook entry content changed after draft generation.',
+                    },
+                });
+            }
+
+            if (hasTitle) {
+                const duplicate = Object.values(lorebookData.entries)
+                    .find(candidate => candidate !== entry && String(candidate?.comment || '') === title);
+                if (duplicate) {
+                    return response.status(409).send({
+                        error: {
+                            type: 'StmbDuplicateEntryTitle',
+                            message: 'A lorebook entry with this title already exists.',
+                        },
+                    });
+                }
+                entry.comment = title;
+            }
+            if (hasContent) {
+                entry.content = content;
+            }
+            for (const [key, value] of Object.entries(metadataUpdates)) {
+                entry[key] = value;
+            }
+            for (const [key, value] of Object.entries(entryOverrides)) {
+                entry[key] = value;
+            }
+
+            await request.activeSessionOperation?.assertAllowed();
+            const savedMetadata = await transaction.save(request.user, metadata.name, lorebookData, metadata.storage);
+            return response.send({
+                ok: true,
+                lorebookName: savedMetadata.name,
+                storage: savedMetadata.storage,
+                entry,
+            });
         });
     } catch (error) {
         return sendStmbError(response, error);
@@ -1769,33 +1778,35 @@ router.post('/upsert-entries-batch', async (request, response) => {
     }
 
     try {
-        const { data: lorebookData, metadata } = await getLorebookForManagement(
-            request.user,
-            lorebookContext.lorebookName,
-            false,
-            lorebookContext.storage,
-        );
-        ensureEntriesObject(lorebookData);
+        return await withLorebookManagementTransaction(async transaction => {
+            const { data: lorebookData, metadata } = await getLorebookForManagement(
+                request.user,
+                lorebookContext.lorebookName,
+                false,
+                lorebookContext.storage,
+            );
+            ensureEntriesObject(lorebookData);
 
-        const results = [];
-        for (const item of items) {
-            const result = upsertLorebookEntryByTitleData(lorebookData, {
-                title: String(item.title || '').trim(),
-                content: item.content != null ? String(item.content) : '',
-                defaults: item.defaults || {},
-                metadataUpdates: item.metadataUpdates || {},
-                entryOverrides: item.entryOverrides || {},
+            const results = [];
+            for (const item of items) {
+                const result = upsertLorebookEntryByTitleData(lorebookData, {
+                    title: String(item.title || '').trim(),
+                    content: item.content != null ? String(item.content) : '',
+                    defaults: item.defaults || {},
+                    metadataUpdates: item.metadataUpdates || {},
+                    entryOverrides: item.entryOverrides || {},
+                });
+                results.push(result);
+            }
+
+            await request.activeSessionOperation?.assertAllowed();
+            const savedMetadata = await transaction.save(request.user, metadata.name, lorebookData, metadata.storage);
+            return response.send({
+                ok: true,
+                lorebookName: savedMetadata.name,
+                storage: savedMetadata.storage,
+                results,
             });
-            results.push(result);
-        }
-
-        await request.activeSessionOperation?.assertAllowed();
-        const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
-        return response.send({
-            ok: true,
-            lorebookName: savedMetadata.name,
-            storage: savedMetadata.storage,
-            results,
         });
     } catch (error) {
         return sendStmbError(response, error);

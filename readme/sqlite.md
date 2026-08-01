@@ -984,6 +984,8 @@ Once-per-day user storage alert state lives at `DATA_ROOT/_storage-check/storage
 
 Direct and group branches/checkpoints use the same server-authoritative prefix-copy operation. The request identifies the selected logical message and swipe, supplies the source revision and an operation UUID, and chooses either a branch or checkpoint. The browser does not submit a full replacement chat. The target chat records a content-free copy marker and the normal SQLite operation receipt, so an acknowledged retry cannot create another target.
 
+For group copies, the client requires the group metadata edit to acknowledge the new chat-list entry before requesting publication, and removes that entry again after a caught copy failure. Network retries reuse the copy operation UUID. This prevents a completed copy from being silently omitted because an unchecked group-metadata response failed; a hard process or browser termination between the two separately persisted resources remains a recovery case rather than an atomic cross-file transaction.
+
 When Memory Book copying is selected, the operation acquires the cross-worker lorebook mutation lock before the source/target chat locks. It resolves bindings from the persisted source header, rejects every operation containing a secure or ineligible lorebook before publication, projects ordinary managed entries to the selected message, creates collision-free ordinary-user copies, rewrites the target bindings, and writes the target chat. A caught failure deletes only the chat and lorebook resources created by that attempt while the same locks remain held. Responses and logs contain only safe status flags and counts; lorebook names, bindings, entry content, keys, and hidden secure metadata are excluded.
 
 Ordinary copies store their original lineage root and allocate `Branch N` and `Checkpoint N` suffixes under the lorebook lock. Nested copies therefore continue the root sequence. Replacing a checkpoint publishes a newly named chat and newly numbered books; the formerly linked checkpoint and its books remain untouched.
@@ -993,6 +995,8 @@ New base-memory entries persist `STMB_startUuid` and `STMB_endUuid` from an auth
 ### STMB entry regeneration
 
 Base-memory regeneration always captures its original message range through the server-side SQLite range reader, including rows outside the browser's loaded window. Capture metadata includes the current `chatRevision`. The replacement request supplies that revision plus a full target-entry hash; consolidation regeneration also supplies the explicit source UIDs and full source-entry hashes.
+
+Every STMB lorebook endpoint that creates or updates entries holds the cross-worker lorebook mutation lock across the complete read-modify-write operation. This includes base memories, consolidations, individual entry creation and updates, and single or batched Side Prompt upserts; serializing only their final whole-file save would allow a later worker to overwrite an earlier worker's mutation with a stale read.
 
 `POST /api/stmb/regenerate-entry` supports only ordinary user lorebooks. It acquires the shared lorebook mutation lock before the logical-chat lock, re-reads the target, source identities, eligibility, and chat revision under that lock order, and rejects stale state with a typed `409` before mutation. A successful operation preserves the entry UID and unrelated metadata while replacing only the formatted title, content, keywords, explicit source UIDs, and a parent-disable state whose referenced parent is demonstrably absent.
 

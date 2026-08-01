@@ -359,11 +359,14 @@ function setAutoModeWorker() {
 }
 
 async function _save(group, reload = true) {
-    await fetch('/api/groups/edit', {
+    const response = await fetch('/api/groups/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify(sanitizeGroupForPersistence(group)),
     });
+    if (!response.ok) {
+        throw new Error(`Failed to save group metadata. Status: ${response.status}`);
+    }
     if (reload) {
         await getCharacters();
     }
@@ -2763,21 +2766,41 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, {
         body.message_override = structuredClone(messageOverride);
     }
 
-    const response = await fetch('/api/chats/group/copy-prefix', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify(body),
-    });
+    const groupIndexAdded = !group.chats.includes(name);
+    if (groupIndexAdded) {
+        group.chats.push(name);
+        try {
+            await editGroup(groupId, true, false);
+        } catch (error) {
+            group.chats = group.chats.filter(chatId => chatId !== name);
+            throw error;
+        }
+    }
+
+    let response;
+    try {
+        response = await fetch('/api/chats/group/copy-prefix', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(body),
+        });
+    } catch (error) {
+        if (groupIndexAdded) {
+            group.chats = group.chats.filter(chatId => chatId !== name);
+            await editGroup(groupId, true, false);
+        }
+        throw error;
+    }
 
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        if (groupIndexAdded) {
+            group.chats = group.chats.filter(chatId => chatId !== name);
+            await editGroup(groupId, true, false);
+        }
         return { ok: false, ...errorData };
     }
 
-    if (!group.chats.includes(name)) {
-        group.chats.push(name);
-    }
-    await editGroup(groupId, true, false);
     const result = await response.json().catch(() => ({}));
     return { ok: true, ...result };
 }
