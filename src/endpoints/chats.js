@@ -5775,7 +5775,7 @@ async function copyPrefixWithMemoryBooks({
                 return {
                     ok: true,
                     chat_revision: getChatRevision(targetHeader),
-                    memory_book_count: projectedSources.length,
+                    memory_book_count: copiedSources.length,
                     has_derived_entries: hasDerivedEntries,
                     fullJsonl: writeResult.fullJsonl,
                 };
