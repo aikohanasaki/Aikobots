@@ -245,6 +245,10 @@
         top: var(--topBarBlockSize);
     }
 
+    #sheld {
+        top: calc(var(--aiko-chat-visual-viewport-top, 0px) + var(--topBarBlockSize));
+    }
+
     .wi-settings {
         flex-direction: column;
         gap: 5px !important;
@@ -559,7 +563,7 @@
         width: 100vw;
         width: 100dvw;
         height: calc(100vh - 36px);
-        height: calc(100dvh - 36px);
+        height: calc(var(--aiko-chat-visual-viewport-height, 100dvh) - 36px);
         padding-right: max(env(safe-area-inset-right), 0px);
         padding-left: max(env(safe-area-inset-left), 0px);
         padding-bottom: 0;
