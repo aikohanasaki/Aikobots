@@ -470,6 +470,7 @@ export function createDefaultStmbProfile() {
         groupPreset: 'group',
         characterPreset: 'char',
         skipStructuredOutput: false,
+        streaming: false,
         connectionProfileId: '',
         connectionProfileName: '',
         modelOverride: '',
@@ -667,6 +668,7 @@ function sanitizeProfile(rawProfile) {
             ? profile.characterPreset.trim()
             : (typeof profile.charPreset === 'string' && profile.charPreset.trim() ? profile.charPreset.trim() : fallback.characterPreset),
         skipStructuredOutput: Boolean(profile.skipStructuredOutput),
+        streaming: Boolean(profile.streaming),
         connectionProfileId,
         connectionProfileName: typeof profile.connectionProfileName === 'string' ? profile.connectionProfileName.trim() : '',
         modelOverride: typeof profile.modelOverride === 'string'
@@ -1243,6 +1245,10 @@ export function applyStmbProfileConnection(generateData, profile, options = {}) 
         model: profile?.modelOverride,
         temperature: profile?.temperatureOverride,
     };
+    const requestData = {
+        ...generateData,
+        stream: Boolean(profile?.streaming),
+    };
 
     if (profile?.connectionSnapshot || profile?.connectionProfileId) {
         if (typeof applyConnectionProfileSnapshot !== 'function') {
@@ -1250,7 +1256,7 @@ export function applyStmbProfileConnection(generateData, profile, options = {}) 
         }
         const snapshot = profile.connectionSnapshot
             || createConnectionProfileRequestSnapshot?.(profile.connectionProfileId, overrides);
-        return applyConnectionProfileSnapshot(generateData, snapshot, overrides);
+        return applyConnectionProfileSnapshot(requestData, snapshot, overrides);
     }
 
     if (String(profile?.connection?.api || '') === 'current_st') {
@@ -1259,7 +1265,7 @@ export function applyStmbProfileConnection(generateData, profile, options = {}) 
             throw new Error(translate('Enter a model ID or select a connection profile with a saved model ID.'));
         }
         return {
-            ...generateData,
+            ...requestData,
             model,
             temperature: profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined
                 ? profile.temperatureOverride
@@ -1277,7 +1283,7 @@ export function applyStmbProfileConnection(generateData, profile, options = {}) 
                 : profile?.connection?.temperature,
         },
     };
-    return applyStmbProfileToGenerateData(generateData, legacyProfile, providerDefaults);
+    return applyStmbProfileToGenerateData(requestData, legacyProfile, providerDefaults);
 }
 
 export function applyStmbMaxTokensToGenerateData(generateData, stmbMaxTokens) {

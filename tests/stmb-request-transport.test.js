@@ -13,6 +13,7 @@ test('connection-profile fields survive the STMB request allowlist', () => {
         custom_exclude_body: 'seed',
         custom_include_headers: 'X-Feature: enabled',
         custom_prompt_post_processing: 'strict',
+        stream: true,
         unrelated_internal_state: 'must not cross the request boundary',
     });
 
@@ -21,6 +22,7 @@ test('connection-profile fields survive the STMB request allowlist', () => {
     assert.equal(request.custom_exclude_body, 'seed');
     assert.equal(request.custom_include_headers, 'X-Feature: enabled');
     assert.equal(request.custom_prompt_post_processing, 'strict');
+    assert.equal(request.stream, true);
     assert.equal(request.unrelated_internal_state, undefined);
 });
 

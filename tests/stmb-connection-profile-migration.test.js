@@ -63,6 +63,22 @@ test('a central profile binding keeps overrides and drops duplicated direct conn
     assert.deepEqual(profile.connection, { api: 'connection_profile' });
 });
 
+test('memory profile streaming is opt-in and survives settings normalization', () => {
+    const defaultProfile = createDefaultStmbProfile();
+    const settings = normalizeStmbSettings({
+        moduleSettings: {},
+        profiles: [defaultProfile, {
+            name: 'Streaming',
+            streaming: true,
+            connection: { api: 'current_st' },
+        }],
+    });
+
+    assert.equal(defaultProfile.streaming, false);
+    assert.equal(settings.profiles[0].streaming, false);
+    assert.equal(settings.profiles[1].streaming, true);
+});
+
 test('connection profile summaries show effective details and identify overrides', () => {
     const summary = resolveStmbProfileConnectionSummary({
         connectionProfileId: 'connection-1',
@@ -163,20 +179,22 @@ test('clearing the selection preserves a legacy direct connection', () => {
 });
 
 test('STMB connection profiles materialize and apply one request snapshot', () => {
-    const generateData = { messages: [{ role: 'user', content: 'test' }] };
+    const generateData = { messages: [{ role: 'user', content: 'test' }], stream: false };
     const expectedSnapshot = { profileId: 'connection-1' };
     let materialized;
     const result = applyStmbProfileConnection(generateData, {
         connectionProfileId: 'connection-1',
         modelOverride: 'override-model',
         temperatureOverride: 0,
+        streaming: true,
     }, {
         createConnectionProfileRequestSnapshot(profileId, overrides) {
             materialized = { profileId, overrides };
             return expectedSnapshot;
         },
         applyConnectionProfileSnapshot(data, snapshot, overrides) {
-            assert.equal(data, generateData);
+            assert.notEqual(data, generateData);
+            assert.equal(data.stream, true);
             assert.equal(snapshot, expectedSnapshot);
             return { ...data, ...overrides };
         },
@@ -188,6 +206,7 @@ test('STMB connection profiles materialize and apply one request snapshot', () =
     });
     assert.equal(result.model, 'override-model');
     assert.equal(result.temperature, 0);
+    assert.equal(result.stream, true);
 });
 
 test('the current-ST connection applies overrides and requires a model', () => {
@@ -202,6 +221,7 @@ test('the current-ST connection applies overrides and requires a model', () => {
 
     assert.equal(result.model, 'override-model');
     assert.equal(result.temperature, 0);
+    assert.equal(result.stream, false);
     assert.throws(
         () => applyStmbProfileConnection({}, { connection: { api: 'current_st' } }),
         /Enter a model ID/,

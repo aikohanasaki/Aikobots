@@ -5031,6 +5031,9 @@ function buildProfileEditorHtml(profile, options = {}) {
                 <label class="checkbox_label"><input id="stmb-profile-editor-skip-structured-output" type="checkbox" ${profile?.skipStructuredOutput ? 'checked' : ''}> <span data-i18n="Skip structured-output and use plain-text completion">Skip structured-output and use plain-text completion</span></label>
             </div>
             <div class="world_entry_form_control">
+                <label class="checkbox_label"><input id="stmb-profile-editor-streaming" type="checkbox" ${profile?.streaming ? 'checked' : ''}> <span data-i18n="Streaming">Streaming</span></label>
+            </div>
+            <div class="world_entry_form_control">
                 <label for="stmb-profile-editor-model" data-i18n="Model">Model</label>
                 <input id="stmb-profile-editor-model" class="text_pole" value="${escapeHtml(String(profile?.modelOverride || connection.model || ''))}" placeholder="Optional model override" data-i18n="[placeholder]Optional model override">
                 ${usesCurrentSt
@@ -5177,6 +5180,7 @@ function buildProfileFromEditor(dialog, baseProfile = null) {
     profile.characterPreset = String(dialog.querySelector('#stmb-profile-editor-character-preset')?.value || 'char').trim() || 'char';
     profile.connection = profile.connection && typeof profile.connection === 'object' ? profile.connection : {};
     profile.skipStructuredOutput = Boolean(dialog.querySelector('#stmb-profile-editor-skip-structured-output')?.checked);
+    profile.streaming = Boolean(dialog.querySelector('#stmb-profile-editor-streaming')?.checked);
 
     const model = String(dialog.querySelector('#stmb-profile-editor-model')?.value || '').trim();
     const rawTemperature = String(dialog.querySelector('#stmb-profile-editor-temperature')?.value ?? '').trim();
