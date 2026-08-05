@@ -20,7 +20,10 @@ function getDatabasePath() {
 }
 
 function getUserKey(userHandle) {
-    return createHash('sha256').update(String(userHandle || '')).digest('hex');
+    if (typeof userHandle !== 'string' || !userHandle) {
+        throw new TypeError('Generation job user handle is required.');
+    }
+    return createHash('sha256').update(userHandle).digest('hex');
 }
 
 /** Adds one generation-job column while the caller holds the migration transaction. */

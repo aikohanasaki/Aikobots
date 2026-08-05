@@ -58,6 +58,15 @@ describe('generation job store', () => {
         expect(databaseBytes.includes(Buffer.from('unexpected-field-sentinel'))).toBe(false);
     });
 
+    it('rejects a missing user handle instead of sharing an ownership key', () => {
+        expect(() => createGenerationJob({
+            id: 'abababab-abab-4bab-8bab-abababababab',
+            userHandle: undefined,
+            requestFingerprint: 'hash',
+            requestId: 'request-missing-user',
+        })).toThrow('Generation job user handle is required.');
+    });
+
     it('makes a cancellation order win the completion transition', () => {
         const id = '22222222-2222-4222-8222-222222222222';
         createGenerationJob({ id, userHandle: 'alice', requestFingerprint: 'hash', requestId: 'request-2' });

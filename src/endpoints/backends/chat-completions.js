@@ -120,6 +120,7 @@ const API_ZAI_CODING = 'https://api.z.ai/api/coding/paas/v4';
 const API_SILICONFLOW = 'https://api.siliconflow.com/v1';
 const PROMPT_INSPECTION_DIRECTORY = ['_secure', 'prompt-inspection'];
 const STREAM_HEARTBEAT_INTERVAL_MS = 15000;
+const STALE_GENERATION_OWNER_MS = STREAM_HEARTBEAT_INTERVAL_MS * 3;
 const PROMPT_INSPECTION_LOCK_RETRY_MS = 25;
 const PROMPT_INSPECTION_LOCK_TIMEOUT_MS = 5000;
 const PROMPT_INSPECTION_LOCK_STALE_MS = 60_000;
@@ -4354,7 +4355,25 @@ export async function handleChatCompletionsGenerate(request, response) {
 }
 
 function getGenerationUserHandle(request) {
-    return request.user?.profile?.handle;
+    const handle = request.user?.profile?.handle;
+    if (typeof handle !== 'string' || !handle) {
+        const error = new Error('Generation jobs require an authenticated user handle.');
+        error.status = 401;
+        throw error;
+    }
+    return handle;
+}
+
+/** Rejects generation-job access before an empty ownership key can reach storage. */
+function requireGenerationUserHandle(request, response, next) {
+    try {
+        getGenerationUserHandle(request);
+        return next();
+    } catch (error) {
+        return response.status(Number(error?.status) || 401).send({
+            error: { message: 'Generation jobs require an authenticated user handle.' },
+        });
+    }
 }
 
 function getGenerationRequestFingerprint(body) {
@@ -4363,6 +4382,12 @@ function getGenerationRequestFingerprint(body) {
 
 function delayDetachedGeneration(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Returns whether a nonterminal generation has stopped receiving owner heartbeats. */
+function isGenerationOwnerStale(job, now = Date.now()) {
+    return !['completed', 'cancelled', 'failed'].includes(job?.state)
+        && now - Number(job?.updatedAt || 0) >= STALE_GENERATION_OWNER_MS;
 }
 
 /** Runs the existing provider dispatch independently of the creating HTTP socket. */
@@ -4438,6 +4463,8 @@ function recordDetachedGenerationFailure(id, userHandle, stream) {
         // The original job remains available for retention cleanup if storage itself is unavailable.
     }
 }
+
+router.use('/generations', requireGenerationUserHandle);
 
 router.post('/generations', async function (request, response) {
     if (!request.body?.request || typeof request.body.request !== 'object') {
@@ -4533,6 +4560,9 @@ router.get('/generations/:id/stream', async function (request, response) {
     while (!closed
         && Object.keys(initial.responseHeaders || {}).length === 0
         && !['completed', 'cancelled', 'failed'].includes(initial.state)) {
+        if (isGenerationOwnerStale(initial)) {
+            return response.end();
+        }
         await delayDetachedGeneration(DETACHED_GENERATION_POLL_MS);
         if (closed) {
             return;
@@ -4569,8 +4599,15 @@ router.get('/generations/:id/stream', async function (request, response) {
             response.write(`id: ${event.sequence}\n${event.eventBlock}\n\n`);
             sequence = event.sequence;
         }
+        if (page.events.length) {
+            response.flush?.();
+            lastHeartbeatAt = Date.now();
+        }
         if (['completed', 'cancelled', 'failed'].includes(page.job.state)
             && sequence >= page.job.lastEventSequence) {
+            return response.end();
+        }
+        if (isGenerationOwnerStale(page.job)) {
             return response.end();
         }
         if (Date.now() - lastHeartbeatAt >= STREAM_HEARTBEAT_INTERVAL_MS) {
