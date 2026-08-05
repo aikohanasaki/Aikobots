@@ -79,6 +79,7 @@ import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL } from './constants.js';
 import { consumeChatCompletionStream } from './chat-completion-stream.js';
 import { getOpenRouterPricingDisplay } from './openrouter-pricing.js';
 import { createResumableGenerationResponse } from './resumable-generation.js';
+import { clearPendingGeneration, savePendingGeneration } from './generation-recovery.js';
 
 export {
     oai_settings,
@@ -187,6 +188,17 @@ function attachOpenAIResponseMetadataOwner(target, requestId) {
     });
 
     return target;
+}
+
+/** Allocates client-side metadata state for an initial or replayed provider response. */
+function beginOpenAIResponseMetadata(type) {
+    const requestId = createOpenAIResponseMetadataId();
+    const metadataEntry = getOpenAIResponseMetadataEntry(requestId, { create: true });
+    if (metadataEntry) {
+        metadataEntry.chatScope = getCurrentPromptInspectionChatScope();
+        metadataEntry.type = type;
+    }
+    return requestId;
 }
 
 function sanitizeForServerPayload(value, seen = new WeakSet()) {
@@ -2677,12 +2689,7 @@ function getVerbosity() {
 
 async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {}) {
     const promptContext = !Array.isArray(messages) && messages && typeof messages === 'object' ? messages.promptContext : null;
-    const requestId = createOpenAIResponseMetadataId();
-    const metadataEntry = getOpenAIResponseMetadataEntry(requestId, { create: true });
-    if (metadataEntry) {
-        metadataEntry.chatScope = getCurrentPromptInspectionChatScope();
-        metadataEntry.type = type;
-    }
+    const requestId = beginOpenAIResponseMetadata(type);
     storeServerAssemblyPromptContext(promptContext);
 
     if (!promptContext && !Array.isArray(messages)) {
@@ -3038,44 +3045,88 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
     };
 }
 
-async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } = {}) {
+async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, generationRecovery = null } = {}) {
     // Provide default abort signal
     if (!signal) {
         signal = new AbortController().signal;
     }
 
-    const {
-        generateData: generate_data,
-        stream,
-        canMultiSwipe,
-        hasForcedActivations,
-        requestId,
-    } = await buildOpenAIGenerateData(type, messages, { jsonSchema });
+    const resumedGeneration = generationRecovery?.generationId ? generationRecovery : null;
+    let generate_data = null;
+    let stream = true;
+    let canMultiSwipe = Boolean(resumedGeneration?.canMultiSwipe);
+    let hasForcedActivations = false;
+    let requestId;
+    if (resumedGeneration) {
+        requestId = beginOpenAIResponseMetadata(type);
+    } else {
+        ({
+            generateData: generate_data,
+            stream,
+            canMultiSwipe,
+            hasForcedActivations,
+            requestId,
+        } = await buildOpenAIGenerateData(type, messages, { jsonSchema }));
+    }
 
-    const generationId = uuidv4();
+    const generationId = resumedGeneration?.generationId || uuidv4();
+    const supportsMultiSwipe = resumedGeneration?.canMultiSwipe ?? canMultiSwipe;
     const generationsUrl = '/api/backends/chat-completions/generations';
     const cancelGeneration = () => fetch(`${generationsUrl}/${generationId}/cancel`, {
         method: 'POST',
         headers: getRequestHeaders(),
     }).catch(() => null);
-    const onAbort = () => { void cancelGeneration(); };
+    const onAbort = () => {
+        clearPendingGeneration(generationId);
+        void cancelGeneration();
+    };
     signal.addEventListener('abort', onAbort, { once: true });
     let response;
     try {
-        const createResponse = await createDetachedGeneration(
-            generationsUrl,
-            generationId,
-            generate_data,
-        );
+        let created = { request_id: resumedGeneration?.serverRequestId || '' };
+        if (!resumedGeneration) {
+            if (stream && generationRecovery) {
+                savePendingGeneration({
+                    ...generationRecovery,
+                    generationId,
+                    canMultiSwipe,
+                });
+            }
+            const createResponse = await createDetachedGeneration(
+                generationsUrl,
+                generationId,
+                generate_data,
+            );
 
-        if (!createResponse.ok) {
-            const errorText = await createResponse.text();
-            const parsed = tryParseStreamingError(createResponse, errorText);
-            const fallbackMessage = getResponseErrorMessage(createResponse, errorText, parsed);
-            throw new Error(fallbackMessage);
+            if (!createResponse.ok) {
+                clearPendingGeneration(generationId);
+                const errorText = await createResponse.text();
+                const parsed = tryParseStreamingError(createResponse, errorText);
+                const fallbackMessage = getResponseErrorMessage(createResponse, errorText, parsed);
+                throw new Error(fallbackMessage);
+            }
+
+            created = await createResponse.json();
+            if (stream && generationRecovery) {
+                savePendingGeneration({
+                    ...generationRecovery,
+                    generationId,
+                    canMultiSwipe,
+                    serverRequestId: created.request_id || '',
+                });
+            }
+        } else if (!created.request_id) {
+            const recoveredJob = await waitForDetachedGeneration(generationsUrl, generationId, signal);
+            if (!recoveredJob) {
+                clearPendingGeneration(generationId);
+                throw new Error('Pending generation was not found.');
+            }
+            created.request_id = recoveredJob.request_id || '';
+            savePendingGeneration({
+                ...resumedGeneration,
+                serverRequestId: created.request_id,
+            });
         }
-
-        const created = await createResponse.json();
         if (signal.aborted) {
             await cancelGeneration();
             signal.throwIfAborted();
@@ -3124,7 +3175,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
                 createEventStream: () => getEventSourceStream(),
                 createState: () => ({ reasoning: '', swipeReasoning: [], images: [], signature: '', toolSignatures: {} }),
                 getReply: (parsed, state) => {
-                    const isSwipe = canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0;
+                    const isSwipe = supportsMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0;
                     if (isSwipe) {
                         const swipeIndex = Number(parsed?.choices?.[0]?.index) - 1;
                         const swipeState = {
@@ -3141,7 +3192,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
                     }
                     return getStreamingReply(parsed, state);
                 },
-                allowSwipe: parsed => canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0,
+                allowSwipe: parsed => supportsMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0,
                 handleChunkError: parsed => {
                     try {
                         tryParseStreamingError(response, JSON.stringify(parsed));
@@ -3194,7 +3245,13 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
             }
         };
 
-        return attachOpenAIResponseMetadataOwner(streamData, requestId);
+        attachOpenAIResponseMetadataOwner(streamData, requestId);
+        Object.defineProperty(streamData, 'generationId', {
+            value: generationId,
+            enumerable: false,
+            configurable: true,
+        });
+        return streamData;
     }
     else {
         const data = await response.json();
@@ -3237,6 +3294,25 @@ async function createDetachedGeneration(url, generationId, request) {
         }
     }
     throw lastError;
+}
+
+/** Bridges a reload that raced the original generation-create response. */
+async function waitForDetachedGeneration(url, generationId, signal) {
+    for (let attempt = 0; attempt < 20; attempt++) {
+        signal.throwIfAborted();
+        const response = await fetch(`${url}/${generationId}`, {
+            headers: getRequestHeaders(),
+            signal,
+        });
+        if (response.ok) {
+            return response.json();
+        }
+        if (response.status !== 404) {
+            throw new Error(`Generation recovery returned HTTP ${response.status}.`);
+        }
+        await delay(250);
+    }
+    return null;
 }
 
 async function waitForGenerationResult(generationId, signal) {

@@ -283,6 +283,7 @@ import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter } from './scripts
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
+import { clearPendingGeneration, getPendingGeneration } from './scripts/generation-recovery.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
 
@@ -3568,6 +3569,8 @@ function setActiveSessionLocked(locked) {
             stopGeneration();
         }
         toastr.warning(ACTIVE_SESSION_LOCK_MESSAGE, translate('Read-only session'), { preventDuplicates: true });
+    } else {
+        setTimeout(() => { void resumePendingGenerationForCurrentChat(); }, 0);
     }
 }
 
@@ -8813,6 +8816,24 @@ function createSwipeGenerationTargetUuid(message) {
     return swipeUuid;
 }
 
+/** Clears swipe-specific presentation data before a regenerated slot is materialized. */
+function clearSwipeGenerationTargetData(targetMessage) {
+    if (targetMessage.extra && typeof targetMessage.extra === 'object') {
+        delete targetMessage.extra.memory;
+        delete targetMessage.extra.display_text;
+        delete targetMessage.extra.media;
+        delete targetMessage.extra.inline_image;
+        delete targetMessage.extra.files;
+        delete targetMessage.extra.fileLength;
+        delete targetMessage.extra.generationType;
+        delete targetMessage.extra.negative;
+        delete targetMessage.extra.title;
+        delete targetMessage.extra.append_title;
+    }
+    delete targetMessage.gen_started;
+    delete targetMessage.gen_finished;
+}
+
 async function resetStaleSwipeTarget(swipeTarget) {
     const messageId = Number(swipeTarget?.messageId);
     if (!Number.isInteger(messageId) || messageId < 0 || messageId >= chat.length) {
@@ -8921,6 +8942,14 @@ class StreamingProcessor {
 
     markUIGenStopped() {
         activateSendButtons();
+    }
+
+    /** Clears only this processor's persisted reload-recovery reference. */
+    clearGenerationRecovery() {
+        const generationId = this.generator?.generationId;
+        if (generationId) {
+            clearPendingGeneration(generationId);
+        }
     }
 
     async onStartStreaming(text) {
@@ -9147,6 +9176,7 @@ class StreamingProcessor {
             unblockGeneration();
             return false;
         }
+        this.clearGenerationRecovery();
 
         if (this.type !== 'impersonate') {
             await eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
@@ -9171,6 +9201,7 @@ class StreamingProcessor {
     }
 
     async onErrorStreaming() {
+        this.clearGenerationRecovery();
         this.abortController.abort();
         this.isStopped = true;
 
@@ -9200,6 +9231,7 @@ class StreamingProcessor {
     }
 
     onStopStreaming() {
+        this.clearGenerationRecovery();
         this.abortController.abort();
         this.isFinished = true;
     }
@@ -9696,6 +9728,7 @@ async function restoreUnsavedDeletedLastMessage(messageId, message) {
  * @property {number} [depth] Recursion depth for the generation. Used to prevent infinite loops in tool calls.
  * @property {JsonSchema} [jsonSchema] JSON schema to use for the structured generation. Usually requires a special instruction.
  * @property {object?} [swipeTarget] Captured swipe generation target with a preallocated swipe UUID.
+ * @property {object?} [generationRecovery] Pending detached generation being resumed after a page reload.
  */
 
 /**
@@ -9706,7 +9739,7 @@ async function restoreUnsavedDeletedLastMessage(messageId, message) {
  * @param {boolean} dryRun Whether to actually generate a message or just assemble the prompt
  * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
  */
-async function generateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, swipeTarget = null } = {}, dryRun = false) {
+async function generateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, swipeTarget = null, generationRecovery = null } = {}, dryRun = false) {
     enforceChatCompletionsOnlyMode();
     console.log('Generate entered');
 
@@ -9716,7 +9749,9 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     setGenerationProgress(0);
-    generation_started = new Date();
+    generation_started = generationRecovery?.startedAt
+        ? new Date(generationRecovery.startedAt)
+        : new Date();
 
     if (type === 'swipe') {
         const validation = validateSwipeTarget(swipeTarget);
@@ -9759,7 +9794,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
     const isImpersonate = type == 'impersonate';
 
-    if (!(dryRun || type == 'regenerate' || type == 'swipe' || type == 'quiet')) {
+    if (!(dryRun || generationRecovery || type == 'regenerate' || type == 'swipe' || type == 'quiet')) {
         const interruptedByCommand = await processCommands(String($('#send_textarea').val()));
 
         if (interruptedByCommand) {
@@ -9791,7 +9826,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     if (selected_group && !is_group_generating) {
         if (!dryRun) {
             // Returns the promise that generateGroupWrapper returns; resolves when generation is done
-            return generateGroupWrapper(false, type, { quiet_prompt, force_chid, signal: abortController.signal, quietImage, swipeTarget });
+            return generateGroupWrapper(false, type, { quiet_prompt, force_chid, signal: abortController.signal, quietImage, swipeTarget, generationRecovery });
         }
 
         const characterIndexMap = new Map(characters.map((char, index) => [char.avatar, index]));
@@ -9839,7 +9874,10 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     let generationStartDeletedId = null;
     let generationStartDeletedMessage = null;
     let continueTimerRollback = null;
-    if (type !== 'regenerate' && type !== 'swipe' && type !== 'quiet' && !isImpersonate && !dryRun) {
+    if (generationRecovery) {
+        is_send_press = true;
+        textareaText = '';
+    } else if (type !== 'regenerate' && type !== 'swipe' && type !== 'quiet' && !isImpersonate && !dryRun) {
         is_send_press = true;
         textareaText = String($('#send_textarea').val());
         $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
@@ -10744,7 +10782,9 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 streamingProcessor.firstMessageText = '';
             }
 
-            streamingProcessor.generator = await sendStreamingRequest(type, generate_data);
+            streamingProcessor.generator = await sendStreamingRequest(type, generate_data, {
+                generationRecovery: generationRecovery || createGenerationRecoveryContext(type, swipeTarget),
+            });
 
             hideSwipeButtons();
             let getMessage = await streamingProcessor.generate();
@@ -10766,6 +10806,9 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 const hasToolCalls = ToolManager.hasToolCalls(streamingProcessor.toolCalls);
                 const shouldDeleteMessage = type !== 'swipe' && ['', '...'].includes(lastMessage?.mes) && !lastMessage?.extra?.reasoning && ['', '...'].includes(streamingProcessor?.result);
                 hasToolCalls && shouldDeleteMessage && await deleteLastMessage();
+                if (hasToolCalls) {
+                    streamingProcessor.clearGenerationRecovery();
+                }
                 const invocationResult = await ToolManager.invokeFunctionTools(streamingProcessor.toolCalls);
                 const shouldStopGeneration = (!invocationResult.invocations.length && shouldDeleteMessage) || invocationResult.stealthCalls.length;
                 if (hasToolCalls) {
@@ -10976,6 +11019,94 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         throw exception;
     }
 }
+
+/** Returns the stable chat scope used to match a pending generation after reload. */
+function getGenerationRecoveryChatIdentity() {
+    const identity = getActiveChatIdentity();
+    if (identity.groupId) {
+        identity.characterId = '';
+    }
+    return identity;
+}
+
+/** Captures content-free routing data before a detached streaming job is created. */
+function createGenerationRecoveryContext(type, swipeTarget = null) {
+    const anchorMessageUuid = chat.at(-1)?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    const chatIdentity = getGenerationRecoveryChatIdentity();
+    if (type === 'impersonate' || !isValidAikobotsUuid(anchorMessageUuid) || !chatIdentity.chatId) {
+        return null;
+    }
+
+    return {
+        type: type || 'normal',
+        chatIdentity,
+        anchorMessageUuid,
+        createdAt: Date.now(),
+        startedAt: generation_started instanceof Date ? generation_started.getTime() : Date.now(),
+        forceChid: selected_group && Number.isInteger(Number(this_chid)) ? Number(this_chid) : null,
+        swipeTarget: swipeTarget ? {
+            messageId: Number(swipeTarget.messageId),
+            swipeId: Number(swipeTarget.swipeId),
+            swipeUuid: swipeTarget.swipeUuid,
+            previousSwipeId: Number(swipeTarget.previousSwipeId),
+        } : null,
+    };
+}
+
+/** Cancels a pending job whose saved chat target is no longer safe to mutate. */
+function cancelPendingGeneration(record) {
+    clearPendingGeneration(record?.generationId);
+    if (!record?.generationId) {
+        return;
+    }
+    void fetch(`/api/backends/chat-completions/generations/${record.generationId}/cancel`, {
+        method: 'POST',
+        headers: getRequestHeaders(),
+    }).catch(() => null);
+}
+
+let pendingGenerationRecoveryPromise = null;
+
+/** Reattaches this tab's pending generation after its authoritative chat has loaded. */
+async function resumePendingGenerationForCurrentChat() {
+    const pending = getPendingGeneration();
+    if (!pending || pendingGenerationRecoveryPromise || streamingProcessor || is_send_press || isActiveSessionLocked) {
+        return;
+    }
+    if (!isSameChatIdentity(pending.chatIdentity, getGenerationRecoveryChatIdentity())) {
+        return;
+    }
+
+    const anchorMessage = chat.at(-1);
+    if (anchorMessage?.[AIKOBOTS_MESSAGE_UUID_KEY] !== pending.anchorMessageUuid) {
+        cancelPendingGeneration(pending);
+        return;
+    }
+
+    let swipeTarget = null;
+    if (pending.swipeTarget) {
+        const targetMessage = chat[pending.swipeTarget.messageId];
+        if (targetMessage !== anchorMessage) {
+            cancelPendingGeneration(pending);
+            return;
+        }
+        swipeTarget = { ...pending.swipeTarget, messageRef: targetMessage };
+        clearSwipeGenerationTargetData(targetMessage);
+    }
+
+    pendingGenerationRecoveryPromise = Generate(pending.type, {
+        force_chid: pending.forceChid,
+        generationRecovery: pending,
+        swipeTarget,
+    }).catch(() => null).finally(() => {
+        pendingGenerationRecoveryPromise = null;
+    });
+    await pendingGenerationRecoveryPromise;
+}
+
+eventSource.on(event_types.CHAT_CHANGED, () => {
+    setTimeout(() => { void resumePendingGenerationForCurrentChat(); }, 0);
+});
 //MARK: Generate() ends
 
 export async function Generate(type, options = {}, dryRun = false) {
@@ -11432,6 +11563,7 @@ export function setInContextMessageId(firstIncludedMessageId) {
 /**
  * @typedef {object} AdditionalRequestOptions
  * @property {JsonSchema} [jsonSchema]
+ * @property {object?} [generationRecovery]
  */
 
 /**
@@ -19166,26 +19298,9 @@ export async function swipe(event, direction, { source, repeated, message = chat
         await endSwipe();
     }
 
-    function clearMessageData(targetMessage) {
-        if (targetMessage.extra && typeof targetMessage.extra === 'object') {
-            delete targetMessage.extra.memory;
-            delete targetMessage.extra.display_text;
-            delete targetMessage.extra.media;
-            delete targetMessage.extra.inline_image;
-            delete targetMessage.extra.files;
-            delete targetMessage.extra.fileLength;
-            delete targetMessage.extra.generationType;
-            delete targetMessage.extra.negative;
-            delete targetMessage.extra.title;
-            delete targetMessage.extra.append_title;
-        }
-        delete targetMessage.gen_started;
-        delete targetMessage.gen_finished;
-    }
-
     async function loadFromSwipeId(messageId, targetSwipeId) {
         chat[messageId].swipe_id = targetSwipeId;
-        clearMessageData(chat[messageId]);
+        clearSwipeGenerationTargetData(chat[messageId]);
 
         if (syncSwipeToMes(messageId, targetSwipeId, chat[messageId]) === false) {
             toastr.error(t`When swiping ${direction} on message ${messageId}, syncSwipeToMes has returned false. Attempting to swipe back!`);
@@ -19392,7 +19507,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
                         swipeUuid: createSwipeGenerationTargetUuid(chat[mesId]),
                         previousSwipeId: originalSwipeId,
                     };
-                    clearMessageData(chat[mesId]);
+                    clearSwipeGenerationTargetData(chat[mesId]);
                     await animateSwipe(true);
                     await endSwipe();
                     return;
@@ -21853,10 +21968,6 @@ jQuery(async function () {
 
     $(window).on('beforeunload', () => {
         cancelTtsPlay();
-        if (streamingProcessor) {
-            console.log('Page reloaded. Aborting streaming...');
-            streamingProcessor.onStopStreaming();
-        }
     });
 
 
