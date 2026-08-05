@@ -73,8 +73,10 @@ import {
     getGenerationEventsAfter,
     getGenerationJob,
     isGenerationCancellationRequested,
+    listGenerationRecoveries,
     markGenerationJobRunning,
     requestGenerationCancellation,
+    resolveGenerationRecovery,
     touchGenerationJob,
 } from '../../generation-job-store.js';
 import { GenerationJobResponse } from '../../generation-job-response.js';
@@ -4457,6 +4459,7 @@ router.post('/generations', async function (request, response) {
             userHandle,
             requestFingerprint: getGenerationRequestFingerprint(generationBody),
             requestId,
+            recovery: request.body.recovery ?? null,
         });
         if (created.created || created.job.state === 'queued') {
             void runDetachedGeneration(request, id, generationBody, requestId)
@@ -4475,6 +4478,19 @@ router.post('/generations', async function (request, response) {
             error: { message: Number(error?.status) === 409 ? error.message : 'Could not start generation.' },
         });
     }
+});
+
+router.get('/generations/recoverable', function (request, response) {
+    const jobs = listGenerationRecoveries(getGenerationUserHandle(request)).map(job => ({
+        generation_id: job.id,
+        state: job.state,
+        request_id: job.requestId,
+        recovery: {
+            ...job.recovery,
+            createdAt: job.createdAt,
+        },
+    }));
+    return response.send({ jobs });
 });
 
 router.get('/generations/:id', function (request, response) {
@@ -4546,6 +4562,25 @@ router.get('/generations/:id/stream', async function (request, response) {
             lastHeartbeatAt = Date.now();
         }
         await delayDetachedGeneration(DETACHED_GENERATION_POLL_MS);
+    }
+});
+
+router.post('/generations/:id/resolve', async function (request, response) {
+    try {
+        await assertActiveSessionOperation(request);
+        const job = resolveGenerationRecovery(request.params.id, getGenerationUserHandle(request));
+        if (!job) {
+            return response.sendStatus(404);
+        }
+        if (!job.recovery) {
+            return response.status(409).send({ error: { message: 'Generation has no recovery record.' } });
+        }
+        return response.send({ id: job.id, state: job.state, resolved_at: job.resolvedAt });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        return response.status(500).send({ error: { message: 'Could not resolve generation recovery.' } });
     }
 });
 

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,14 +10,24 @@ import {
     finishGenerationJob,
     getGenerationEventsAfter,
     getGenerationJob,
+    listGenerationRecoveries,
     markGenerationJobRunning,
     requestGenerationCancellation,
+    resolveGenerationRecovery,
+    touchGenerationJob,
 } from '../src/generation-job-store.js';
 import { GenerationJobResponse } from '../src/generation-job-response.js';
 
 describe('generation job store', () => {
     let dataRoot;
     let previousDataRoot;
+
+    function readGenerationDatabaseBytes() {
+        const databasePath = join(dataRoot, '_generation-jobs', 'jobs.sqlite');
+        return Buffer.concat([databasePath, `${databasePath}-wal`]
+            .filter(existsSync)
+            .map(filePath => readFileSync(filePath)));
+    }
 
     beforeEach(() => {
         previousDataRoot = globalThis.DATA_ROOT;
@@ -27,6 +37,7 @@ describe('generation job store', () => {
 
     afterEach(() => {
         closeGenerationJobStore();
+        jest.restoreAllMocks();
         globalThis.DATA_ROOT = previousDataRoot;
         rmSync(dataRoot, { recursive: true, force: true });
     });
@@ -43,8 +54,8 @@ describe('generation job store', () => {
             { sequence: 2, eventBlock: 'data: [DONE]' },
         ]);
         expect(getGenerationJob(id, 'bob')).toBeNull();
-        const databaseBytes = readFileSync(join(dataRoot, '_generation-jobs', 'jobs.sqlite'));
-        expect(databaseBytes.includes(Buffer.from('secret prompt text'))).toBe(false);
+        const databaseBytes = readGenerationDatabaseBytes();
+        expect(databaseBytes.includes(Buffer.from('unexpected-field-sentinel'))).toBe(false);
     });
 
     it('makes a cancellation order win the completion transition', () => {
@@ -57,12 +68,91 @@ describe('generation job store', () => {
         expect(finishGenerationJob(id, 'alice', 'cancelled').state).toBe('cancelled');
     });
 
+    it('discovers only the owner\'s unresolved content-free recovery records', () => {
+        const id = '66666666-6666-4666-8666-666666666666';
+        const now = Date.now();
+        createGenerationJob({
+            id,
+            userHandle: 'alice',
+            requestFingerprint: 'hash',
+            requestId: 'request-6',
+            recovery: {
+                type: 'normal',
+                chatIdentity: { groupId: '', characterId: '2', chatId: 'chat-1' },
+                anchorMessageUuid: '77777777-7777-4777-8777-777777777777',
+                outputMessageUuid: '88888888-8888-4888-8888-888888888888',
+                createdAt: now,
+                startedAt: now,
+                canMultiSwipe: false,
+                forceChid: null,
+                swipeTarget: null,
+                prompt: 'unexpected-field-sentinel',
+            },
+        });
+
+        expect(listGenerationRecoveries('bob')).toEqual([]);
+        expect(listGenerationRecoveries('alice')).toEqual([
+            expect.objectContaining({
+                id,
+                recovery: expect.not.objectContaining({ prompt: expect.anything() }),
+                resolvedAt: null,
+            }),
+        ]);
+        expect(readGenerationDatabaseBytes().includes(Buffer.from('unexpected-field-sentinel'))).toBe(false);
+
+        expect(resolveGenerationRecovery(id, 'alice').resolvedAt).toEqual(expect.any(Number));
+        expect(listGenerationRecoveries('alice')).toEqual([]);
+    });
+
     it('cancels an unclaimed queued job without requiring an owning worker', () => {
         const id = '55555555-5555-4555-8555-555555555555';
         createGenerationJob({ id, userHandle: 'alice', requestFingerprint: 'hash', requestId: 'request-5' });
 
         expect(requestGenerationCancellation(id, 'alice').state).toBe('cancelled');
         expect(markGenerationJobRunning(id, 'alice').claimed).toBe(false);
+    });
+
+    it('keeps healthy work and gives unresolved completions the seven-day window', () => {
+        const baseTime = 1_800_000_000_000;
+        const now = jest.spyOn(Date, 'now').mockReturnValue(baseTime);
+        const recovery = {
+            type: 'normal',
+            chatIdentity: { groupId: '', characterId: '2', chatId: 'chat-1' },
+            anchorMessageUuid: '99999999-9999-4999-8999-999999999999',
+            outputMessageUuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            createdAt: baseTime,
+            startedAt: baseTime,
+            canMultiSwipe: false,
+            forceChid: null,
+            swipeTarget: null,
+        };
+        const unresolvedId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+        const resolvedId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+        const runningId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        const failedId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+
+        createGenerationJob({ id: unresolvedId, userHandle: 'alice', requestFingerprint: 'u', requestId: 'u', recovery });
+        finishGenerationJob(unresolvedId, 'alice', 'completed');
+        createGenerationJob({ id: resolvedId, userHandle: 'alice', requestFingerprint: 'r', requestId: 'r', recovery: { ...recovery, outputMessageUuid: 'ffffffff-ffff-4fff-8fff-ffffffffffff' } });
+        finishGenerationJob(resolvedId, 'alice', 'completed');
+        resolveGenerationRecovery(resolvedId, 'alice');
+        createGenerationJob({ id: runningId, userHandle: 'alice', requestFingerprint: 'running', requestId: 'running' });
+        markGenerationJobRunning(runningId, 'alice');
+        createGenerationJob({ id: failedId, userHandle: 'alice', requestFingerprint: 'failed', requestId: 'failed' });
+        finishGenerationJob(failedId, 'alice', 'failed');
+
+        now.mockReturnValue(baseTime + 2 * 24 * 60 * 60_000);
+        touchGenerationJob(runningId, 'alice');
+        expect(listGenerationRecoveries('alice').map(job => job.id)).toContain(unresolvedId);
+        expect(getGenerationJob(resolvedId, 'alice')).toBeNull();
+        expect(getGenerationJob(failedId, 'alice')).toBeNull();
+        expect(getGenerationJob(runningId, 'alice')).not.toBeNull();
+
+        now.mockReturnValue(baseTime + 8 * 24 * 60 * 60_000);
+        touchGenerationJob(runningId, 'alice');
+        listGenerationRecoveries('alice');
+        expect(getGenerationJob(unresolvedId, 'alice')).toBeNull();
+        expect(getGenerationJob(runningId, 'alice')).not.toBeNull();
     });
 
     it('records complete SSE blocks and appends a terminal event', () => {

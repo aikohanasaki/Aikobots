@@ -283,11 +283,12 @@ import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter } from './scripts
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
-import { clearPendingGeneration, getPendingGeneration } from './scripts/generation-recovery.js';
+import { clearPendingGeneration, getPendingGeneration, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
 
 let pendingPromptInspectorRecord = null;
+const GENERATION_RECOVERY_MARKER_KEY = 'aikobots_generation_id';
 let promptTokenWarningDismissedUntilRefresh = false;
 let promptTokenWarningPopupOpen = false;
 
@@ -8887,6 +8888,7 @@ class StreamingProcessor {
         this.force_name2 = forceName2;
         this.isStopped = false;
         this.isFinished = false;
+        this.detachedRecoveryPending = false;
         this.generator = this.nullStreamingGeneration;
         this.abortController = new AbortController();
         this.firstMessageText = '...';
@@ -8952,6 +8954,12 @@ class StreamingProcessor {
         }
     }
 
+    /** Acknowledges that this processor's durable stream was committed to the chat. */
+    async resolveGenerationRecovery() {
+        const generationId = this.generator?.generationId;
+        return generationId ? acknowledgeGenerationRecovery(generationId) : true;
+    }
+
     async onStartStreaming(text) {
         const continueOnReasoning = !!(this.type === 'continue' && this.promptReasoning.prefixReasoning);
         if (continueOnReasoning) {
@@ -8964,7 +8972,13 @@ class StreamingProcessor {
             this.sendTextarea.value = '';
             this.sendTextarea.dispatchEvent(new Event('input', { bubbles: true }));
         } else {
-            await saveReply({ type: this.type, getMessage: text, fromStreaming: true, swipeTarget: this.swipeTarget });
+            await saveReply({
+                type: this.type,
+                getMessage: text,
+                fromStreaming: true,
+                swipeTarget: this.swipeTarget,
+                messageUuid: this.generator?.outputMessageUuid || null,
+            });
             messageId = chat.length - 1;
             await this.#checkDomElements(messageId, continueOnReasoning);
             this.markUIGenStarted();
@@ -9167,6 +9181,11 @@ class StreamingProcessor {
         const sqliteMutationMessageId = this.type === 'swipe'
             ? finishSwipeValidation.messageId
             : messageId;
+        const generationId = this.generator?.generationId;
+        if (this.type === 'continue' && isValidAikobotsUuid(generationId)) {
+            targetMessage.extra = targetMessage.extra || {};
+            targetMessage.extra[GENERATION_RECOVERY_MARKER_KEY] = generationId;
+        }
         const saveResult = await saveSqliteReplyMutation({
             mutation: this.type === 'swipe' || this.type === 'continue' ? 'update' : 'append',
             messageId: sqliteMutationMessageId,
@@ -9176,7 +9195,7 @@ class StreamingProcessor {
             unblockGeneration();
             return false;
         }
-        this.clearGenerationRecovery();
+        await this.resolveGenerationRecovery();
 
         if (this.type !== 'impersonate') {
             await eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
@@ -9200,9 +9219,13 @@ class StreamingProcessor {
         return true;
     }
 
-    async onErrorStreaming() {
-        this.clearGenerationRecovery();
-        this.abortController.abort();
+    async onErrorStreaming(error = null) {
+        const preserveDetachedGeneration = error?.generationRecoveryAvailable === true;
+        this.detachedRecoveryPending = preserveDetachedGeneration;
+        if (!preserveDetachedGeneration) {
+            this.clearGenerationRecovery();
+            this.abortController.abort();
+        }
         this.isStopped = true;
 
         this.markUIGenStopped();
@@ -9292,7 +9315,7 @@ class StreamingProcessor {
             // in the case of a self-inflicted abort, we have already cleaned up
             if (!this.isFinished) {
                 console.error(err);
-                await this.onErrorStreaming();
+                await this.onErrorStreaming(err);
             }
             return this.result;
         }
@@ -10788,6 +10811,11 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
             hideSwipeButtons();
             let getMessage = await streamingProcessor.generate();
+            if (streamingProcessor?.detachedRecoveryPending) {
+                streamingProcessor = null;
+                setTimeout(() => { void resumePendingGenerationForCurrentChat(); }, 0);
+                return;
+            }
             let messageChunk = cleanUpMessage({
                 getMessage: getMessage,
                 isImpersonate: isImpersonate,
@@ -10807,7 +10835,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 const shouldDeleteMessage = type !== 'swipe' && ['', '...'].includes(lastMessage?.mes) && !lastMessage?.extra?.reasoning && ['', '...'].includes(streamingProcessor?.result);
                 hasToolCalls && shouldDeleteMessage && await deleteLastMessage();
                 if (hasToolCalls) {
-                    streamingProcessor.clearGenerationRecovery();
+                    await streamingProcessor.resolveGenerationRecovery();
                 }
                 const invocationResult = await ToolManager.invokeFunctionTools(streamingProcessor.toolCalls);
                 const shouldStopGeneration = (!invocationResult.invocations.length && shouldDeleteMessage) || invocationResult.stealthCalls.length;
@@ -11041,6 +11069,7 @@ function createGenerationRecoveryContext(type, swipeTarget = null) {
         type: type || 'normal',
         chatIdentity,
         anchorMessageUuid,
+        outputMessageUuid: ['continue', 'swipe'].includes(type) ? '' : uuidv4(),
         createdAt: Date.now(),
         startedAt: generation_started instanceof Date ? generation_started.getTime() : Date.now(),
         forceChid: selected_group && Number.isInteger(Number(this_chid)) ? Number(this_chid) : null,
@@ -11051,6 +11080,82 @@ function createGenerationRecoveryContext(type, swipeTarget = null) {
             previousSwipeId: Number(swipeTarget.previousSwipeId),
         } : null,
     };
+}
+
+/** Marks a durable generation handled only after its chat mutation is authoritative. */
+async function acknowledgeGenerationRecovery(generationId) {
+    if (!isValidAikobotsUuid(generationId)) {
+        return false;
+    }
+
+    try {
+        const response = await fetch(`/api/backends/chat-completions/generations/${generationId}/resolve`, {
+            method: 'POST',
+            headers: getRequestHeaders(),
+        });
+        if (response.ok || response.status === 404) {
+            clearPendingGeneration(generationId);
+            return true;
+        }
+    } catch {
+        // The persisted chat marker makes a later discovery safe to acknowledge.
+    }
+    return false;
+}
+
+/** Reads the authenticated user's content-free unresolved generation index. */
+async function getServerGenerationRecoveries() {
+    try {
+        const response = await fetch('/api/backends/chat-completions/generations/recoverable', {
+            headers: getRequestHeaders(),
+            cache: 'no-cache',
+        });
+        if (!response.ok) {
+            return [];
+        }
+        const payload = await response.json();
+        return Array.isArray(payload?.jobs)
+            ? payload.jobs.map(job => normalizePendingGeneration({
+                ...job?.recovery,
+                generationId: job?.generation_id,
+                serverRequestId: job?.request_id || '',
+            })).filter(Boolean)
+            : [];
+    } catch {
+        return [];
+    }
+}
+
+/** Detects a chat mutation already committed before its recovery acknowledgement arrived. */
+function isGenerationRecoveryApplied(record) {
+    if (record.outputMessageUuid
+        && chat.some(message => message?.[AIKOBOTS_MESSAGE_UUID_KEY] === record.outputMessageUuid)) {
+        return true;
+    }
+    if (chat.some(message => message?.extra?.[GENERATION_RECOVERY_MARKER_KEY] === record.generationId)) {
+        return true;
+    }
+    if (record.swipeTarget) {
+        const targetMessage = chat[record.swipeTarget.messageId];
+        return targetMessage?.swipe_info?.some(info => info?.[AIKOBOTS_SWIPE_UUID_KEY] === record.swipeTarget.swipeUuid) === true;
+    }
+    return false;
+}
+
+/** Selects the local fast path or the oldest server recovery for the active chat. */
+async function findGenerationRecoveryForCurrentChat() {
+    const currentIdentity = getGenerationRecoveryChatIdentity();
+    const local = getPendingGeneration();
+    if (local && isSameChatIdentity(local.chatIdentity, currentIdentity)) {
+        return local;
+    }
+
+    const recoveries = await getServerGenerationRecoveries();
+    const discovered = recoveries.find(record => isSameChatIdentity(record.chatIdentity, currentIdentity)) || null;
+    if (discovered) {
+        savePendingGeneration(discovered);
+    }
+    return discovered;
 }
 
 /** Cancels a pending job whose saved chat target is no longer safe to mutate. */
@@ -11069,39 +11174,51 @@ let pendingGenerationRecoveryPromise = null;
 
 /** Reattaches this tab's pending generation after its authoritative chat has loaded. */
 async function resumePendingGenerationForCurrentChat() {
-    const pending = getPendingGeneration();
-    if (!pending || pendingGenerationRecoveryPromise || streamingProcessor || is_send_press || isActiveSessionLocked) {
-        return;
-    }
-    if (!isSameChatIdentity(pending.chatIdentity, getGenerationRecoveryChatIdentity())) {
+    if (pendingGenerationRecoveryPromise || streamingProcessor || is_send_press || isActiveSessionLocked) {
         return;
     }
 
-    const anchorMessage = chat.at(-1);
-    if (anchorMessage?.[AIKOBOTS_MESSAGE_UUID_KEY] !== pending.anchorMessageUuid) {
-        cancelPendingGeneration(pending);
-        return;
-    }
+    const recoveryTask = (async () => {
+        const pending = await findGenerationRecoveryForCurrentChat();
+        if (!pending) {
+            return;
+        }
+        if (isGenerationRecoveryApplied(pending)) {
+            await acknowledgeGenerationRecovery(pending.generationId);
+            return;
+        }
 
-    let swipeTarget = null;
-    if (pending.swipeTarget) {
-        const targetMessage = chat[pending.swipeTarget.messageId];
-        if (targetMessage !== anchorMessage) {
+        const anchorMessage = chat.at(-1);
+        if (anchorMessage?.[AIKOBOTS_MESSAGE_UUID_KEY] !== pending.anchorMessageUuid) {
             cancelPendingGeneration(pending);
             return;
         }
-        swipeTarget = { ...pending.swipeTarget, messageRef: targetMessage };
-        clearSwipeGenerationTargetData(targetMessage);
-    }
 
-    pendingGenerationRecoveryPromise = Generate(pending.type, {
-        force_chid: pending.forceChid,
-        generationRecovery: pending,
-        swipeTarget,
-    }).catch(() => null).finally(() => {
-        pendingGenerationRecoveryPromise = null;
-    });
-    await pendingGenerationRecoveryPromise;
+        let swipeTarget = null;
+        if (pending.swipeTarget) {
+            const targetMessage = chat[pending.swipeTarget.messageId];
+            if (targetMessage !== anchorMessage) {
+                cancelPendingGeneration(pending);
+                return;
+            }
+            swipeTarget = { ...pending.swipeTarget, messageRef: targetMessage };
+            clearSwipeGenerationTargetData(targetMessage);
+        }
+
+        await Generate(pending.type, {
+            force_chid: pending.forceChid,
+            generationRecovery: pending,
+            swipeTarget,
+        }).catch(() => null);
+    })();
+    pendingGenerationRecoveryPromise = recoveryTask;
+    try {
+        await recoveryTask;
+    } finally {
+        if (pendingGenerationRecoveryPromise === recoveryTask) {
+            pendingGenerationRecoveryPromise = null;
+        }
+    }
 }
 
 eventSource.on(event_types.CHAT_CHANGED, () => {
@@ -12031,12 +12148,13 @@ async function processImageAttachment(message, { imageUrls }) {
  * @property {string?} [reasoningSignature] Encrypted signature of the reasoning text
  * @property {string[]} [imageUrls] Links to images
  * @property {object?} [swipeTarget] Captured target for swipe generation
+ * @property {string?} [messageUuid] Preassigned message identity for recoverable streaming appends
  *
  * @typedef {object} SaveReplyResult
  * @property {string} type Type of generation
  * @property {string} getMessage Generated message
  */
-export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], swipeReasoning = [], reasoning = '', reasoningSignature = null, imageUrls = [], openAIRequestId = null, swipeTarget = null }) {
+export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], swipeReasoning = [], reasoning = '', reasoningSignature = null, imageUrls = [], openAIRequestId = null, swipeTarget = null, messageUuid = null }) {
     // Backward compatibility
     if (arguments.length > 1 && typeof arguments[0] !== 'object') {
         console.trace('saveReply called with positional arguments. Please use an object instead.');
@@ -12178,6 +12296,9 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     } else {
         console.debug('entering chat update routine for non-swipe post');
         chat[chat.length] = {};
+        if (isValidAikobotsUuid(messageUuid)) {
+            chat[chat.length - 1][AIKOBOTS_MESSAGE_UUID_KEY] = messageUuid;
+        }
         chat[chat.length - 1]['extra'] = {};
         ensureMessageIdentity(chat[chat.length - 1], { generateUuid: uuidv4 });
         chat[chat.length - 1]['name'] = name2;

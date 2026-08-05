@@ -13,6 +13,8 @@ export function createResumableGenerationResponse({
     onClose,
     fetchImpl = fetch,
     reconnectDelayMs = 500,
+    maxEmptyReconnects = 5,
+    maxReconnectDelayMs = 5_000,
 }) {
     const encoder = new TextEncoder();
     let cancelConnection = () => {};
@@ -39,9 +41,11 @@ export function createResumableGenerationResponse({
             };
             cancelConnection = () => close(signal.reason || new DOMException('Generation cancelled.', 'AbortError'));
             signal.addEventListener('abort', cancelConnection, { once: true });
+            let emptyReconnects = 0;
 
             void (async () => {
                 while (!stopped) {
+                    let receivedEvent = false;
                     try {
                         const headers = getHeaders();
                         if (lastEventId) {
@@ -68,6 +72,7 @@ export function createResumableGenerationResponse({
                             const blocks = buffer.replaceAll('\r\n', '\n').split('\n\n');
                             buffer = blocks.pop() || '';
                             for (const block of blocks) {
+                                receivedEvent ||= block.split('\n').some(line => line.startsWith('data:'));
                                 const idLine = block.split('\n').find(line => line.startsWith('id:'));
                                 if (idLine) {
                                     lastEventId = idLine.slice(3).trimStart();
@@ -93,7 +98,18 @@ export function createResumableGenerationResponse({
                             return;
                         }
                     }
-                    await reconnectDelay(reconnectDelayMs);
+                    emptyReconnects = receivedEvent ? 0 : emptyReconnects + 1;
+                    if (emptyReconnects >= maxEmptyReconnects) {
+                        const error = new Error('Generation stream ended without a terminal event.');
+                        error.generationRecoveryAvailable = true;
+                        close(error);
+                        return;
+                    }
+                    const delayMs = Math.min(
+                        reconnectDelayMs * (2 ** Math.max(0, emptyReconnects - 1)),
+                        maxReconnectDelayMs,
+                    );
+                    await reconnectDelay(delayMs);
                 }
             })();
 

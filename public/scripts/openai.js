@@ -3096,6 +3096,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
                 generationsUrl,
                 generationId,
                 generate_data,
+                stream && generationRecovery ? { ...generationRecovery, canMultiSwipe } : null,
             );
 
             if (!createResponse.ok) {
@@ -3251,6 +3252,11 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
             enumerable: false,
             configurable: true,
         });
+        Object.defineProperty(streamData, 'outputMessageUuid', {
+            value: resumedGeneration?.outputMessageUuid || generationRecovery?.outputMessageUuid || '',
+            enumerable: false,
+            configurable: true,
+        });
         return streamData;
     }
     else {
@@ -3277,13 +3283,13 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
     }
 }
 
-async function createDetachedGeneration(url, generationId, request) {
+async function createDetachedGeneration(url, generationId, request, recovery = null) {
     let lastError;
     for (let attempt = 0; attempt < 3; attempt++) {
         try {
             return await fetch(url, {
                 method: 'POST',
-                body: JSON.stringify({ generation_id: generationId, request }),
+                body: JSON.stringify({ generation_id: generationId, request, recovery }),
                 headers: getRequestHeaders(),
             });
         } catch (error) {

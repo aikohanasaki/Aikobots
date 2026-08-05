@@ -21,6 +21,7 @@ function createRecord(createdAt = Date.now()) {
         type: 'normal',
         chatIdentity: { groupId: '', characterId: '2', chatId: 'chat-1' },
         anchorMessageUuid: '22222222-2222-4222-8222-222222222222',
+        outputMessageUuid: '33333333-3333-4333-8333-333333333333',
         createdAt,
         startedAt: createdAt - 100,
         canMultiSwipe: false,
@@ -35,23 +36,23 @@ describe('pending generation recovery', () => {
         const storage = createStorage();
         const record = {
             ...createRecord(),
-            prompt: 'secure lorebook content',
-            generatedText: 'private provider output',
+            prompt: 'unexpected-prompt-field-sentinel',
+            generatedText: 'unexpected-output-field-sentinel',
         };
 
         const saved = savePendingGeneration(record, storage);
         expect(saved).toEqual(createRecord(record.createdAt));
         expect(getPendingGeneration(storage)).toEqual(saved);
-        expect(JSON.stringify(saved)).not.toContain('secure lorebook content');
-        expect(JSON.stringify(saved)).not.toContain('private provider output');
+        expect(JSON.stringify(saved)).not.toContain('unexpected-prompt-field-sentinel');
+        expect(JSON.stringify(saved)).not.toContain('unexpected-output-field-sentinel');
     });
 
     it('discards expired and malformed recovery records', () => {
         const storage = createStorage();
-        const expired = createRecord(Date.now() - 24 * 60 * 60_000 - 1);
+        const expired = createRecord(Date.now() - 7 * 24 * 60 * 60_000 - 1);
 
         expect(savePendingGeneration(expired, storage)).toBeNull();
-        expect(savePendingGeneration({ ...createRecord(), type: 'swipe' }, storage)).toBeNull();
+        expect(savePendingGeneration({ ...createRecord(), type: 'swipe', outputMessageUuid: '' }, storage)).toBeNull();
         storage.setItem('aikobots.pending-generation.v1', '{bad json');
         expect(getPendingGeneration(storage)).toBeNull();
         expect(storage.getItem('aikobots.pending-generation.v1')).toBeNull();

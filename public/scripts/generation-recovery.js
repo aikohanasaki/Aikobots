@@ -1,5 +1,5 @@
 const STORAGE_KEY = 'aikobots.pending-generation.v1';
-const MAX_PENDING_AGE_MS = 24 * 60 * 60_000;
+const MAX_PENDING_AGE_MS = 7 * 24 * 60 * 60_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RECOVERABLE_TYPES = new Set(['normal', 'regenerate', 'continue', 'swipe']);
 
@@ -11,7 +11,8 @@ function getDefaultStorage() {
     }
 }
 
-function normalizePendingGeneration(value, now = Date.now()) {
+/** Validates and strips a content-free recovery record received from local or server storage. */
+export function normalizePendingGeneration(value, now = Date.now()) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return null;
     }
@@ -21,11 +22,14 @@ function normalizePendingGeneration(value, now = Date.now()) {
     const chatIdentity = value.chatIdentity;
     const createdAt = Number(value.createdAt);
     const anchorMessageUuid = String(value.anchorMessageUuid || '');
+    const outputMessageUuid = String(value.outputMessageUuid || '');
     if (!UUID_PATTERN.test(generationId)
         || !chatIdentity || typeof chatIdentity !== 'object' || Array.isArray(chatIdentity)
         || !String(chatIdentity.chatId || '')
         || !UUID_PATTERN.test(anchorMessageUuid)
         || !RECOVERABLE_TYPES.has(type)
+        || (['normal', 'regenerate'].includes(type) && !UUID_PATTERN.test(outputMessageUuid))
+        || (!['normal', 'regenerate'].includes(type) && outputMessageUuid)
         || !Number.isFinite(createdAt) || createdAt <= 0 || now - createdAt > MAX_PENDING_AGE_MS) {
         return null;
     }
@@ -57,6 +61,7 @@ function normalizePendingGeneration(value, now = Date.now()) {
             chatId: String(chatIdentity.chatId),
         },
         anchorMessageUuid,
+        outputMessageUuid,
         createdAt,
         startedAt: Number.isFinite(Number(value.startedAt)) ? Number(value.startedAt) : createdAt,
         canMultiSwipe: Boolean(value.canMultiSwipe),
