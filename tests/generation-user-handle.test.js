@@ -21,8 +21,11 @@ beforeAll(async () => {
 });
 
 describe('generation user ownership', () => {
-    it('rejects a generation request without a user handle', () => {
-        const request = { user: { profile: {} } };
+    it('rejects a client-claimed handle without a server-authenticated handle', () => {
+        const request = {
+            body: { userHandle: 'alice' },
+            user: { profile: {} },
+        };
         const response = {
             status: jest.fn().mockReturnThis(),
             send: jest.fn().mockReturnThis(),
@@ -38,7 +41,7 @@ describe('generation user ownership', () => {
         expect(next).not.toHaveBeenCalled();
     });
 
-    it('allows a generation request with a user handle', () => {
+    it('allows a generation request with a server-authenticated user handle', () => {
         const next = jest.fn();
 
         requireGenerationUserHandle({ user: { profile: { handle: 'alice' } } }, {}, next);
