@@ -1,18 +1,44 @@
 let activeAudio = null;
 let activeActivationTarget = null;
+let activeGenerationCount = 0;
+let playbackAttemptId = 0;
+let playbackEnabled = false;
+let mobileBrowser = false;
+let statusListener = null;
 
-/**
- * Retries playback after browsers block an attempt made without user activation.
- */
+function reportStatus(status) {
+    statusListener?.(status);
+}
+
+/** Retries playback after browsers block an attempt made without user activation. */
 function tryPlayActiveAudio() {
-    if (!activeAudio || activeAudio.paused === false) {
+    if (!activeAudio || activeAudio.paused === false || !playbackEnabled || !mobileBrowser || activeGenerationCount === 0) {
         return;
     }
 
+    const attemptedAudio = activeAudio;
+    const attemptId = ++playbackAttemptId;
+    const isAttemptActive = () => playbackAttemptId === attemptId
+        && activeAudio === attemptedAudio
+        && playbackEnabled
+        && mobileBrowser
+        && activeGenerationCount > 0;
+
     try {
-        activeAudio.play()?.catch(() => {});
+        const result = attemptedAudio.play();
+        result?.then(() => {
+            if (isAttemptActive()) {
+                reportStatus('playing');
+            }
+        }).catch(() => {
+            if (isAttemptActive()) {
+                reportStatus('blocked');
+            }
+        });
     } catch {
-        // The next user interaction will retry while the setting remains enabled.
+        if (isAttemptActive()) {
+            reportStatus('blocked');
+        }
     }
 }
 
@@ -20,31 +46,59 @@ function removeActivationListeners() {
     activeActivationTarget?.removeEventListener('click', tryPlayActiveAudio, true);
     activeActivationTarget?.removeEventListener('keydown', tryPlayActiveAudio, true);
     activeActivationTarget = null;
-    activeAudio = null;
 }
 
-/**
- * Applies the opt-in silent playback preference on mobile browsers.
- * @param {object} options Playback options.
- * @param {boolean} options.enabled Whether the user enabled background audio.
- * @param {boolean} options.mobile Whether the current browser is mobile.
- * @param {HTMLAudioElement|null} options.audio Silent audio element.
- * @param {EventTarget} [options.activationTarget=document] Target used to retry playback after user activation.
- */
-export function setMobileBackgroundAudioPlayback({ enabled, mobile, audio, activationTarget = document }) {
+function syncPlayback() {
+    playbackAttemptId++;
     removeActivationListeners();
-
-    if (!enabled || !mobile || !audio) {
-        audio?.pause();
-        if (audio) {
-            audio.currentTime = 0;
+    if (!playbackEnabled || !mobileBrowser || !activeAudio || activeGenerationCount === 0) {
+        activeAudio?.pause();
+        if (activeAudio) {
+            activeAudio.currentTime = 0;
         }
+        reportStatus(playbackEnabled && mobileBrowser ? 'idle' : 'disabled');
         return;
     }
 
-    activeAudio = audio;
-    activeActivationTarget = activationTarget;
+    activeActivationTarget = configuredActivationTarget;
     activeActivationTarget.addEventListener('click', tryPlayActiveAudio, true);
     activeActivationTarget.addEventListener('keydown', tryPlayActiveAudio, true);
     tryPlayActiveAudio();
+}
+
+let configuredActivationTarget = null;
+
+/**
+ * Applies the opt-in silent playback preference without starting playback until generation begins.
+ */
+export function setMobileBackgroundAudioPlayback({
+    enabled,
+    mobile,
+    audio,
+    activationTarget = document,
+    onStatusChange = null,
+}) {
+    playbackEnabled = Boolean(enabled);
+    mobileBrowser = Boolean(mobile);
+    activeAudio = audio || null;
+    configuredActivationTarget = activationTarget;
+    statusListener = onStatusChange;
+    syncPlayback();
+}
+
+/**
+ * Starts generation-scoped silent playback and returns an idempotent release function.
+ */
+export function beginMobileBackgroundAudioGeneration() {
+    activeGenerationCount++;
+    syncPlayback();
+    let released = false;
+    return () => {
+        if (released) {
+            return;
+        }
+        released = true;
+        activeGenerationCount = Math.max(0, activeGenerationCount - 1);
+        syncPlayback();
+    };
 }

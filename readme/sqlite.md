@@ -948,7 +948,11 @@ STMB post-memory auto-hide is durable chat visibility state and must use the nor
 
 ### Streamed response authority
 
-The browser message shown while generation is streaming is ephemeral display state. When a stream finishes, the client sends one explicit SQLite append or update mutation, waits for its acknowledged revision, reads that message back from the server by logical position, validates its stable message UUID, and replaces the ephemeral browser object and DOM with the canonical SQLite row. Completion events run only after that replacement.
+Chat-completion provider work is owned by a detached server job after the create request is acknowledged. Job state and replayable generated SSE events live in `DATA_ROOT/_generation-jobs/jobs.sqlite` under WAL mode, so reconnect and cancellation requests may land on any PM2 worker. The client supplies an idempotency UUID; reusing it with a different request hash is rejected. Prompts, secure lorebook entries, keys, bindings, hidden metadata, and provider credentials are never stored in the job database. Completed jobs and events expire after 24 hours.
+
+Closing or suspending the stream connection does not cancel provider work. The browser reconnects to the event stream using SSE event IDs, and an explicit cancellation request durably changes the shared job state before the owning worker aborts its provider request. Cancellation is therefore ordered independently of the client connection and wins a concurrent completion transition. A process restart can still interrupt a job owned by that process because the sensitive provider request is deliberately not persisted for takeover; stale job cleanup is retention-based.
+
+The browser message shown while generation is streaming remains ephemeral display state. When a stream finishes, the client sends one explicit SQLite append or update mutation, waits for its acknowledged revision, reads that message back from the server by logical position, validates its stable message UUID, and replaces the ephemeral browser object and DOM with the canonical SQLite row. Completion events run only after that replacement.
 
 Generic range saves are deferred until both the final streaming mutation and authoritative read-back settle. An explicit chat flush waits for the same boundary, while an explicit server refresh discards deferred browser-save state. This prevents a courtesy streaming display or a delayed save timer from becoming authoritative or leaking into another chat.
 

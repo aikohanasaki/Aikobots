@@ -1499,5 +1499,8 @@
     "From ${0} to ${1} UTC": "Das ${0} às ${1} UTC",
     "Other conditions": "Outras condições",
     "${0}: ${1}": "${0}: ${1}",
-    "Pricing overrides": "Preços condicionais"
+    "Pricing overrides": "Preços condicionais",
+    "Ready for generation": "Pronto para gerar",
+    "Playing during generation": "A reproduzir durante a geração",
+    "Tap to allow background audio": "Toque para permitir áudio em segundo plano"
 }

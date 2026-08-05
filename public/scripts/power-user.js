@@ -581,10 +581,17 @@ export function playMessageSound() {
  * Applies the mobile background-audio preference to the shared silent audio element.
  */
 function syncMobileBackgroundAudioPlayback() {
+    const statusText = {
+        disabled: '',
+        idle: translate('Ready for generation'),
+        playing: translate('Playing during generation'),
+        blocked: translate('Tap to allow background audio'),
+    };
     setMobileBackgroundAudioPlayback({
         enabled: !!power_user.mobile_background_audio,
         mobile: isMobile(),
         audio: document.getElementById('audio_mobile_background'),
+        onStatusChange: status => $('#mobile_background_audio_status').text(statusText[status] || ''),
     });
 }
 

@@ -67,6 +67,17 @@ import {
     isActiveSessionError,
     sendActiveSessionRequired,
 } from '../../active-session-store.js';
+import {
+    createGenerationJob,
+    finishGenerationJob,
+    getGenerationEventsAfter,
+    getGenerationJob,
+    isGenerationCancellationRequested,
+    markGenerationJobRunning,
+    requestGenerationCancellation,
+    touchGenerationJob,
+} from '../../generation-job-store.js';
+import { GenerationJobResponse } from '../../generation-job-response.js';
 
 import { readRequestSecret, readSecret, SECRET_KEYS } from '../secrets.js';
 import {
@@ -111,6 +122,8 @@ const PROMPT_INSPECTION_LOCK_RETRY_MS = 25;
 const PROMPT_INSPECTION_LOCK_TIMEOUT_MS = 5000;
 const PROMPT_INSPECTION_LOCK_STALE_MS = 60_000;
 const PROMPT_INSPECTION_LOCK_HEARTBEAT_MS = 1000;
+const DETACHED_GENERATION_POLL_MS = 250;
+const GENERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // blocked due to site policy, unblocking august 2026
 const BLOCKED_CUSTOM_ENDPOINT_HOSTNAME = 'voidai.app';
@@ -4188,8 +4201,6 @@ export async function handleChatCompletionsGenerate(request, response) {
         signal: controller.signal,
     };
 
-    console.debug('Chat Completion request:', requestBody);
-
     await assertActiveSessionOperation(request);
     providerResult = await makeRequest(config, request);
     await assertActiveSessionOperation(request);
@@ -4252,7 +4263,6 @@ export async function handleChatCompletionsGenerate(request, response) {
         if (fetchResponse.ok) {
             /** @type {any} */
             const json = await fetchResponse.json();
-            console.debug('Chat Completion response:', json);
             return createProviderJsonResult(json);
         }
 
@@ -4340,6 +4350,220 @@ export async function handleChatCompletionsGenerate(request, response) {
         return sendGenerateError(getPromptAssemblyErrorStatus(error), toPromptAssemblyErrorBody(error));
     });
 }
+
+function getGenerationUserHandle(request) {
+    return request.user?.profile?.handle;
+}
+
+function getGenerationRequestFingerprint(body) {
+    return createHash('sha256').update(JSON.stringify(body)).digest('hex');
+}
+
+function delayDetachedGeneration(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Runs the existing provider dispatch independently of the creating HTTP socket. */
+async function runDetachedGeneration(sourceRequest, id, generationBody, requestId) {
+    const userHandle = getGenerationUserHandle(sourceRequest);
+    const abortController = new AbortController();
+    const sink = new GenerationJobResponse(id, userHandle, generationBody.stream);
+    const detachedRequest = {
+        ...sourceRequest,
+        body: generationBody,
+        requestId,
+        socket: sink.socket,
+        activeSessionOperation: {
+            signal: abortController.signal,
+            assertAllowed: () => abortController.signal.throwIfAborted(),
+        },
+    };
+    const claim = markGenerationJobRunning(id, userHandle);
+    if (!claim.claimed) {
+        return;
+    }
+
+    const cancelPoll = setInterval(() => {
+        if (isGenerationCancellationRequested(id, userHandle)) {
+            abortController.abort();
+        }
+    }, DETACHED_GENERATION_POLL_MS);
+    cancelPoll.unref?.();
+    const ownerHeartbeat = setInterval(() => touchGenerationJob(id, userHandle), STREAM_HEARTBEAT_INTERVAL_MS);
+    ownerHeartbeat.unref?.();
+
+    try {
+        if (isGenerationCancellationRequested(id, userHandle)) {
+            abortController.abort();
+        }
+        await handleChatCompletionsGenerate(detachedRequest, sink);
+    } catch {
+        sink.failed = true;
+        if (generationBody.stream && !sink.writableEnded) {
+            sink.write(`data: ${JSON.stringify({ error: { message: 'Generation failed.' } })}\n\n`);
+        }
+    } finally {
+        clearInterval(cancelPoll);
+        clearInterval(ownerHeartbeat);
+        sink.ensureDoneEvent();
+        if (!sink.writableEnded) {
+            sink.end();
+        }
+
+        const cancelled = isGenerationCancellationRequested(id, userHandle);
+        let job = finishGenerationJob(id, userHandle, cancelled ? 'cancelled' : sink.failed ? 'failed' : 'completed');
+        if (job?.state === 'cancel_requested') {
+            job = finishGenerationJob(id, userHandle, 'cancelled');
+        }
+    }
+}
+
+/** Records a content-free terminal response when the detached runner itself fails. */
+function recordDetachedGenerationFailure(id, userHandle, stream) {
+    try {
+        const job = getGenerationJob(id, userHandle);
+        if (!job || ['completed', 'cancelled', 'failed'].includes(job.state)) {
+            return;
+        }
+        const cancelled = isGenerationCancellationRequested(id, userHandle);
+        const sink = new GenerationJobResponse(id, userHandle, stream);
+        if (!cancelled) {
+            sink.status(500).send({ error: { message: 'Generation failed.' } });
+        }
+        sink.ensureDoneEvent();
+        finishGenerationJob(id, userHandle, cancelled ? 'cancelled' : 'failed');
+    } catch {
+        // The original job remains available for retention cleanup if storage itself is unavailable.
+    }
+}
+
+router.post('/generations', async function (request, response) {
+    if (!request.body?.request || typeof request.body.request !== 'object') {
+        return response.status(400).send({ error: { message: 'Generation request is required.' } });
+    }
+
+    const id = String(request.body.generation_id || '');
+    if (!GENERATION_ID_PATTERN.test(id)) {
+        return response.status(400).send({ error: { message: 'A valid generation ID is required.' } });
+    }
+
+    try {
+        await assertActiveSessionOperation(request);
+        const generationBody = structuredClone(request.body.request);
+        const requestId = request.requestId || uuidv4();
+        const userHandle = getGenerationUserHandle(request);
+        const created = createGenerationJob({
+            id,
+            userHandle,
+            requestFingerprint: getGenerationRequestFingerprint(generationBody),
+            requestId,
+        });
+        if (created.created || created.job.state === 'queued') {
+            void runDetachedGeneration(request, id, generationBody, requestId)
+                .catch(() => recordDetachedGenerationFailure(id, userHandle, generationBody.stream));
+        }
+        return response.status(created.created ? 202 : 200).send({
+            id,
+            state: created.job.state,
+            request_id: created.job.requestId,
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        return response.status(Number(error?.status) || 500).send({
+            error: { message: Number(error?.status) === 409 ? error.message : 'Could not start generation.' },
+        });
+    }
+});
+
+router.get('/generations/:id', function (request, response) {
+    const job = getGenerationJob(request.params.id, getGenerationUserHandle(request));
+    if (!job) {
+        return response.sendStatus(404);
+    }
+    return response.send({ id: job.id, state: job.state, request_id: job.requestId });
+});
+
+router.get('/generations/:id/result', function (request, response) {
+    const job = getGenerationJob(request.params.id, getGenerationUserHandle(request));
+    if (!job) {
+        return response.sendStatus(404);
+    }
+    if (!['completed', 'cancelled', 'failed'].includes(job.state)) {
+        return response.status(202).send({ id: job.id, state: job.state });
+    }
+    for (const [name, value] of Object.entries(job.responseHeaders || {})) {
+        response.setHeader(name, value);
+    }
+    if (job.result !== null) {
+        return response.status(job.state === 'completed' ? 200 : 502).send(job.result);
+    }
+    return response.status(job.state === 'cancelled' ? 409 : 502).send({
+        error: { message: job.state === 'cancelled' ? 'Generation was cancelled.' : 'Generation failed.' },
+    });
+});
+
+router.get('/generations/:id/stream', async function (request, response) {
+    const userHandle = getGenerationUserHandle(request);
+    const initial = getGenerationJob(request.params.id, userHandle);
+    if (!initial) {
+        return response.sendStatus(404);
+    }
+
+    for (const [name, value] of Object.entries(initial.responseHeaders || {})) {
+        response.setHeader(name, value);
+    }
+    response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-cache');
+    response.setHeader('Connection', 'keep-alive');
+    response.setHeader('X-Accel-Buffering', 'no');
+    if (initial.requestId) {
+        response.setHeader('X-Request-Id', initial.requestId);
+    }
+    response.flushHeaders();
+
+    let sequence = Math.max(0, Number(request.get('Last-Event-ID') || request.query.after) || 0);
+    let closed = false;
+    let lastHeartbeatAt = Date.now();
+    response.on('close', () => { closed = true; });
+    while (!closed) {
+        const page = getGenerationEventsAfter(request.params.id, userHandle, sequence);
+        if (!page) {
+            return response.end();
+        }
+        for (const event of page.events) {
+            response.write(`id: ${event.sequence}\n${event.eventBlock}\n\n`);
+            sequence = event.sequence;
+        }
+        if (['completed', 'cancelled', 'failed'].includes(page.job.state)
+            && sequence >= page.job.lastEventSequence) {
+            return response.end();
+        }
+        if (Date.now() - lastHeartbeatAt >= STREAM_HEARTBEAT_INTERVAL_MS) {
+            response.write(': heartbeat\n\n');
+            response.flush?.();
+            lastHeartbeatAt = Date.now();
+        }
+        await delayDetachedGeneration(DETACHED_GENERATION_POLL_MS);
+    }
+});
+
+router.post('/generations/:id/cancel', async function (request, response) {
+    try {
+        await assertActiveSessionOperation(request);
+        const job = requestGenerationCancellation(request.params.id, getGenerationUserHandle(request));
+        if (!job) {
+            return response.sendStatus(404);
+        }
+        return response.send({ id: job.id, state: job.state });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        return response.status(500).send({ error: { message: 'Could not cancel generation.' } });
+    }
+});
 
 router.post('/generate', function (request, response) {
     return handleChatCompletionsGenerate(request, response);

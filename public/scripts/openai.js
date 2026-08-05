@@ -78,6 +78,7 @@ import { LatestTask } from './util/LatestTask.js';
 import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL } from './constants.js';
 import { consumeChatCompletionStream } from './chat-completion-stream.js';
 import { getOpenRouterPricingDisplay } from './openrouter-pricing.js';
+import { createResumableGenerationResponse } from './resumable-generation.js';
 
 export {
     oai_settings,
@@ -3051,26 +3052,54 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         requestId,
     } = await buildOpenAIGenerateData(type, messages, { jsonSchema });
 
-    const generate_url = '/api/backends/chat-completions/generate';
+    const generationId = uuidv4();
+    const generationsUrl = '/api/backends/chat-completions/generations';
+    const cancelGeneration = () => fetch(`${generationsUrl}/${generationId}/cancel`, {
+        method: 'POST',
+        headers: getRequestHeaders(),
+    }).catch(() => null);
+    const onAbort = () => { void cancelGeneration(); };
+    signal.addEventListener('abort', onAbort, { once: true });
     let response;
     try {
-        response = await fetch(generate_url, {
-            method: 'POST',
-            body: JSON.stringify(generate_data),
-            headers: getRequestHeaders(),
-            signal: signal,
-        });
+        const createResponse = await createDetachedGeneration(
+            generationsUrl,
+            generationId,
+            generate_data,
+        );
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            const parsed = tryParseStreamingError(response, errorText);
-            const fallbackMessage = getResponseErrorMessage(response, errorText, parsed);
+        if (!createResponse.ok) {
+            const errorText = await createResponse.text();
+            const parsed = tryParseStreamingError(createResponse, errorText);
+            const fallbackMessage = getResponseErrorMessage(createResponse, errorText, parsed);
             throw new Error(fallbackMessage);
         }
+
+        const created = await createResponse.json();
+        if (signal.aborted) {
+            await cancelGeneration();
+            signal.throwIfAborted();
+        }
+        response = stream
+            ? createResumableGenerationResponse({
+                url: `${generationsUrl}/${generationId}/stream`,
+                requestId: created.request_id || requestId,
+                signal,
+                getHeaders: getRequestHeaders,
+                onClose: () => signal.removeEventListener('abort', onAbort),
+            })
+            : await waitForGenerationResult(generationId, signal);
+    } catch (error) {
+        signal.removeEventListener('abort', onAbort);
+        throw error;
     } finally {
         if (hasForcedActivations) {
             clearForcedActivationEntries();
         }
+    }
+
+    if (!stream) {
+        signal.removeEventListener('abort', onAbort);
     }
 
     applyAssemblyResponseMetadata(response, requestId, type);
@@ -3188,6 +3217,37 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         }
 
         return attachOpenAIResponseMetadataOwner(data, requestId);
+    }
+}
+
+async function createDetachedGeneration(url, generationId, request) {
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            return await fetch(url, {
+                method: 'POST',
+                body: JSON.stringify({ generation_id: generationId, request }),
+                headers: getRequestHeaders(),
+            });
+        } catch (error) {
+            lastError = error;
+            if (attempt < 2) {
+                await delay(250 * (attempt + 1));
+            }
+        }
+    }
+    throw lastError;
+}
+
+async function waitForGenerationResult(generationId, signal) {
+    const resultUrl = `/api/backends/chat-completions/generations/${generationId}/result`;
+    while (true) {
+        signal.throwIfAborted();
+        const response = await fetch(resultUrl, { headers: getRequestHeaders(), signal });
+        if (response.status !== 202) {
+            return response;
+        }
+        await delay(250);
     }
 }
 

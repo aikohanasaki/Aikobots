@@ -11,6 +11,7 @@ const READ_ONLY_POST_ROUTES = [
     /^\/api\/backgrounds\/all$/,
     /^\/api\/backups\/chat\/(?:list|download)$/,
     /^\/api\/backends\/chat-completions\/(?:status|bias)$/,
+    /^\/api\/backends\/chat-completions\/generations\/[^/]+\/cancel$/,
     /^\/api\/characters\/(?:all|get|chats|export|repush-blacklist\/list|distribution-policy)$/,
     /^\/api\/chats\/(?:get|group\/get|search|orphaned|recent|export)$/,
     /^\/api\/extra\/classify(?:\/labels)?$/,

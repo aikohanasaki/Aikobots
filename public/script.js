@@ -173,6 +173,7 @@ import {
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
 import { ACTIVE_SESSION_STATUS_ACTION, getActiveSessionStatusAction } from './scripts/active-session-status.js';
+import { beginMobileBackgroundAudioGeneration } from './scripts/mobile-background-audio.js';
 import {
     AIKOBOTS_MESSAGE_UUID_KEY,
     AIKOBOTS_SWIPE_UUID_KEY,
@@ -9705,7 +9706,7 @@ async function restoreUnsavedDeletedLastMessage(messageId, message) {
  * @param {boolean} dryRun Whether to actually generate a message or just assemble the prompt
  * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
  */
-export async function Generate(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, swipeTarget = null } = {}, dryRun = false) {
+async function generateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, swipeTarget = null } = {}, dryRun = false) {
     enforceChatCompletionsOnlyMode();
     console.log('Generate entered');
 
@@ -10976,6 +10977,19 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     }
 }
 //MARK: Generate() ends
+
+export async function Generate(type, options = {}, dryRun = false) {
+    if (dryRun) {
+        return generateInternal(type, options, dryRun);
+    }
+
+    const stopBackgroundAudio = beginMobileBackgroundAudioGeneration();
+    try {
+        return await generateInternal(type, options, dryRun);
+    } finally {
+        stopBackgroundAudio();
+    }
+}
 
 /**
  * Stops the generation and any streaming if it is currently running.

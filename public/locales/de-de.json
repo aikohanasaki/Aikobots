@@ -6080,5 +6080,8 @@
     "From ${0} to ${1} UTC": "Von ${0} bis ${1} UTC",
     "Other conditions": "Andere Bedingungen",
     "${0}: ${1}": "${0}: ${1}",
-    "Pricing overrides": "Preisüberschreibungen"
+    "Pricing overrides": "Preisüberschreibungen",
+    "Ready for generation": "Bereit für die Generierung",
+    "Playing during generation": "Wiedergabe während der Generierung",
+    "Tap to allow background audio": "Tippen, um Hintergrundaudio zu erlauben"
 }

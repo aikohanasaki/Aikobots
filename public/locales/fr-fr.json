@@ -6140,5 +6140,8 @@
     "From ${0} to ${1} UTC": "De ${0} à ${1} UTC",
     "Other conditions": "Autres conditions",
     "${0}: ${1}": "${0} : ${1}",
-    "Pricing overrides": "Tarifs conditionnels"
+    "Pricing overrides": "Tarifs conditionnels",
+    "Ready for generation": "Prêt pour la génération",
+    "Playing during generation": "Lecture pendant la génération",
+    "Tap to allow background audio": "Touchez pour autoriser l’audio en arrière-plan"
 }
