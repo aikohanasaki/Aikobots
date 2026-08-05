@@ -2,14 +2,14 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 import { createResumableGenerationResponse } from '../public/scripts/resumable-generation.js';
 
-function sseResponse(text) {
+function sseResponse(text, headers = undefined) {
     const body = new ReadableStream({
         start(controller) {
             controller.enqueue(new TextEncoder().encode(text));
             controller.close();
         },
     });
-    return new Response(body, { status: 200 });
+    return new Response(body, { status: 200, headers });
 }
 
 describe('resumable generation stream', () => {
@@ -51,6 +51,35 @@ describe('resumable generation stream', () => {
             generationRecoveryAvailable: true,
         });
         expect(fetchImpl).toHaveBeenCalledTimes(3);
+    });
+
+    it('forwards assembly metadata from the first successful connection', async () => {
+        const onHeaders = jest.fn();
+        const fetchImpl = jest.fn()
+            .mockResolvedValueOnce(sseResponse('data: {"delta":"a"}\n\n', {
+                'X-ST-Messages-Count': '12',
+                'X-ST-First-Included-Message-Id': '34',
+                'X-Secret-Sentinel': 'not-safe-to-forward',
+            }))
+            .mockResolvedValueOnce(sseResponse('data: [DONE]\n\n', {
+                'X-ST-Messages-Count': '99',
+                'X-ST-First-Included-Message-Id': '98',
+            }));
+        const response = createResumableGenerationResponse({
+            url: '/generation/stream',
+            requestId: 'request-metadata',
+            signal: new AbortController().signal,
+            getHeaders: () => ({}),
+            onHeaders,
+            fetchImpl,
+            reconnectDelayMs: 0,
+        });
+
+        await expect(response.text()).resolves.toBe('data: {"delta":"a"}\n\ndata: [DONE]\n\n');
+        expect(response.headers.get('X-ST-Messages-Count')).toBe('12');
+        expect(response.headers.get('X-ST-First-Included-Message-Id')).toBe('34');
+        expect(response.headers.get('X-Secret-Sentinel')).toBeNull();
+        expect(onHeaders).toHaveBeenCalledTimes(1);
     });
 
     it('terminates after repeated retryable fetch failures', async () => {

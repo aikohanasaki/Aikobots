@@ -1389,9 +1389,9 @@ function applyInContextBoundaryMetadata(messagesCount, firstIncludedMessageId, t
     setInContextMessages(openai_messages_count, type);
 }
 
-function applyAssemblyResponseMetadata(response, requestId, type) {
-    const messagesCountHeader = response.headers.get('X-ST-Messages-Count');
-    const firstIncludedMessageIdHeader = response.headers.get('X-ST-First-Included-Message-Id');
+function applyAssemblyResponseMetadata(headers, requestId, type) {
+    const messagesCountHeader = headers.get('X-ST-Messages-Count');
+    const firstIncludedMessageIdHeader = headers.get('X-ST-First-Included-Message-Id');
     if (messagesCountHeader === null && firstIncludedMessageIdHeader === null) {
         return;
     }
@@ -3138,6 +3138,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
                 requestId: created.request_id || requestId,
                 signal,
                 getHeaders: getRequestHeaders,
+                onHeaders: headers => applyAssemblyResponseMetadata(headers, requestId, type),
                 onClose: () => signal.removeEventListener('abort', onAbort),
             })
             : await waitForGenerationResult(generationId, signal);
@@ -3152,9 +3153,8 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
 
     if (!stream) {
         signal.removeEventListener('abort', onAbort);
+        applyAssemblyResponseMetadata(response.headers, requestId, type);
     }
-
-    applyAssemblyResponseMetadata(response, requestId, type);
 
     if (stream) {
         const streamData = async function* streamData() {

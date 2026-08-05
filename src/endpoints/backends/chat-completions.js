@@ -4522,9 +4522,28 @@ router.get('/generations/:id/result', function (request, response) {
 
 router.get('/generations/:id/stream', async function (request, response) {
     const userHandle = getGenerationUserHandle(request);
-    const initial = getGenerationJob(request.params.id, userHandle);
+    let initial = getGenerationJob(request.params.id, userHandle);
     if (!initial) {
         return response.sendStatus(404);
+    }
+
+    let closed = false;
+    response.on('close', () => { closed = true; });
+    // The detached worker persists its safe headers atomically before provider dispatch.
+    while (!closed
+        && Object.keys(initial.responseHeaders || {}).length === 0
+        && !['completed', 'cancelled', 'failed'].includes(initial.state)) {
+        await delayDetachedGeneration(DETACHED_GENERATION_POLL_MS);
+        if (closed) {
+            return;
+        }
+        initial = getGenerationJob(request.params.id, userHandle);
+        if (!initial) {
+            return response.sendStatus(404);
+        }
+    }
+    if (closed) {
+        return;
     }
 
     for (const [name, value] of Object.entries(initial.responseHeaders || {})) {
@@ -4540,9 +4559,7 @@ router.get('/generations/:id/stream', async function (request, response) {
     response.flushHeaders();
 
     let sequence = Math.max(0, Number(request.get('Last-Event-ID') || request.query.after) || 0);
-    let closed = false;
     let lastHeartbeatAt = Date.now();
-    response.on('close', () => { closed = true; });
     while (!closed) {
         const page = getGenerationEventsAfter(request.params.id, userHandle, sequence);
         if (!page) {

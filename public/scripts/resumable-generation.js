@@ -2,6 +2,11 @@ function reconnectDelay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+const FORWARDED_RESPONSE_HEADERS = [
+    'X-ST-Messages-Count',
+    'X-ST-First-Included-Message-Id',
+];
+
 /**
  * Creates a fetch-backed SSE response that resumes from the last durable event ID.
  */
@@ -10,6 +15,7 @@ export function createResumableGenerationResponse({
     requestId,
     signal,
     getHeaders,
+    onHeaders,
     onClose,
     fetchImpl = fetch,
     reconnectDelayMs = 500,
@@ -20,6 +26,8 @@ export function createResumableGenerationResponse({
     let cancelConnection = () => {};
     let abortFetch = () => {};
     let stopped = false;
+    let forwardedHeaders = false;
+    let resumableResponse;
     const stream = new ReadableStream({
         start(controller) {
             const connectionController = new AbortController();
@@ -59,6 +67,16 @@ export function createResumableGenerationResponse({
                             const error = new Error(`Generation stream returned HTTP ${response.status}.`);
                             error.retryable = response.status >= 500;
                             throw error;
+                        }
+                        if (!forwardedHeaders) {
+                            for (const name of FORWARDED_RESPONSE_HEADERS) {
+                                const value = response.headers.get(name);
+                                if (value !== null) {
+                                    resumableResponse.headers.set(name, value);
+                                }
+                            }
+                            forwardedHeaders = true;
+                            onHeaders?.(resumableResponse.headers);
                         }
 
                         const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -126,11 +144,12 @@ export function createResumableGenerationResponse({
             }
         },
     });
-    return new Response(stream, {
+    resumableResponse = new Response(stream, {
         status: 200,
         headers: {
             'Content-Type': 'text/event-stream; charset=utf-8',
             'X-Request-Id': requestId,
         },
     });
+    return resumableResponse;
 }
