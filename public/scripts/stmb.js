@@ -5890,6 +5890,7 @@ async function showMainEntryPopup(view = 'main', options = {}) {
                             characterNames: [member?.characterFilterName].filter(Boolean),
                         }],
                     });
+                    worldInfoCache.delete(lorebookName);
                     bindings[memberKey] = lorebookName;
                     saveMetadataDebounced();
                     const clearButton = popup.dlg.querySelector(`.stmb-manual-group-lorebook-clear[data-member-key="${CSS.escape(memberKey)}"]`);
@@ -6836,6 +6837,7 @@ async function reconcileCurrentManualGroupStloFilters(sceneContext = buildStmbSc
     }
     try {
         await syncStmbGroupStloMetadata({ targets });
+        for (const target of targets) worldInfoCache.delete(target.lorebookName);
     } catch (error) {
         console.warn('STMB could not reconcile group STLO character filters', error);
         toastr.warning(
