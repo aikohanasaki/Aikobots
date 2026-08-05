@@ -4395,8 +4395,8 @@ async function runDetachedGeneration(sourceRequest, id, generationBody, requestI
     const userHandle = getGenerationUserHandle(sourceRequest);
     const abortController = new AbortController();
     const sink = new GenerationJobResponse(id, userHandle, generationBody.stream);
-    const detachedRequest = {
-        ...sourceRequest,
+    const detachedRequest = Object.create(sourceRequest);
+    Object.assign(detachedRequest, {
         body: generationBody,
         requestId,
         socket: sink.socket,
@@ -4404,7 +4404,7 @@ async function runDetachedGeneration(sourceRequest, id, generationBody, requestI
             signal: abortController.signal,
             assertAllowed: () => abortController.signal.throwIfAborted(),
         },
-    };
+    });
     const claim = markGenerationJobRunning(id, userHandle);
     if (!claim.claimed) {
         return;
