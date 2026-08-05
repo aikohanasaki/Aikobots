@@ -31,7 +31,7 @@ function openDatabase() {
     database = new Database(databasePath);
     database.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     database.pragma('journal_mode = WAL');
-    database.pragma('synchronous = FULL');
+    database.pragma('synchronous = NORMAL');
     database.pragma('foreign_keys = ON');
     database.exec(`
         CREATE TABLE IF NOT EXISTS generation_jobs (
