@@ -9,7 +9,6 @@
     margin-inline: var(--aiko-layout-topbar-margin-inline);
     left: var(--aiko-layout-topbar-left);
     right: var(--aiko-layout-topbar-right);
-    top: var(--aiko-chat-visual-viewport-top, 0px);
     display: inline-block;
     height: var(--topBarBlockSize);
     position: absolute;
@@ -21,7 +20,6 @@
     margin-inline: var(--aiko-layout-topbar-margin-inline);
     left: var(--aiko-layout-topbar-left);
     right: var(--aiko-layout-topbar-right);
-    top: var(--aiko-chat-visual-viewport-top, 0px);
 }
 
 #sheld {
@@ -34,7 +32,7 @@
     position: absolute;
     left: var(--aiko-layout-chat-left);
     right: var(--aiko-layout-chat-right);
-    top: calc(var(--aiko-layout-chat-top) + var(--aiko-chat-visual-viewport-top, 0px));
+    top: var(--aiko-layout-chat-top);
     margin-inline: var(--aiko-layout-chat-margin-inline);
     z-index: 30;
     min-height: 100px;
@@ -362,10 +360,6 @@ body:not(.movingUI) .drawer-content.maximized {
         top: var(--topBarBlockSize);
     }
 
-    #sheld {
-        top: calc(var(--aiko-chat-visual-viewport-top, 0px) + var(--topBarBlockSize));
-    }
-
     .drag-grabber,
     .pull-tab {
         display: none !important;
@@ -454,7 +448,7 @@ body:not(.movingUI) .drawer-content.maximized {
         width: 100vw;
         width: 100dvw;
         height: calc(100vh - 36px);
-        height: calc(var(--aiko-chat-visual-viewport-height, 100dvh) - 36px);
+        height: calc(100dvh - 36px);
         padding-right: max(env(safe-area-inset-right), 0px);
         padding-left: max(env(safe-area-inset-left), 0px);
         padding-bottom: 0;

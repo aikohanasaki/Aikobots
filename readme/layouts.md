@@ -578,13 +578,6 @@ On mobile:
 
 are generally forced to full viewport width.
 
-While the chat composer is focused, Aikobots temporarily sets
-`--aiko-chat-visual-viewport-height` and `--aiko-chat-visual-viewport-top` from the
-browser's visual viewport. Shared layout rules use these runtime-owned variables
-to keep the top bars and chat composer visible above the iOS soft keyboard. Custom
-layouts should build on the `--aiko-layout-*` variables instead of overriding these
-two values.
-
 So if you make a desktop layout, also include a mobile reset:
 
 ```css

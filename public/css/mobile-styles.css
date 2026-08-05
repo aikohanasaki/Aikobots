@@ -178,6 +178,12 @@
         flex-wrap: wrap;
     }
 
+    body {
+        touch-action: none;
+        overflow: hidden;
+        position: fixed;
+    }
+
     .world_entry_form_control {
         /* width: 100%; */
     }
@@ -243,10 +249,6 @@
         left: 0 !important;
         resize: none !important;
         top: var(--topBarBlockSize);
-    }
-
-    #sheld {
-        top: calc(var(--aiko-chat-visual-viewport-top, 0px) + var(--topBarBlockSize));
     }
 
     .wi-settings {
@@ -563,7 +565,7 @@
         width: 100vw;
         width: 100dvw;
         height: calc(100vh - 36px);
-        height: calc(var(--aiko-chat-visual-viewport-height, 100dvh) - 36px);
+        height: calc(100dvh - 36px);
         padding-right: max(env(safe-area-inset-right), 0px);
         padding-left: max(env(safe-area-inset-left), 0px);
         padding-bottom: 0;

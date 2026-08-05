@@ -2,10 +2,10 @@
     --sheldWidth: 50vw;
     --aiko-layout-chat-width: var(--sheldWidth, 50vw);
     --aiko-layout-chat-top: var(--topBarBlockSize);
-    --aiko-layout-chat-height: calc(var(--aiko-chat-visual-viewport-height, 100dvh) - var(--topBarBlockSize) - 1px);
+    --aiko-layout-chat-height: calc(100dvh - var(--topBarBlockSize) - 1px);
     --aiko-layout-chat-height-fallback: calc(100vh - var(--topBarBlockSize) - 1px);
-    --aiko-layout-chat-max-height: calc(var(--aiko-chat-visual-viewport-height, 100dvh) - var(--topBarBlockSize) - 1px);
-    --aiko-layout-chat-scroll-max-height: calc(var(--aiko-chat-visual-viewport-height, 100dvh) - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
+    --aiko-layout-chat-max-height: calc(100dvh - var(--topBarBlockSize) - 1px);
+    --aiko-layout-chat-scroll-max-height: calc(100dvh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
     --aiko-layout-chat-scroll-max-height-fallback: calc(100vh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
     --aiko-layout-chat-left: 0;
     --aiko-layout-chat-right: 0;

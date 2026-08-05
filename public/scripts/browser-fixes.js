@@ -1,5 +1,4 @@
 import { getParsedUA, isMobile } from './RossAscends-mods.js';
-import { installChatVisualViewportFix } from './chat-visual-viewport.js';
 
 const isFirefox = () => /firefox/i.test(navigator.userAgent);
 
@@ -72,12 +71,7 @@ function applyBrowserFixes() {
     }
 
     if (isMobile()) {
-        const chatVisualViewportFix = installChatVisualViewportFix();
         const fixFunkyPositioning = () => {
-            if (chatVisualViewportFix.isActive()) {
-                return;
-            }
-
             console.debug('[Mobile] Device viewport change detected.');
             document.documentElement.style.position = 'fixed';
             requestAnimationFrame(() => document.documentElement.style.position = '');
