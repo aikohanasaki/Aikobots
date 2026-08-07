@@ -70,6 +70,7 @@ import {
     STMB_METADATA_KEY,
     compileScene,
     getActiveStmbProfile,
+    getSceneMessageVisibilityStats,
     getStmbConnectionProfileApiKeyError,
     identifyManagedMemoryEntries,
     normalizeStmbCharacterFilterNames,
@@ -2246,6 +2247,8 @@ async function getSettingsPopupSceneData() {
         endExcerpt: '',
         messageCount: 0,
         estimatedTokens: null,
+        hiddenMessageCount: 0,
+        totalMessageCount: 0,
     };
 
     if (!hasScene) {
@@ -2254,6 +2257,9 @@ async function getSettingsPopupSceneData() {
 
     try {
         const range = getCurrentSceneRange();
+        const visibilityStats = getSceneMessageVisibilityStats(chat, range.sceneStart, range.sceneEnd);
+        data.hiddenMessageCount = visibilityStats.hiddenMessageCount;
+        data.totalMessageCount = visibilityStats.totalMessageCount;
         const compiledScene = compileScene(chat, buildSceneRequest(range));
         const startMessage = chat[range.sceneStart];
         const endMessage = chat[range.sceneEnd];
@@ -2545,6 +2551,7 @@ ${escapeHtml(sceneData.startExcerpt || '')}
 ${escapeHtml(sceneData.endExcerpt || '')}
 
 <span data-i18n="Messages:">Messages:</span> ${escapeHtml(String(sceneData.messageCount || 0))} | <span data-i18n="Estimated tokens:">Estimated tokens:</span> ${escapeHtml(String(sceneData.estimatedTokens ?? '?'))}</code></pre>
+                ${sceneData.hiddenMessageCount * 2 > sceneData.totalMessageCount ? '<small class="opacity70p" data-i18n="More than 50% of the messages in this scene are hidden. Please make sure the scene selection is correct.">More than 50% of the messages in this scene are hidden. Please make sure the scene selection is correct.</small>' : ''}
             </div>
         </div>
     `;
@@ -9394,10 +9401,27 @@ async function executeMemoryCreationFromRange(range, options = {}) {
 
     const lorebookName = await ensureLorebookName();
     const sceneContext = options.sceneContext || buildStmbSceneContext();
-    const sceneCapture = await captureStmbSceneRange(range, {
-        skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
-        sceneContext,
-    });
+    let sceneCapture;
+    try {
+        sceneCapture = await captureStmbSceneRange(range, {
+            skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
+            sceneContext,
+        });
+    } catch (error) {
+        const visibilityStats = getSceneMessageVisibilityStats(chat, range.sceneStart, range.sceneEnd);
+        const selectedSceneOnlyContainsHiddenMessages = !getModuleSettings().unhideBeforeMemory
+            && visibilityStats.hiddenMessageCount > 0
+            && visibilityStats.visibleMessageCount === 0
+            && /^No visible messages in range \d+-\d+$/.test(String(error?.message || ''));
+        if (!selectedSceneOnlyContainsHiddenMessages) throw error;
+
+        toastr.error(
+            translate('The selected scene contains only hidden messages. Was this scene processed previously? Unhide the messages, or enable "Include hidden messages for memory generation" in General Settings.'),
+            'STMB',
+            { timeOut: 0, extendedTimeOut: 0, tapToDismiss: true, closeButton: true },
+        );
+        return null;
+    }
     const compiledScene = sceneCapture?.compiledScene;
 
     if (!getModuleSettings().allowSceneOverlap) {

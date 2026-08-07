@@ -6083,5 +6083,7 @@
     "Pricing overrides": "Preisüberschreibungen",
     "Ready for generation": "Bereit für die Generierung",
     "Playing during generation": "Wiedergabe während der Generierung",
-    "Tap to allow background audio": "Tippen, um Hintergrundaudio zu erlauben"
+    "Tap to allow background audio": "Tippen, um Hintergrundaudio zu erlauben",
+    "The selected scene contains only hidden messages. Was this scene processed previously? Unhide the messages, or enable \"Include hidden messages for memory generation\" in General Settings.": "Die ausgewählte Szene enthält nur ausgeblendete Nachrichten. Wurde diese Szene bereits verarbeitet? Blende die Nachrichten wieder ein oder aktiviere in den allgemeinen Einstellungen „Ausgeblendete Nachrichten für die Speichererzeugung einbeziehen“.",
+    "More than 50% of the messages in this scene are hidden. Please make sure the scene selection is correct.": "Mehr als 50 % der Nachrichten in dieser Szene sind ausgeblendet. Bitte stelle sicher, dass die Szenenauswahl korrekt ist."
 }

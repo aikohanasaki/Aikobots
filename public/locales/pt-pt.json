@@ -1502,5 +1502,7 @@
     "Pricing overrides": "Preços condicionais",
     "Ready for generation": "Pronto para gerar",
     "Playing during generation": "A reproduzir durante a geração",
-    "Tap to allow background audio": "Toque para permitir áudio em segundo plano"
+    "Tap to allow background audio": "Toque para permitir áudio em segundo plano",
+    "The selected scene contains only hidden messages. Was this scene processed previously? Unhide the messages, or enable \"Include hidden messages for memory generation\" in General Settings.": "A cena selecionada contém apenas mensagens ocultas. Esta cena foi processada anteriormente? Volte a mostrar as mensagens ou ative «Incluir mensagens ocultas na geração de memórias» nas Definições Gerais.",
+    "More than 50% of the messages in this scene are hidden. Please make sure the scene selection is correct.": "Mais de 50% das mensagens desta cena estão ocultas. Certifique-se de que a seleção da cena está correta."
 }

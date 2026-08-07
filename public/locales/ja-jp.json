@@ -6086,5 +6086,7 @@
     "Pricing overrides": "条件付き料金",
     "Ready for generation": "生成の準備完了",
     "Playing during generation": "生成中に再生中",
-    "Tap to allow background audio": "タップしてバックグラウンド音声を許可"
+    "Tap to allow background audio": "タップしてバックグラウンド音声を許可",
+    "The selected scene contains only hidden messages. Was this scene processed previously? Unhide the messages, or enable \"Include hidden messages for memory generation\" in General Settings.": "選択したシーンには非表示のメッセージしかありません。このシーンは以前に処理済みではありませんか？メッセージを再表示するか、一般設定で「メモリ生成に非表示メッセージを含める」を有効にしてください。",
+    "More than 50% of the messages in this scene are hidden. Please make sure the scene selection is correct.": "このシーンのメッセージの半数以上が非表示です。シーンの選択が正しいことを確認してください。"
 }

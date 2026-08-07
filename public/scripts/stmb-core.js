@@ -1410,6 +1410,34 @@ export function resolveStmbGroupParticipantFilterName(message, resolver) {
     return matches?.size === 1 ? getStmbCharacterFilterName(matches.values().next().value) : '';
 }
 
+/**
+ * Counts hidden and visible messages in a selected scene without changing them.
+ * @param {object[]} messages Chat messages.
+ * @param {number} sceneStart Inclusive scene start index.
+ * @param {number} sceneEnd Inclusive scene end index.
+ * @returns {{totalMessageCount:number, hiddenMessageCount:number, visibleMessageCount:number}}
+ */
+export function getSceneMessageVisibilityStats(messages, sceneStart, sceneEnd) {
+    const stats = { totalMessageCount: 0, hiddenMessageCount: 0, visibleMessageCount: 0 };
+    if (!Array.isArray(messages) || !Number.isInteger(sceneStart) || !Number.isInteger(sceneEnd) || sceneStart > sceneEnd) {
+        return stats;
+    }
+
+    for (let index = Math.max(0, sceneStart); index <= sceneEnd && index < messages.length; index++) {
+        const message = messages[index];
+        if (!message) continue;
+
+        stats.totalMessageCount++;
+        if (message.is_system) {
+            stats.hiddenMessageCount++;
+        } else {
+            stats.visibleMessageCount++;
+        }
+    }
+
+    return stats;
+}
+
 export function compileScene(messages, sceneRequest, options = {}) {
     const sourceMessages = Array.isArray(messages) ? messages : [];
     const sceneStart = Number(sceneRequest?.sceneStart);
