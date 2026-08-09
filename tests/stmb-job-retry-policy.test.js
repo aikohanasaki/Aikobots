@@ -26,11 +26,12 @@ test('retry-all collects only canceled dependents in original queue order', () =
         { id: 'manual', type: 'sidePrompt', state: 'canceled', createdAt: 4, dependsOnJobId: 'memory-1', payload: { trigger: 'manual' } },
         { id: 'completed', type: 'sidePrompt', state: 'completed', createdAt: 3, dependsOnJobId: 'memory-1', payload: { trigger: 'onAfterMemory' } },
         { id: 'early', type: 'sidePromptBatch', state: 'canceled', createdAt: 20, parentJobOrder: 1, payload: { dependsOnJobId: 'memory-1', trigger: 'onAfterMemory' } },
+        { id: 'assistance', type: 'memoryAssistance', state: 'canceled', createdAt: 30, parentJobOrder: 3, dependsOnJobId: 'memory-1', payload: { trigger: 'onAfterMemory' } },
     ];
 
     assert.deepEqual(
         collectStmbCanceledDependents(source, history).map(job => job.id),
-        ['early', 'late'],
+        ['early', 'late', 'assistance'],
     );
 });
 

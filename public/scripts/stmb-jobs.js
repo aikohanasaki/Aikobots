@@ -216,6 +216,7 @@ function getJobTypeLabel(type = '') {
     switch (String(type || '')) {
         case 'sidePrompt': return 'Side Prompt';
         case 'sidePromptBatch': return 'Side Prompt';
+        case 'memoryAssistance': return 'Memory Assistance';
         case 'consolidation': return 'Consolidation';
         case 'memory':
         default:
@@ -800,6 +801,10 @@ function areJobsEquivalentForDedupe(left = {}, right = {}) {
 
     if (leftIdentity.type === 'sidePrompt' && (leftIdentity.trigger === 'onInterval' || leftIdentity.trigger === 'onAfterMemory')) {
         return Boolean(leftIdentity.templateKey) && leftIdentity.templateKey === rightIdentity.templateKey;
+    }
+
+    if (leftIdentity.type === 'memoryAssistance' && leftIdentity.trigger === 'onAfterMemory') {
+        return Boolean(leftIdentity.range) && leftIdentity.range === rightIdentity.range;
     }
 
     return false;

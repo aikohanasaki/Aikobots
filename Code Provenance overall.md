@@ -177,6 +177,8 @@ For Memory Books-derived work:
 
 > Portions of this work are derived from SillyTavern-MemoryBooks by Aiko Hanasaki.
 
+The core Memory Assistance and message-sourced Topical Clip integration tracks SillyTavern-MemoryBooks commit `52520c76e1a1c9ad820d37c0960e4608467ff2f6`; its supported German, French, Japanese, and Portuguese translations are preserved from that reference.
+
 For WorldInfoInfo-derived work:
 
 > SillyTavern-WorldInfoInfo originally by Len Anderson, with additional features and Aikobots-specific hidden-lorebook work by Aiko Hanasaki.

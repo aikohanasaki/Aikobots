@@ -4,6 +4,7 @@ import { stableHashString } from '../../public/scripts/hashing.js';
 import { applyStloCharacterFilters } from '../../public/scripts/stlo-utils.js';
 import { withChatSaveLock } from '../chat-storage.js';
 import { AIKOBOTS_MESSAGE_UUID_KEY, isValidAikobotsUuid } from '../../public/scripts/chat-identities.js';
+import { matchesClipReviewTargetIdentity } from '../../public/scripts/stmb-clip-review-policy.js';
 
 import {
     applyLorebookSettings,
@@ -1655,6 +1656,10 @@ router.post('/update-entry-by-uid', async (request, response) => {
     const expectedContentHash = request.body?.expectedContentHash === undefined || request.body?.expectedContentHash === null
         ? ''
         : String(request.body.expectedContentHash || '').trim();
+    const expectedTitle = request.body?.expectedTitle === undefined || request.body?.expectedTitle === null
+        ? ''
+        : String(request.body.expectedTitle || '').trim();
+    const expectedClipType = String(request.body?.expectedClipType || '').trim();
     const metadataUpdates = request.body?.metadataUpdates || {};
     const entryOverrides = request.body?.entryOverrides || {};
     const invalidUpdate = getInvalidLorebookEntryUpdate({ metadataUpdates, entryOverrides });
@@ -1686,6 +1691,15 @@ router.post('/update-entry-by-uid', async (request, response) => {
         });
     }
 
+    if (expectedClipType && !['ordinary', 'topical'].includes(expectedClipType)) {
+        return response.status(400).send({
+            error: {
+                type: 'StmbBadRequest',
+                message: 'expectedClipType must be "ordinary" or "topical".',
+            },
+        });
+    }
+
     try {
         return await withLorebookManagementTransaction(async transaction => {
             const { data: lorebookData, metadata } = await getLorebookForManagement(
@@ -1712,6 +1726,16 @@ router.post('/update-entry-by-uid', async (request, response) => {
                         type: 'StmbEntryContentChanged',
                         code: 'TOPICAL_CLIP_TARGET_CHANGED',
                         message: 'Lorebook entry content changed after draft generation.',
+                    },
+                });
+            }
+
+            if (!matchesClipReviewTargetIdentity(entry, expectedTitle, expectedClipType)) {
+                return response.status(409).send({
+                    error: {
+                        type: 'StmbEntryIdentityChanged',
+                        code: 'CLIP_REVIEW_TARGET_CHANGED',
+                        message: 'Lorebook entry identity changed after review generation.',
                     },
                 });
             }

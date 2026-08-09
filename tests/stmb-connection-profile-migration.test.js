@@ -141,10 +141,21 @@ test('connection profile summaries distinguish inherited model and temperature',
 test('normalization preserves a settings version newer than this build', () => {
     const settings = normalizeStmbSettings({
         moduleSettings: {},
-        migrationVersion: 6,
+        migrationVersion: 8,
     });
 
-    assert.equal(settings.migrationVersion, 6);
+    assert.equal(settings.migrationVersion, 8);
+});
+
+test('normalization migrates the legacy Memory Assistance checkbox without overriding explicit off', () => {
+    assert.equal(normalizeStmbSettings({
+        moduleSettings: { clipReviewAlwaysAfterMemory: true },
+    }).moduleSettings.memoryAssistanceMode, 'update');
+    const explicitOff = normalizeStmbSettings({
+        moduleSettings: { memoryAssistanceMode: 'off', clipReviewAlwaysAfterMemory: true },
+    });
+    assert.equal(explicitOff.moduleSettings.memoryAssistanceMode, 'off');
+    assert.equal(Object.hasOwn(explicitOff.moduleSettings, 'clipReviewAlwaysAfterMemory'), false);
 });
 
 test('clearing a central connection profile selection removes the cloned binding', () => {

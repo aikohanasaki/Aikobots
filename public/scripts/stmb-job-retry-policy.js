@@ -2,7 +2,7 @@ function cloneValue(value) {
     return value === undefined ? undefined : structuredClone(value);
 }
 
-const AFTER_MEMORY_JOB_TYPES = new Set(['sidePrompt', 'sidePromptBatch']);
+const AFTER_MEMORY_JOB_TYPES = new Set(['sidePrompt', 'sidePromptBatch', 'memoryAssistance']);
 
 function sortDependents(jobs) {
     return jobs.sort((left, right) => {
@@ -24,7 +24,7 @@ export function isStmbJobRetryable(job = {}) {
  */
 export function buildStmbRetryPayload(sourceJob = {}, { includeDependents = false } = {}) {
     const payload = cloneValue(sourceJob.payload) || {};
-    if (sourceJob.type === 'sidePrompt' || sourceJob.type === 'sidePromptBatch') {
+    if (sourceJob.type === 'sidePrompt' || sourceJob.type === 'sidePromptBatch' || sourceJob.type === 'memoryAssistance') {
         delete payload.dependsOnJobId;
     }
     if (sourceJob.type === 'memory' && !includeDependents) {

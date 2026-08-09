@@ -1,12 +1,13 @@
 import { cloneStloSettings } from './stlo-utils.js';
 import { normalizeCharacterMemoryBookLocks } from './stmb-character-memory-book-locks.js';
+import { normalizeMemoryAssistanceMode } from './stmb-clip-review-policy.js';
 
 export const STMB_PARITY = Object.freeze({
     sourceRepo: 'aikohanasaki/SillyTavern-MemoryBooks',
-    sourceCommit: 'cae7ee71d1730b6ee7f6829b955a2b53566a9b02',
+    sourceCommit: '52520c76e1a1c9ad820d37c0960e4608467ff2f6',
 });
 
-export const STMB_SETTINGS_VERSION = 6;
+export const STMB_SETTINGS_VERSION = 7;
 export const STMB_METADATA_KEY = 'STMemoryBooks';
 export const STMB_MANAGED_FLAG = 'stmemorybooks';
 export const STMB_DEFAULT_PROFILE_NAME = 'Current SillyTavern Settings';
@@ -591,6 +592,7 @@ export function createDefaultStmbSettings() {
             compactionPromptTemplate: STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE,
             topicalClipPromptTemplate: '',
             compactionProfileIndex: 0,
+            memoryAssistanceMode: 'off',
             sidePromptsMaxConcurrent: 1,
             defaultSoloSidePromptSetKey: '',
             defaultGroupSidePromptSetKey: '',
@@ -871,6 +873,7 @@ export function importLegacyStmbSettings(legacySettings) {
 export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     const defaults = createDefaultStmbSettings();
     const sourceCandidate = rawSettings && typeof rawSettings === 'object' ? rawSettings : legacySettings;
+    const inputModuleSettings = getPotentialModuleSettings(sourceCandidate);
     const source = rawSettings && typeof rawSettings === 'object' && !rawSettings.moduleSettings
         ? importLegacyStmbSettings(rawSettings)
         : importLegacyStmbSettings(sourceCandidate);
@@ -878,9 +881,10 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         ? Number(source.migrationVersion)
         : defaults.migrationVersion;
 
+    const persistedModuleSettings = getPotentialModuleSettings(source);
     const moduleSettings = {
         ...defaults.moduleSettings,
-        ...getPotentialModuleSettings(source),
+        ...persistedModuleSettings,
     };
 
     if (moduleSettings.maxTokens === undefined || moduleSettings.maxTokens === null) {
@@ -911,6 +915,11 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.sidePromptsMaxConcurrent = Number.isFinite(Number(moduleSettings.sidePromptsMaxConcurrent))
         ? Math.max(1, Math.min(5, Math.trunc(Number(moduleSettings.sidePromptsMaxConcurrent))))
         : defaults.moduleSettings.sidePromptsMaxConcurrent;
+    moduleSettings.memoryAssistanceMode = normalizeMemoryAssistanceMode(
+        Object.hasOwn(inputModuleSettings, 'memoryAssistanceMode') ? moduleSettings.memoryAssistanceMode : '',
+        inputModuleSettings.clipReviewAlwaysAfterMemory === true,
+    );
+    delete moduleSettings.clipReviewAlwaysAfterMemory;
     moduleSettings.defaultSoloSidePromptSetKey = typeof moduleSettings.defaultSoloSidePromptSetKey === 'string'
         ? moduleSettings.defaultSoloSidePromptSetKey.trim()
         : defaults.moduleSettings.defaultSoloSidePromptSetKey;
@@ -929,7 +938,8 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         : defaults.moduleSettings.compactionPromptTemplate;
     moduleSettings.topicalClipPromptTemplate = typeof moduleSettings.topicalClipPromptTemplate === 'string'
         && moduleSettings.topicalClipPromptTemplate.trim()
-        && moduleSettings.topicalClipPromptTemplate.includes('{{SOURCE_MEMORIES}}')
+        && (moduleSettings.topicalClipPromptTemplate.includes('{{SOURCE_MEMORIES}}')
+            || moduleSettings.topicalClipPromptTemplate.includes('{{SOURCE_MESSAGES}}'))
         ? moduleSettings.topicalClipPromptTemplate
         : defaults.moduleSettings.topicalClipPromptTemplate;
     moduleSettings.autoConsolidationTargetTiers = Array.isArray(moduleSettings.autoConsolidationTargetTiers)

@@ -116,6 +116,8 @@ Aikobots v4 supports:
 * Canonical numbering and metadata linking related group-memory entries.
 * Validation of every target and checkout before group-memory writes begin.
 * Rollback attempts if a multi-lorebook group-memory write fails partway through.
+* Core Memory Assistance modes, Clip-update review reports, and Topical Clips sourced from bounded chat-message ranges, adapted from SillyTavern-MemoryBooks commit `52520c76e1a1c9ad820d37c0960e4608467ff2f6`.
+* The reference repository's German, French, Japanese, and Portuguese Memory Assistance translations, copied without retranslation.
 
 Secure and shared-secure lorebooks continue to use the existing permission-sensitive repository boundary; v4 does not move protected lorebook content into client-side persistence.
 

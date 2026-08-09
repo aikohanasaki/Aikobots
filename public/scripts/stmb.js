@@ -178,12 +178,14 @@ import {
     importSidePromptsJson,
     listSets,
     listTemplates,
+    recreateBuiltInSidePrompt,
     recreateBuiltInSidePrompts,
     removeSet,
     removeTemplate,
     upsertSet,
     upsertTemplate,
 } from './stmb-sideprompts-manager.js';
+import { CLIP_REVIEW_TEMPLATE_KEY } from './stmb-clip-review-policy.js';
 import { escapeHtml, flashHighlight, withGoBackButton } from './utils.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
@@ -213,6 +215,11 @@ import {
     showStmbEntryReviewPopup,
     showTopicalClipPopup,
 } from './stmb-clips.js';
+import {
+    buildQueuedMemoryAssistanceJobs,
+    configureStmbClipReviewRuntime,
+    showClipReviewSuggestionsPopup,
+} from './stmb-clip-review.js';
 import {
     awaitStmbJobApproval,
     cancelAllStmbJobs,
@@ -311,7 +318,8 @@ function getClientPlannerJobKind(job = {}) {
     const approvalKind = String(job?.approvalRequest?.kind || '');
     const state = String(job?.state || '');
 
-    if (approvalKind === 'memoryApproval' || approvalKind === 'sidePromptApproval' || approvalKind === 'consolidationApproval') {
+    if (approvalKind === 'memoryApproval' || approvalKind === 'sidePromptApproval' || approvalKind === 'consolidationApproval'
+        || approvalKind === 'memoryAssistanceSelection' || approvalKind === 'memoryAssistanceTokenWarning') {
         return approvalKind;
     }
 
@@ -339,6 +347,8 @@ function getClientPlannerJobKind(job = {}) {
             return 'sidePrompt';
         case 'consolidation':
             return 'consolidationCheck';
+        case 'memoryAssistance':
+            return 'memoryAssistance';
         case 'memory':
         default:
             return 'memory';
@@ -1318,7 +1328,7 @@ function buildMemoryApprovalRequest(memoryObject, compiledScene, range, profile)
 
 function isPlannerApprovalJob(job = {}) {
     return String(job?.status || '') === 'awaiting_approval'
-        && ['memoryApproval', 'sidePromptApproval', 'consolidationApproval'].includes(String(job?.kind || ''))
+        && ['memoryApproval', 'sidePromptApproval', 'consolidationApproval', 'memoryAssistanceSelection', 'memoryAssistanceTokenWarning'].includes(String(job?.kind || ''))
         && job?.approvalRequest
         && typeof job.approvalRequest === 'object';
 }
@@ -1342,6 +1352,54 @@ async function openPlannerApprovalPopup(job = {}, { force = false } = {}) {
     const approvalRequest = job.approvalRequest;
 
     try {
+        if (String(job?.kind || '') === 'memoryAssistanceTokenWarning') {
+            const estimatedTokens = Math.max(0, Math.trunc(Number(approvalRequest.estimatedTokens) || 0));
+            const threshold = Math.max(0, Math.trunc(Number(approvalRequest.threshold) || 0));
+            const message = translate(
+                'This Memory Assistance batch is estimated at {{estimatedTokens}} tokens, above the warning threshold of {{threshold}}.',
+                'STMemoryBooks_ClipReview_TokenWarningMessage',
+            ).replace('{{estimatedTokens}}', String(estimatedTokens)).replace('{{threshold}}', String(threshold));
+            const popup = new Popup(DOMPurify.sanitize(`<h3>${escapeHtml(translate('Memory Assistance token warning', 'STMemoryBooks_ClipReview_TokenWarningTitle'))}</h3><p>${escapeHtml(message)}</p>`), POPUP_TYPE.CONFIRM, '', {
+                okButton: translate('Run Once Anyway', 'STMemoryBooks_TopicalClip_RunOnceAnyway'),
+                cancelButton: translate('Cancel'),
+            });
+            const result = await popup.show();
+            await respondStmbPlannerApproval({ jobId, decision: result === POPUP_RESULT.AFFIRMATIVE ? 'approve' : 'reject' });
+            return true;
+        }
+
+        if (String(job?.kind || '') === 'memoryAssistanceSelection') {
+            const records = Array.isArray(approvalRequest.records) ? approvalRequest.records : [];
+            const lorebookName = String(job?.payload?.lorebookName || '').trim() || 'This Memory Book';
+            const selectionDescription = translate(
+                '"{{lorebookName}}" contains more than five Clips. Select specific entries or query all of them.',
+                'STMemoryBooks_ClipReview_SelectDescription',
+            ).replace('{{lorebookName}}', lorebookName);
+            const rows = records.map(record => `<label class="flex-container gap10px" style="align-items:flex-start;margin:5px 0"><input class="stmb-memory-assistance-choice" type="checkbox" value="${escapeHtml(record.uid)}"><span><strong>${escapeHtml(record.title)}</strong><br><small>${escapeHtml(record.type === 'topical' ? translate('Topical Clip', 'STMemoryBooks_TopicalClip_Title') : translate('Clip', 'STMemoryBooks_Compaction_TypeClip'))} · ${escapeHtml((record.topic ? [record.topic] : record.keywords || []).join(', '))} · ${Number(record.estimatedTokens || 0)} ${escapeHtml(translate('estimated tokens', 'STMemoryBooks_EstimatedTokens'))}</small></span></label>`).join('');
+            const popup = new Popup(DOMPurify.sanitize(`<h3 data-i18n="STMemoryBooks_ClipReview_SelectTitle">${escapeHtml(translate('Choose Clips to review', 'STMemoryBooks_ClipReview_SelectTitle'))}</h3><p>${escapeHtml(selectionDescription)}</p><div style="max-height:420px;overflow-y:auto">${rows}</div>`), POPUP_TYPE.TEXT, '', {
+                okButton: false,
+                cancelButton: translate('Cancel'),
+                customButtons: [
+                    { text: translate('Query Selected', 'STMemoryBooks_ClipReview_QuerySelected'), result: POPUP_RESULT.CUSTOM1, appendAtEnd: true },
+                    { text: translate('Query All', 'STMemoryBooks_ClipReview_QueryAll'), result: POPUP_RESULT.CUSTOM2, appendAtEnd: true },
+                ],
+            });
+            const result = await popup.show();
+            if (result === POPUP_RESULT.CUSTOM2) {
+                await respondStmbPlannerApproval({ jobId, decision: 'approve', editedData: { selectAll: true } });
+                return true;
+            }
+            if (result === POPUP_RESULT.CUSTOM1) {
+                const selectedUids = Array.from(popup.dlg?.querySelectorAll('.stmb-memory-assistance-choice:checked') || []).map(input => String(input.value));
+                if (selectedUids.length > 0) {
+                    await respondStmbPlannerApproval({ jobId, decision: 'approve', editedData: { selectedUids } });
+                    return true;
+                }
+            }
+            await respondStmbPlannerApproval({ jobId, decision: 'reject' });
+            return true;
+        }
+
         if (String(job?.kind || '') === 'consolidationApproval') {
             const previewResult = await showConsolidationPreviewPopup({
                 summaryCandidates: approvalRequest.summaryCandidates,
@@ -1553,6 +1611,38 @@ async function handlePlannerCompletedJob(job) {
         toastr.success(t`SidePrompt "${String(result.title || 'Unknown')}" updated.`, 'STMB');
     }
 
+    if (result?.type === 'memoryAssistance' && getModuleSettings().showNotifications) {
+        const withParams = (value, params = {}) => String(value).replace(/\{\{\s*(\w+)\s*\}\}/g, (_match, name) => String(params[name] ?? ''));
+        if (result.status === 'failed_preserved') {
+            toastr.error(translate('A Memory Assistance batch failed.', 'STMemoryBooks_ClipReview_BatchFailed'), 'STMB');
+        } else if (result.status === 'automatic') {
+            const appliedCount = Number(result.appliedCount || 0);
+            const reviewCount = Number(result.reviewCount || 0);
+            const appliedMessage = appliedCount === 1
+                ? translate('Memory Assistance automatically applied 1 Clip update.', 'STMemoryBooks_ClipReview_AutomaticAppliedOne')
+                : withParams(translate('Memory Assistance automatically applied {{count}} Clip updates.', 'STMemoryBooks_ClipReview_AutomaticAppliedMany'), { count: appliedCount });
+            const reviewMessage = reviewCount === 1
+                ? translate('1 Topical Clip update awaits approval.', 'STMemoryBooks_ClipReview_TopicalAwaitingReviewOne')
+                : reviewCount > 1
+                    ? withParams(translate('{{count}} Topical Clip updates await approval.', 'STMemoryBooks_ClipReview_TopicalAwaitingReviewMany'), { count: reviewCount })
+                    : '';
+            toastr.info([appliedMessage, reviewMessage].filter(Boolean).join(' '), 'STMB');
+        } else {
+            const candidateCount = Number(result.candidateCount || 0);
+            const topicCount = Number(result.topicSuggestionCount || 0);
+            const updateMessage = candidateCount === 1
+                ? translate('1 suggested update', 'STMemoryBooks_ClipReview_SuggestedUpdateOne')
+                : withParams(translate('{{count}} suggested updates', 'STMemoryBooks_ClipReview_SuggestedUpdateMany'), { count: candidateCount });
+            const topicMessage = topicCount === 1
+                ? translate('1 new topic', 'STMemoryBooks_ClipReview_NewTopicOne')
+                : withParams(translate('{{count}} new topics', 'STMemoryBooks_ClipReview_NewTopicMany'), { count: topicCount });
+            const message = result.mode === 'update_and_suggest'
+                ? withParams(translate('Memory Assistance found {{updateMessage}} and {{topicMessage}}.', 'STMemoryBooks_ClipReview_FoundUpdatesAndTopics'), { updateMessage, topicMessage })
+                : withParams(translate('Memory Assistance found {{updateMessage}}.', 'STMemoryBooks_ClipReview_FoundUpdates'), { updateMessage });
+            toastr.info(message, 'STMB');
+        }
+    }
+
     if (result?.type === 'consolidationCheck' && result.ready) {
         if (!isCurrentChatJob) {
             return;
@@ -1589,6 +1679,10 @@ function getPlannerJobLabel(job) {
             return 'Consolidation review';
         case 'consolidationCheck':
             return 'Consolidation check';
+        case 'memoryAssistanceSelection':
+        case 'memoryAssistanceTokenWarning':
+        case 'memoryAssistance':
+            return 'Memory Assistance';
         case 'chatAutoHide':
             return 'Chat auto-hide';
         default:
@@ -3754,7 +3848,7 @@ function validateSidePromptRuntimeMacroTriggerConfig({ name, prompt, responseFor
 }
 
 function isBuiltinSidePromptKey(key) {
-    return ['plotpoints', 'status', 'cast-of-characters', 'assess'].includes(String(key || '').trim());
+    return ['plotpoints', 'status', 'cast-of-characters', 'cast', 'assess', CLIP_REVIEW_TEMPLATE_KEY].includes(String(key || '').trim());
 }
 
 function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
@@ -3793,7 +3887,13 @@ function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
                     <tr data-template-key="${escapeHtml(template.key)}" style="cursor: pointer; border-bottom: 1px solid var(--SmartThemeBorderColor); ${template.key === selectedTemplateKey ? 'background-color: var(--cobalt30a);' : ''}">
                         <td style="padding: 8px;">${escapeHtml(template.name || 'Untitled Side Prompt')}</td>
                         <td style="padding: 8px;">
-                            ${getSidePromptTriggerBadges(template).length > 0
+                            ${template.specialKind === 'clipReview' ? `
+                                <select class="text_pole stmb-sp-special-mode" aria-label="${escapeHtml(translate('Memory Assistance mode', 'STMemoryBooks_ClipReview_ModeLabel'))}" title="${escapeHtml(translate('Memory Assistance uses its own Off, Update, Update and Suggest, and Automatic mode setting.', 'STMemoryBooks_ClipReview_SpecialToggleInfo'))}" data-i18n="[aria-label]STMemoryBooks_ClipReview_ModeLabel;[title]STMemoryBooks_ClipReview_SpecialToggleInfo">
+                                    <option value="off" ${getModuleSettings().memoryAssistanceMode === 'off' ? 'selected' : ''}>${escapeHtml(translate('Off', 'STMemoryBooks_ClipReview_ModeOff'))}</option>
+                                    <option value="update" ${getModuleSettings().memoryAssistanceMode === 'update' ? 'selected' : ''}>${escapeHtml(translate('Update', 'STMemoryBooks_ClipReview_ModeUpdate'))}</option>
+                                    <option value="update_and_suggest" ${getModuleSettings().memoryAssistanceMode === 'update_and_suggest' ? 'selected' : ''}>${escapeHtml(translate('Update and Suggest', 'STMemoryBooks_ClipReview_ModeUpdateAndSuggest'))}</option>
+                                    <option value="automatic" ${getModuleSettings().memoryAssistanceMode === 'automatic' ? 'selected' : ''}>${escapeHtml(translate('Automatic', 'STMemoryBooks_ClipReview_ModeAutomatic'))}</option>
+                                </select>` : getSidePromptTriggerBadges(template).length > 0
             ? getSidePromptTriggerBadges(template).map(badge => `<span class="badge" style="margin-right:6px;">${escapeHtml(badge)}</span>`).join('')
             : '<span class="opacity50p" data-i18n="None">None</span>'}
                         </td>
@@ -3802,12 +3902,12 @@ function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
                             <button class="menu_button stmb-sp-action stmb-sp-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;" data-i18n="[title]Edit;[aria-label]Edit">
                                 <i class="fa-solid fa-pen"></i>
                             </button>
-                            <button class="menu_button stmb-sp-action stmb-sp-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;" data-i18n="[title]Duplicate;[aria-label]Duplicate">
+                            ${template.specialKind === 'clipReview' ? `<button class="menu_button stmb-sp-action stmb-sp-action-reset whitespacenowrap" data-action="reset" title="${escapeHtml(translate('Reset Prompt', 'STMemoryBooks_ClipReview_ResetPrompt'))}" aria-label="${escapeHtml(translate('Reset Prompt', 'STMemoryBooks_ClipReview_ResetPrompt'))}" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;" data-i18n="[title]STMemoryBooks_ClipReview_ResetPrompt;[aria-label]STMemoryBooks_ClipReview_ResetPrompt"><i class="fa-solid fa-rotate-left"></i></button>` : `<button class="menu_button stmb-sp-action stmb-sp-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;" data-i18n="[title]Duplicate;[aria-label]Duplicate">
                                 <i class="fa-solid fa-copy"></i>
                             </button>
                             <button class="menu_button stmb-sp-action stmb-sp-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0; color:var(--redColor);" data-i18n="[title]Delete;[aria-label]Delete">
                                 <i class="fa-solid fa-trash"></i>
-                            </button>
+                            </button>`}
                             </span>
                         </td>
                     </tr>
@@ -4080,7 +4180,7 @@ export async function openSidePromptSetEditorPopup({ setKey = null } = {}) {
         throw new Error(`Set "${setKey}" not found`);
     }
 
-    const templates = await listTemplates();
+    const templates = (await listTemplates()).filter(template => template.specialKind !== 'clipReview');
     const popup = new Popup(DOMPurify.sanitize(buildSidePromptSetEditorHtml(set, templates)), POPUP_TYPE.TEXT, '', withGoBackButton({
         okButton: set ? translate('Save') : translate('Create'),
         cancelButton: translate('Cancel'),
@@ -4295,7 +4395,35 @@ async function promptSidePromptLorebookTargetScope() {
     return null;
 }
 
+function buildMemoryAssistanceEditorHtml(template) {
+    const settings = template?.settings && typeof template.settings === 'object' ? template.settings : {};
+    const overrideProfileIndex = Number.isFinite(Number(settings.overrideProfileIndex))
+        ? Number(settings.overrideProfileIndex)
+        : Number(stmbSettings.defaultProfile ?? 0);
+    return `
+        <div class="stmb-sideprompt-editor-popup">
+            <h3 data-i18n="STMemoryBooks_ClipReview_EditTitle">${escapeHtml(translate('Edit Memory Assistance', 'STMemoryBooks_ClipReview_EditTitle'))}</h3>
+            <div class="world_entry_form_control">
+                <label for="stmb-sp-editor-prompt"><h4 data-i18n="STMemoryBooks_ClipReview_UpdatePrompt">${escapeHtml(translate('Update prompt', 'STMemoryBooks_ClipReview_UpdatePrompt'))}</h4></label>
+                <textarea id="stmb-sp-editor-prompt" class="text_pole textarea_compact" rows="14">${escapeHtml(String(template?.prompt || ''))}</textarea>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-sp-editor-suggestions-prompt"><h4 data-i18n="STMemoryBooks_ClipSuggestions_Prompt">${escapeHtml(translate('Topic suggestions prompt', 'STMemoryBooks_ClipSuggestions_Prompt'))}</h4></label>
+                <textarea id="stmb-sp-editor-suggestions-prompt" class="text_pole textarea_compact" rows="12">${escapeHtml(String(settings.suggestionsPrompt || ''))}</textarea>
+            </div>
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-override-profile-enabled" ${settings.overrideProfileEnabled ? 'checked' : ''}> <span data-i18n="STMemoryBooks_ClipReview_ProfileOverride">${escapeHtml(translate('Override connection profile', 'STMemoryBooks_ClipReview_ProfileOverride'))}</span></label>
+            </div>
+            <div id="stmb-sp-editor-override-profile-container" class="world_entry_form_control" style="display:${settings.overrideProfileEnabled ? 'block' : 'none'}">
+                <label for="stmb-sp-editor-override-profile-index"><h4 data-i18n="Connection Profile:">Connection Profile:</h4></label>
+                <select id="stmb-sp-editor-override-profile-index" class="text_pole">${buildSidePromptProfileOptionsHtml(overrideProfileIndex)}</select>
+            </div>
+            <div class="info_block" data-i18n="STMemoryBooks_ClipReview_FixedContractHelp">${escapeHtml(translate('Update saves existing-Clip changes for approval. Update and Suggest first discovers new Topical Clip topics, then performs the same update review. Automatic directly applies ordinary Clip additions and leaves Topical Clip replacements for approval. Both response contracts remain fixed for safe validation.', 'STMemoryBooks_ClipReview_FixedContractHelp'))}</div>
+        </div>`;
+}
+
 function buildSidePromptEditorHtml(template = null, options = {}) {
+    if (template?.specialKind === 'clipReview') return buildMemoryAssistanceEditorHtml(template);
     const mode = String(options.mode || (template ? 'edit' : 'new'));
     const contextSettings = Array.isArray(options.contextSettings) ? options.contextSettings : [];
     const triggers = template?.triggers && typeof template.triggers === 'object' ? template.triggers : {};
@@ -4497,6 +4625,33 @@ async function readSidePromptEditorPayload(dialog, template = null) {
     const prompt = String(dialog?.querySelector('#stmb-sp-editor-prompt')?.value || '').trim();
     if (!prompt) {
         throw new Error('Prompt cannot be empty');
+    }
+
+    if (template?.specialKind === 'clipReview') {
+        const suggestionsPrompt = String(dialog?.querySelector('#stmb-sp-editor-suggestions-prompt')?.value || '').trim();
+        if (!suggestionsPrompt) throw new Error(translate('Prompt cannot be empty'));
+        const overrideProfileEnabled = Boolean(dialog?.querySelector('#stmb-sp-editor-override-profile-enabled')?.checked);
+        const settings = {
+            ...(template.settings || {}),
+            suggestionsPrompt,
+            overrideProfileEnabled,
+        };
+        if (overrideProfileEnabled) settings.overrideProfileIndex = Number(dialog?.querySelector('#stmb-sp-editor-override-profile-index')?.value || stmbSettings.defaultProfile || 0);
+        else delete settings.overrideProfileIndex;
+        return {
+            payload: {
+                key: CLIP_REVIEW_TEMPLATE_KEY,
+                name: 'Memory Assistance',
+                enabled: false,
+                specialKind: 'clipReview',
+                prompt,
+                responseFormat: '',
+                settings,
+                triggers: {},
+            },
+            strippedAutoTriggers: [],
+            targetOverride: null,
+        };
     }
 
     const name = String(dialog?.querySelector('#stmb-sp-editor-name')?.value || '').trim();
@@ -4737,6 +4892,15 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
         await notifyChange();
     });
 
+    popup.dlg?.addEventListener('change', async event => {
+        const modeSelect = event.target?.closest?.('.stmb-sp-special-mode');
+        if (!modeSelect) return;
+        stmbSettings.moduleSettings.memoryAssistanceMode = String(modeSelect.value || 'off');
+        stmbSettings = normalizeStmbSettings(stmbSettings);
+        saveSettingsDebounced();
+        await notifyChange();
+    });
+
     popup.dlg?.addEventListener('click', async event => {
         const target = event.target;
         if (!(target instanceof HTMLElement)) {
@@ -4826,6 +4990,16 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                     await refreshSidePromptCache();
                     window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
                     toastr.success(translate('Side prompt duplicated successfully'), 'STMB');
+                } else if (actionButton.classList.contains('stmb-sp-action-reset')) {
+                    const confirmed = await Popup.show.confirm(
+                        translate('Reset Prompt', 'STMemoryBooks_ClipReview_ResetPrompt'),
+                        translate('This resets only Memory Assistance to its built-in prompts and settings. The current mode is kept. This action cannot be undone.', 'STMemoryBooks_ClipReview_ResetWarning'),
+                    );
+                    if (!confirmed) return;
+                    await recreateBuiltInSidePrompt(selectedTemplateKey);
+                    await refreshSidePromptCache();
+                    window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
+                    toastr.success(translate('Reset Prompt', 'STMemoryBooks_ClipReview_ResetPrompt'), 'STMB');
                 } else if (actionButton.classList.contains('stmb-sp-action-delete')) {
                     const templateName = String(row?.querySelector('td')?.textContent || '').trim() || 'this template';
                     const confirmPopup = new Popup(
@@ -5618,6 +5792,17 @@ async function showMainEntryPopup(view = 'main', options = {}) {
                 classes: ['menu_button'],
                 action: async () => {
                     await showTopicalClipPopup({ showGoBack: true });
+                },
+            },
+            {
+                text: translate('Memory Assistance Suggestions', 'STMemoryBooks_ClipReview_SuggestionsTitle'),
+                classes: ['menu_button'],
+                action: async () => {
+                    try {
+                        await showClipReviewSuggestionsPopup({ showGoBack: true });
+                    } catch {
+                        toastr.error(translate('Failed to open Memory Assistance Suggestions', 'STMemoryBooks_ClipReview_OpenFailed'), 'STMB');
+                    }
                 },
             },
             {
@@ -7653,6 +7838,12 @@ function configureClipRuntime() {
         getProfile: getCompactionProfileForRuntime,
         buildGenerateData: async (messages, profile) => buildStmbGenerateData(messages, profile),
     });
+    configureStmbClipReviewRuntime({
+        getSettings: () => stmbSettings,
+        translate,
+        getProfile: getCompactionProfileForRuntime,
+        buildGenerateData: async (messages, profile) => buildStmbGenerateData(messages, profile),
+    });
 }
 
 function migrateStmbLorebookReferenceValue(value, oldName, newName = '') {
@@ -9092,6 +9283,25 @@ async function applyManualFixedMemoryJson(correctedRaw, context) {
                 }
             }
 
+            try {
+                const queuedProfile = await snapshotStmbProfileConnection(context.profile);
+                for (const job of buildQueuedMemoryAssistanceJobs({
+                    lorebookNames: [
+                        context.lorebookName,
+                        ...(saved?.entries || []).map(entry => entry?.lorebookName),
+                    ],
+                    compiledScene: context.compiledScene,
+                    range: context.range,
+                    settings: stmbSettings,
+                    profile: queuedProfile,
+                    sceneContext: context.sceneContext || null,
+                })) {
+                    enqueueStmbJob(job);
+                }
+            } catch (error) {
+                if (!isStmbAbortError(error)) console.warn('STMB Memory Assistance planning after manual repair failed');
+            }
+
             await maybePromptAutoConsolidation(1, {
                 sceneContext: context.sceneContext || null,
                 lorebookName: context.lorebookName,
@@ -9215,6 +9425,24 @@ async function executeMemoryJob(job, context) {
             sceneContext: job?.sceneContext || null,
             lorebookName,
         });
+        try {
+            const savedLorebookNames = [
+                lorebookName,
+                ...(saved?.entries || []).map(entry => entry?.lorebookName),
+            ];
+            for (const assistanceJob of buildQueuedMemoryAssistanceJobs({
+                lorebookNames: savedLorebookNames,
+                compiledScene,
+                range,
+                settings: requestSettings,
+                profile,
+                sceneContext: job?.sceneContext || null,
+            })) {
+                enqueueStmbJob(assistanceJob);
+            }
+        } catch (error) {
+            if (!isStmbAbortError(error)) console.warn('STMB Memory Assistance planning after memory save failed');
+        }
         return;
     }
 
@@ -9473,6 +9701,18 @@ async function executeMemoryCreationFromRange(range, options = {}) {
     } catch (error) {
         console.warn('STMB after-memory side prompt planning failed', error);
     }
+    const memoryAssistanceLorebookNames = [
+        lorebookName,
+        ...(manualGroupSnapshot ? buildManualGroupCopyTargets(manualGroupSnapshot, lorebookName).map(target => target.lorebookName) : []),
+    ];
+    const memoryAssistanceJobs = buildQueuedMemoryAssistanceJobs({
+        lorebookNames: memoryAssistanceLorebookNames,
+        compiledScene,
+        range,
+        settings: requestSettings,
+        profile: queuedProfile,
+        sceneContext,
+    });
     enqueueStmbJob({
         id: memoryJobId,
         type: 'memory',
@@ -9499,6 +9739,17 @@ async function executeMemoryCreationFromRange(range, options = {}) {
             ...job,
             dependsOnJobId: memoryJobId,
             parentJobOrder,
+            payload: {
+                ...(job.payload || {}),
+                dependsOnJobId: memoryJobId,
+            },
+        });
+    }
+    for (const [index, job] of memoryAssistanceJobs.entries()) {
+        enqueueStmbJob({
+            ...job,
+            dependsOnJobId: memoryJobId,
+            parentJobOrder: afterMemoryJobs.length + index,
             payload: {
                 ...(job.payload || {}),
                 dependsOnJobId: memoryJobId,

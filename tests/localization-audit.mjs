@@ -26,6 +26,8 @@ const REQUIRED_STMB_PROMPT_KEYS = [
         .flatMap(key => [`STMemoryBooks_${key}Prompt`, `STMemoryBooks_${key}ResponseFormat`]),
     'STMemoryBooks_Compaction_DefaultPrompt',
     'STMemoryBooks_TopicalClip_DefaultPrompt',
+    'STMemoryBooks_ClipReview_DefaultPrompt',
+    'STMemoryBooks_ClipSuggestions_DefaultPrompt',
 ];
 const PROTECTED_BRANDS = [
     'Aikobots', 'STMB', 'Memory Books', 'Data Maid', 'SillyTavern', 'OpenAI', 'Anthropic',
