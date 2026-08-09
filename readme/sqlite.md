@@ -1014,6 +1014,8 @@ Base-memory saves fall back to the existing logical JSONL reader when the refere
 
 ### STMB entry regeneration
 
+Regeneration runs as a core STMB client job so it is serialized with other Memory Books work and appears in the job queue. The queued record contains only the lorebook name, entry UID, and chat identity; the executor re-reads the entry instead of storing lorebook content in queue state.
+
 Base-memory regeneration always captures its original message range through the server-side SQLite range reader, including rows outside the browser's loaded window. Capture metadata includes the current `chatRevision`. The replacement request supplies that revision plus a full target-entry hash; consolidation regeneration also supplies the explicit source UIDs and full source-entry hashes.
 
 Every STMB lorebook endpoint that creates or updates entries holds the cross-worker lorebook mutation lock across the complete read-modify-write operation. This includes base memories, consolidations, individual entry creation and updates, and single or batched Side Prompt upserts; serializing only their final whole-file save would allow a later worker to overwrite an earlier worker's mutation with a stale read.

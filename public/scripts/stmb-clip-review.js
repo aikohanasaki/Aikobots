@@ -27,6 +27,7 @@ import {
     isReservedTemplateWorldName,
     loadWorldInfo,
     world_names,
+    worldInfoCache,
 } from './world-info.js';
 
 let runtime = {};
@@ -146,6 +147,7 @@ async function saveReport(lorebookName, compiledScene, candidates, status, detai
             metadataUpdates: { [CLIP_REVIEW_METADATA_KEY]: metadata },
             entryOverrides: { disable: true, constant: false, vectorized: false, selective: true, preventRecursion: true, delayUntilRecursion: false },
         });
+        worldInfoCache.delete(lorebookName);
         return;
     }
     await createStmbEntry({
@@ -157,6 +159,7 @@ async function saveReport(lorebookName, compiledScene, candidates, status, detai
         defaults: { vectorized: false, selective: true, order: 20, position: 0 },
         entryOverrides: { disable: true, constant: false, vectorized: false, selective: true, preventRecursion: true, delayUntilRecursion: false },
     });
+    worldInfoCache.delete(lorebookName);
 }
 
 async function selectRecords(context, records, mode) {

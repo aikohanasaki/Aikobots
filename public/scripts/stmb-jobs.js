@@ -218,6 +218,7 @@ function getJobTypeLabel(type = '') {
         case 'sidePromptBatch': return 'Side Prompt';
         case 'memoryAssistance': return 'Memory Assistance';
         case 'consolidation': return 'Consolidation';
+        case 'regeneration': return t`Regenerate memory`;
         case 'memory':
         default:
             return 'Memory';

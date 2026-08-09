@@ -1480,6 +1480,7 @@
     "The side-prompt message range could not be saved. Reload the chat and try again.": "Não foi possível guardar o intervalo de mensagens do prompt secundário. Recarregue a conversa e tente novamente.",
     "No capturable messages remain in the original range.": "Não restam mensagens capturáveis no intervalo original.",
     "Memory regeneration failed.": "A regeneração da memória falhou.",
+    "Regenerate memory": "Regenerar memória",
     "Locked Memory Book \"{{lorebookName}}\" is missing. Unlock this character to repair the assignment.": "O Livro de Memória bloqueado \"{{lorebookName}}\" está em falta. Desbloqueie esta personagem para reparar a atribuição.",
     "Unlock {{characterName}} from \"{{lorebookName}}\"": "Desbloquear {{characterName}} de \"{{lorebookName}}\"",
     "Select a valid character Memory Book before locking.": "Selecione um Livro de Memória de personagem válido antes de bloquear.",

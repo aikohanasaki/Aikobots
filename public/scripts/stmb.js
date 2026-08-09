@@ -111,6 +111,7 @@ import {
 import { buildConsolidationWorkItemPrompt } from './stmb-consolidation-work-item-policy.js';
 import { buildStmbGroupStloReconciliationTargets } from './stmb-group-stlo-policy.js';
 import {
+    buildRegenerationJobInput,
     buildRegenerationIndexes,
     getRegenerationEligibility,
     getRegenerationEntryByUid,
@@ -349,6 +350,8 @@ function getClientPlannerJobKind(job = {}) {
             return 'consolidationCheck';
         case 'memoryAssistance':
             return 'memoryAssistance';
+        case 'regeneration':
+            return 'regeneration';
         case 'memory':
         default:
             return 'memory';
@@ -1683,6 +1686,8 @@ function getPlannerJobLabel(job) {
         case 'memoryAssistanceTokenWarning':
         case 'memoryAssistance':
             return 'Memory Assistance';
+        case 'regeneration':
+            return translate('Regenerate memory');
         case 'chatAutoHide':
             return 'Chat auto-hide';
         default:
@@ -9426,13 +9431,15 @@ async function executeMemoryJob(job, context) {
             lorebookName,
         });
         try {
-            const savedLorebookNames = [
-                lorebookName,
-                ...(saved?.entries || []).map(entry => entry?.lorebookName),
-            ];
+            const savedLorebookNames = Array.isArray(payload.memoryAssistanceLorebookNames)
+                ? payload.memoryAssistanceLorebookNames
+                : [
+                    lorebookName,
+                    ...(manualGroupSnapshot ? buildManualGroupCopyTargets(manualGroupSnapshot, lorebookName).map(target => target.lorebookName) : []),
+                ];
             for (const assistanceJob of buildQueuedMemoryAssistanceJobs({
                 lorebookNames: savedLorebookNames,
-                compiledScene,
+                compiledScene: payload.compiledScene,
                 range,
                 settings: requestSettings,
                 profile,
@@ -9617,6 +9624,7 @@ function ensureStmbJobExecutorsRegistered() {
     }
     registerStmbJobExecutor('memory', executeMemoryJob);
     registerStmbJobExecutor('consolidation', executeConsolidationJob);
+    registerStmbJobExecutor('regeneration', executeRegenerationJob);
     stmbJobExecutorsRegistered = true;
 }
 
@@ -9701,18 +9709,19 @@ async function executeMemoryCreationFromRange(range, options = {}) {
     } catch (error) {
         console.warn('STMB after-memory side prompt planning failed', error);
     }
-    const memoryAssistanceLorebookNames = [
+    const memoryAssistanceLorebookCandidates = [
         lorebookName,
         ...(manualGroupSnapshot ? buildManualGroupCopyTargets(manualGroupSnapshot, lorebookName).map(target => target.lorebookName) : []),
     ];
     const memoryAssistanceJobs = buildQueuedMemoryAssistanceJobs({
-        lorebookNames: memoryAssistanceLorebookNames,
+        lorebookNames: memoryAssistanceLorebookCandidates,
         compiledScene,
         range,
         settings: requestSettings,
         profile: queuedProfile,
         sceneContext,
     });
+    const memoryAssistanceLorebookNames = memoryAssistanceJobs.map(job => job.lorebookName);
     enqueueStmbJob({
         id: memoryJobId,
         type: 'memory',
@@ -9732,6 +9741,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
             keepSceneMarkers: Boolean(options.keepSceneMarkers),
             source: options.source || 'memory',
             manualGroupSnapshot,
+            memoryAssistanceLorebookNames,
         },
     });
     for (const [parentJobOrder, job] of afterMemoryJobs.entries()) {
@@ -10948,6 +10958,7 @@ async function buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eli
     };
     const effectiveSettings = await showAndGetMemorySettings(compiledScene, range, lorebookName);
     if (!effectiveSettings) return null;
+    task.setState?.('generating', { detail: effectiveSettings.profileSettings?.name || lorebookName });
     const previous = selectPreviousRegenerationMemories(lorebookData, entry.uid, effectiveSettings.summaryCount);
     const previousWorldInfo = {
         entries: Object.fromEntries(previous.summaries.map(memory => [memory.uid, {
@@ -11013,6 +11024,7 @@ async function buildConsolidationRegenerationDraft(lorebookData, eligibility, ta
     await firstRunInitArcPromptPresets(stmbSettings);
     const indexes = buildRegenerationIndexes(lorebookData);
     const sources = eligibility.sourceUids.map(uid => getRegenerationEntryByUid(lorebookData, uid, indexes));
+    task.setState?.('generating', { detail: getSummaryTierLabel(eligibility.tier) });
     const analysis = await runSequentialSummaryAnalysis(sources, {
         presetKey: CONSOLIDATION_REGENERATION_PRESET_KEY,
         maxItemsPerPass: sources.length,
@@ -11069,6 +11081,7 @@ async function buildSidePromptRegenerationDraft(lorebookName, lorebookData, entr
         }
         throw new Error(translate('No capturable messages remain in the original range.'));
     }
+    task.setState?.('generating', { detail: lorebookName });
     const content = await generateSidePromptFromSnapshot({
         snapshot,
         lorebookName,
@@ -11092,17 +11105,18 @@ async function buildSidePromptRegenerationDraft(lorebookName, lorebookData, entr
     };
 }
 
-async function handleLorebookEntryRegeneration(button) {
-    if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(buildStmbSceneContext()))) {
-        toastr.warning(translate('STMB generation is already in progress.'), 'STMB');
-        return;
+async function executeRegenerationJob(job, context) {
+    const lorebookName = String(job?.lorebookName || '').trim();
+    const entryUid = String(job?.payload?.entryUid || '').trim();
+    if (!lorebookName || !entryUid) {
+        throw new Error('Memory regeneration job is missing its target.');
     }
-    const lorebookName = String(button?.dataset?.lorebookName || '').trim();
-    const entryUid = String(button?.dataset?.entryUid || '').trim();
-    if (!lorebookName || !entryUid || getLorebookStorageForRequest(lorebookName) !== 'user') return;
-    const task = createStmbTask(`STMB:regenerate:${lorebookName}:${entryUid}`);
-    button.disabled = true;
+    if (getLorebookStorageForRequest(lorebookName) !== 'user') {
+        throw new Error('Memory regeneration supports only ordinary user lorebooks.');
+    }
+
     try {
+        context.setState('capturing_scene', { detail: lorebookName });
         const lorebookData = await loadWorldInfo(lorebookName);
         const entry = getRegenerationEntryByUid(lorebookData, entryUid);
         const eligibility = getRegenerationEligibility(entry, lorebookData);
@@ -11110,12 +11124,16 @@ async function handleLorebookEntryRegeneration(button) {
         const targetHash = hashRegenerationEntry(entry);
         const linkedLorebooks = await findLinkedManualGroupLorebooks(lorebookName, entry);
         const draft = eligibility.kind === 'memory'
-            ? await buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eligibility, task)
+            ? await buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eligibility, context)
             : eligibility.kind === 'sidePrompt'
-                ? await buildSidePromptRegenerationDraft(lorebookName, lorebookData, entry, eligibility, task)
-                : await buildConsolidationRegenerationDraft(lorebookData, eligibility, task);
-        if (!draft) return;
-        throwIfStmbAborted(task.signal);
+                ? await buildSidePromptRegenerationDraft(lorebookName, lorebookData, entry, eligibility, context)
+                : await buildConsolidationRegenerationDraft(lorebookData, eligibility, context);
+        if (!draft) {
+            context.patch({ state: 'canceled', detail: 'Canceled before generation' });
+            return;
+        }
+        throwIfStmbAborted(context.signal);
+        context.setState('awaiting_approval', { detail: lorebookName });
         const review = await showRegenerationReviewPopup({
             originalEntry: entry,
             generatedTitle: draft.generatedTitle,
@@ -11125,8 +11143,12 @@ async function handleLorebookEntryRegeneration(button) {
             linkedLorebooks,
             contentOnly: draft.contentOnly === true,
         });
-        if (review.action !== 'replace') return;
-        throwIfStmbAborted(task.signal);
+        if (review.action !== 'replace') {
+            context.patch({ state: 'canceled', detail: 'Canceled in approval' });
+            return;
+        }
+        throwIfStmbAborted(context.signal);
+        context.setState('saving', { detail: lorebookName });
         await regenerateStmbEntry({
             lorebookName,
             storage: 'user',
@@ -11145,10 +11167,11 @@ async function handleLorebookEntryRegeneration(button) {
             chatRef: draft.chatRef,
             currentChatId: draft.currentChatId,
             expectedChatRevision: draft.expectedChatRevision,
-        }, { signal: task.signal });
+        }, { signal: context.signal });
         worldInfoCache.delete(lorebookName);
         void refreshStmbMacroCache(lorebookName);
         await Promise.resolve(reloadEditor(lorebookName));
+        context.setResult({ lorebookName, uid: entryUid, kind: eligibility.kind });
         toastr.success(eligibility.kind === 'sidePrompt'
             ? translate('Side prompt regenerated successfully.')
             : translate('Memory regenerated successfully.'), 'STMB');
@@ -11160,9 +11183,27 @@ async function handleLorebookEntryRegeneration(button) {
                     ? translate('The regenerated side prompt was blank. Nothing was overwritten.')
                     : error?.message || translate('Memory regeneration failed.');
             toastr.error(message, 'STMB');
+            if (error && typeof error === 'object') error.stmbToastrShown = true;
         }
+        throw error;
+    }
+}
+
+function handleLorebookEntryRegeneration(button) {
+    const sceneContext = buildStmbSceneContext();
+    if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(sceneContext))) {
+        toastr.warning(translate('STMB generation is already in progress.'), 'STMB');
+        return;
+    }
+    const lorebookName = String(button?.dataset?.lorebookName || '').trim();
+    const entryUid = String(button?.dataset?.entryUid || '').trim();
+    if (!lorebookName || !entryUid || getLorebookStorageForRequest(lorebookName) !== 'user') return;
+    button.disabled = true;
+    try {
+        enqueueStmbJob(buildRegenerationJobInput({ lorebookName, entryUid, sceneContext }));
+    } catch (error) {
+        toastr.error(error?.message || translate('Memory regeneration failed.'), 'STMB');
     } finally {
-        task.cleanup();
         button.disabled = false;
     }
 }

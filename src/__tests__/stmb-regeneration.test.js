@@ -7,6 +7,7 @@ import {
 } from '../../public/scripts/stmb-summary.js';
 import {
     applyRegenerationReplacement,
+    buildRegenerationJobInput,
     buildSidePromptRegenerationSnapshot,
     buildRegenerationIndexes,
     getRegenerationEligibility,
@@ -31,6 +32,21 @@ function memory(uid, number, overrides = {}) {
 }
 
 describe('STMB regeneration eligibility and replacement', () => {
+    it('builds a content-free regeneration queue job', () => {
+        const sceneContext = { chatId: 'chat-1', chatRef: { type: 'character', fileName: 'chat-1' } };
+        expect(buildRegenerationJobInput({
+            lorebookName: ' Book ',
+            entryUid: ' 8 ',
+            sceneContext,
+        })).toEqual({
+            type: 'regeneration',
+            lorebookName: 'Book',
+            sceneContext,
+            payload: { entryUid: '8' },
+        });
+        expect(() => buildRegenerationJobInput({ lorebookName: 'Book' })).toThrow(/entry UID/);
+    });
+
     it('stores and validates the exact side-prompt regeneration inputs', () => {
         const runtimeMacros = { npc: 'Alice', score: 4 };
         const snapshot = buildSidePromptRegenerationSnapshot({

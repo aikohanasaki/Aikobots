@@ -13,6 +13,21 @@ const SIDE_PROMPT_TITLE_SUFFIXES = [
     ' (STMB Tracker)',
 ];
 
+/** Builds the content-free queue record for one regeneration request. */
+export function buildRegenerationJobInput({ lorebookName, entryUid, sceneContext } = {}) {
+    const normalizedLorebookName = String(lorebookName || '').trim();
+    const normalizedEntryUid = String(entryUid || '').trim();
+    if (!normalizedLorebookName || !normalizedEntryUid) {
+        throw new Error('Memory regeneration requires a lorebook and entry UID.');
+    }
+    return {
+        type: 'regeneration',
+        lorebookName: normalizedLorebookName,
+        sceneContext,
+        payload: { entryUid: normalizedEntryUid },
+    };
+}
+
 /** Returns whether an entry title belongs to a side-prompt output. */
 export function isSidePromptRegenerationEntry(entry) {
     const title = String(entry?.comment || entry?.title || '').trimEnd();

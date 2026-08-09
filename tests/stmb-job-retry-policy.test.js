@@ -9,13 +9,20 @@ import {
 } from '../public/scripts/stmb-job-retry-policy.js';
 
 test('saved memory retries resume post-save without generating a duplicate memory', () => {
+    const compiledScene = { metadata: { chatId: 'chat' }, messages: [{ id: 1, mes: 'Scene' }] };
     const payload = buildStmbRetryPayload({
         type: 'memory',
-        payload: { range: { sceneStart: 1, sceneEnd: 3 } },
+        payload: {
+            range: { sceneStart: 1, sceneEnd: 3 },
+            compiledScene,
+            memoryAssistanceLorebookNames: ['Book', 'Character Book'],
+        },
         result: { lorebookName: 'Book', uid: 7 },
     });
 
     assert.deepEqual(payload.resumePostSaveResult, { lorebookName: 'Book', uid: 7 });
+    assert.deepEqual(payload.compiledScene, compiledScene);
+    assert.deepEqual(payload.memoryAssistanceLorebookNames, ['Book', 'Character Book']);
 });
 
 test('retry-all collects only canceled dependents in original queue order', () => {

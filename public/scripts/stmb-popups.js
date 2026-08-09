@@ -105,25 +105,30 @@ export async function showRegenerationReviewPopup({
         if (finalTitleInput) finalTitleInput.value = formatTitle?.(titleInput.value) || titleInput.value;
     });
 
-    if (await popup.show() !== POPUP_RESULT.AFFIRMATIVE) {
-        return { action: 'cancel' };
+    activePreviewPopups.add(popup);
+    try {
+        if (await popup.show() !== POPUP_RESULT.AFFIRMATIVE) {
+            return { action: 'cancel' };
+        }
+        const title = contentOnly
+            ? String(originalEntry?.comment || '').trim()
+            : String(finalTitleInput?.value || '').trim();
+        const content = String(popup.dlg?.querySelector('#stmb-regeneration-content')?.value || '').trim();
+        if (!title || !content) {
+            toastr.error(translate('Title and content are required.'), 'STMB');
+            return { action: 'cancel' };
+        }
+        return {
+            action: 'replace',
+            title,
+            content,
+            keywords: contentOnly
+                ? (Array.isArray(originalEntry?.key) ? [...originalEntry.key] : [])
+                : parseKeywords(popup.dlg?.querySelector('#stmb-regeneration-keywords')?.value),
+        };
+    } finally {
+        activePreviewPopups.delete(popup);
     }
-    const title = contentOnly
-        ? String(originalEntry?.comment || '').trim()
-        : String(finalTitleInput?.value || '').trim();
-    const content = String(popup.dlg?.querySelector('#stmb-regeneration-content')?.value || '').trim();
-    if (!title || !content) {
-        toastr.error(translate('Title and content are required.'), 'STMB');
-        return { action: 'cancel' };
-    }
-    return {
-        action: 'replace',
-        title,
-        content,
-        keywords: contentOnly
-            ? (Array.isArray(originalEntry?.key) ? [...originalEntry.key] : [])
-            : parseKeywords(popup.dlg?.querySelector('#stmb-regeneration-keywords')?.value),
-    };
 }
 
 function truncatePreviewText(text, maxLength = 180) {

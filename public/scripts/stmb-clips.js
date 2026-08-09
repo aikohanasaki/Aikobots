@@ -7,6 +7,7 @@ import { createStmbEntry, generateStmbText, updateStmbEntryByUid } from './stmb-
 import { compiledSceneToText, STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
 import { syncStmbLocalizedPromptFields } from './stmb-prompt-default-migration.js';
+import { matchesClipReviewTargetIdentity } from './stmb-clip-review-policy.js';
 import { isSidePromptEntryTitle } from './stmb-sideprompts.js';
 import { escapeHtml, withGoBackButton } from './utils.js';
 import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
@@ -1906,6 +1907,12 @@ export async function applyClipReviewSuggestion(lorebookName, candidate, options
     const entry = findEntryByUid(lorebookData, candidate?.uid);
     if (!entry) throw new Error(tr('The suggested Clip no longer exists.', 'STMemoryBooks_ClipReview_TargetMissing'));
     if (!isClipEntryTitle(entry.comment || '')) throw new Error(tr('The suggestion target is no longer an STMB Clip.', 'STMemoryBooks_ClipReview_TargetNotClip'));
+    const expectedTitle = String(candidate?.title || '');
+    if (!expectedTitle || !matchesClipReviewTargetIdentity(entry, expectedTitle, '')) {
+        const error = new Error(tr('The Clip changed after this review. Run Memory Assistance again before applying the suggestion.', 'STMemoryBooks_ClipReview_TargetChanged'));
+        error.code = 'CLIP_REVIEW_TARGET_CHANGED';
+        throw error;
+    }
 
     const actualType = getTopicalClipMetadata(entry) ? 'topical' : 'ordinary';
     if (candidate?.type !== actualType) {
@@ -1943,7 +1950,7 @@ export async function applyClipReviewSuggestion(lorebookName, candidate, options
     await updateLorebookEntryByUid(lorebookName, lorebookData, entry, {
         content,
         expectedContentHash: candidate.contentHash || stableHashString(entry.content || ''),
-        expectedTitle: String(entry.comment || ''),
+        expectedTitle,
         expectedClipType: candidate.type,
         metadataUpdates,
     });
@@ -2326,7 +2333,7 @@ export async function showTopicalClipPopup(options = {}) {
         const sourceEntries = includeMemories ? (selectedSourceMemoryKeys
             ? baseSourceEntries.filter(entry => selectedSourceMemoryKeys.has(getTopicalSourceSelectionKey(entry)))
             : baseSourceEntries) : [];
-        if (includeMemories && sourceEntries.length === 0) {
+        if (includeMemories && sourceEntries.length === 0 && !includeMessages) {
             const noSelectionMessage = tr('No selected source memories are available for this Topical Clip.');
             toastr.error(noSelectionMessage, 'STMB');
             renderDiagnostics(noSelectionMessage);
