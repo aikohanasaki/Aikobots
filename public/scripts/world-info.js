@@ -7818,7 +7818,14 @@ export async function assignLorebookToChat(event) {
         }
     });
 
-    await callGenericPopup(template, POPUP_TYPE.TEXT);
+    await callGenericPopup(template, POPUP_TYPE.TEXT, '', {
+        onOpen: popup => worldSelect.select2({
+            width: '100%',
+            minimumResultsForSearch: 0,
+            searchInputPlaceholder: t`Search...`,
+            dropdownParent: $(popup.dlg),
+        }),
+    });
 }
 
 /**
