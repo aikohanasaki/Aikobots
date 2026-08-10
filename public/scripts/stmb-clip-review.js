@@ -279,9 +279,10 @@ async function executeMemoryAssistanceJob(job, context) {
         failedBatchCount,
         suggestionPassRequested: suggestTopics,
         suggestionPassSucceeded,
+        suggestionPassFailed,
     })) {
         context.setResult({ type: 'memoryAssistance', status: 'failed_preserved', mode, candidateCount: 0 });
-        return;
+        throw new Error(tr('A Memory Assistance batch failed.', 'STMemoryBooks_ClipReview_BatchFailed'));
     }
 
     let pendingCandidates = candidates;

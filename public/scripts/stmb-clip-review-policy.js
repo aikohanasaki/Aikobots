@@ -103,10 +103,10 @@ export function packClipReviewBatches(records, sceneText, tokenLimit, reserveTok
     return batches;
 }
 
-export function shouldPreserveClipReviewReport({ batchCount = 0, failedBatchCount = 0, suggestionPassRequested = false, suggestionPassSucceeded = false } = {}) {
-    return batchCount > 0
-        && failedBatchCount === batchCount
-        && (!suggestionPassRequested || !suggestionPassSucceeded);
+export function shouldPreserveClipReviewReport({ batchCount = 0, failedBatchCount = 0, suggestionPassRequested = false, suggestionPassSucceeded = false, suggestionPassFailed = false } = {}) {
+    const allReviewBatchesFailed = batchCount > 0 && failedBatchCount === batchCount;
+    const topicOnlyPassFailed = batchCount === 0 && suggestionPassRequested && suggestionPassFailed;
+    return (allReviewBatchesFailed && (!suggestionPassRequested || !suggestionPassSucceeded)) || topicOnlyPassFailed;
 }
 
 function stripJsonFence(text) {

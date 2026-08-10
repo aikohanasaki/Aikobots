@@ -53,9 +53,24 @@ test('packs records without dropping an oversized record', () => {
     assert.deepEqual(packClipReviewBatches(records, 'scene', 1500, 1000).flat().map(item => item.uid), [1, 2, 3]);
 });
 
-test('preserves the previous report only when every requested operation fails', () => {
+test('fails the run while preserving the previous report when every requested operation fails', () => {
     assert.equal(shouldPreserveClipReviewReport({ batchCount: 2, failedBatchCount: 2 }), true);
     assert.equal(shouldPreserveClipReviewReport({ batchCount: 2, failedBatchCount: 1 }), false);
+    assert.equal(shouldPreserveClipReviewReport({
+        batchCount: 0,
+        suggestionPassRequested: true,
+        suggestionPassFailed: true,
+    }), true);
+    assert.equal(shouldPreserveClipReviewReport({
+        batchCount: 0,
+        suggestionPassRequested: true,
+    }), false);
+    assert.equal(shouldPreserveClipReviewReport({
+        batchCount: 2,
+        failedBatchCount: 2,
+        suggestionPassRequested: true,
+        suggestionPassSucceeded: true,
+    }), false);
 });
 
 test('renders persisted ordinary candidates without additions', () => {
