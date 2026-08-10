@@ -6157,6 +6157,7 @@
   ,"STMemoryBooks_ClipReview_FoundUpdates": "Memory Assistance hat {{updateMessage}} gefunden."
   ,"STMemoryBooks_ClipReview_ResetPrompt": "Prompt zurücksetzen"
   ,"STMemoryBooks_ClipReview_ResetWarning": "Dadurch wird nur Memory Assistance auf die integrierten Prompts und Einstellungen zurückgesetzt. Der aktuelle Modus bleibt unverändert. Diese Aktion kann nicht rückgängig gemacht werden."
+  ,"STMemoryBooks_ClipReview_ResetSuccess": "Die Prompts der Memory Assistance wurden zurückgesetzt."
   ,"STMemoryBooks_TopicalClip_SourceTypes": "Quellen"
   ,"STMemoryBooks_TopicalClip_IncludeMemories": "Gespeicherte Erinnerungen einbeziehen"
   ,"STMemoryBooks_TopicalClip_IncludeMessages": "Chatnachrichten einbeziehen"

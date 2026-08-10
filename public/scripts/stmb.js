@@ -5011,7 +5011,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                     await recreateBuiltInSidePrompt(selectedTemplateKey);
                     await refreshSidePromptCache();
                     window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
-                    toastr.success(translate('Reset Prompt', 'STMemoryBooks_ClipReview_ResetPrompt'), 'STMB');
+                    toastr.success(translate('Memory Assistance prompts reset.', 'STMemoryBooks_ClipReview_ResetSuccess'), 'STMB');
                 } else if (actionButton.classList.contains('stmb-sp-action-delete')) {
                     const templateName = String(row?.querySelector('td')?.textContent || '').trim() || 'this template';
                     const confirmPopup = new Popup(

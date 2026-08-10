@@ -6217,6 +6217,7 @@
   ,"STMemoryBooks_ClipReview_FoundUpdates": "L’Aide à la mémoire a trouvé {{updateMessage}}."
   ,"STMemoryBooks_ClipReview_ResetPrompt": "Réinitialiser le prompt"
   ,"STMemoryBooks_ClipReview_ResetWarning": "Seule l’Aide à la mémoire sera réinitialisée avec ses prompts et paramètres intégrés. Le mode actuel ne changera pas. Cette action est irréversible."
+  ,"STMemoryBooks_ClipReview_ResetSuccess": "Les prompts de l’Aide à la mémoire ont été réinitialisés."
   ,"STMemoryBooks_TopicalClip_SourceTypes": "Sources"
   ,"STMemoryBooks_TopicalClip_IncludeMemories": "Inclure les Mémoires enregistrées"
   ,"STMemoryBooks_TopicalClip_IncludeMessages": "Inclure les messages du chat"

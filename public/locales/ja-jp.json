@@ -6160,6 +6160,7 @@
   ,"STMemoryBooks_ClipReview_FoundUpdates": "記憶補助が{{updateMessage}}を見つけました。"
   ,"STMemoryBooks_ClipReview_ResetPrompt": "プロンプトをリセット"
   ,"STMemoryBooks_ClipReview_ResetWarning": "記憶補助だけを組み込みのプロンプトと設定にリセットします。現在のモードは変更されません。この操作は元に戻せません。"
+  ,"STMemoryBooks_ClipReview_ResetSuccess": "記憶補助のプロンプトをリセットしました。"
   ,"STMemoryBooks_TopicalClip_SourceTypes": "ソース"
   ,"STMemoryBooks_TopicalClip_IncludeMemories": "保存済みメモリを含める"
   ,"STMemoryBooks_TopicalClip_IncludeMessages": "チャットメッセージを含める"
