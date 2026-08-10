@@ -171,6 +171,8 @@ test('review target identity rejects title and Clip-type drift', () => {
     const topical = { ...ordinary, data: { extensions: { aikobots: { topical_clip: { version: 2 } } } } };
     assert.equal(matchesClipReviewTargetIdentity(ordinary, ordinary.comment, 'ordinary'), true);
     assert.equal(matchesClipReviewTargetIdentity(topical, ordinary.comment, 'topical'), true);
+    assert.equal(matchesClipReviewTargetIdentity({ comment: ' Facts [STMB Clip] ' }, ' Facts [STMB Clip] ', 'ordinary'), true);
+    assert.equal(matchesClipReviewTargetIdentity({ comment: ' Facts [STMB Clip] ' }, 'Facts [STMB Clip]', 'ordinary'), false);
     assert.equal(matchesClipReviewTargetIdentity(ordinary, 'Renamed [STMB Clip]', 'ordinary'), false);
     assert.equal(matchesClipReviewTargetIdentity(topical, ordinary.comment, 'ordinary'), false);
 });

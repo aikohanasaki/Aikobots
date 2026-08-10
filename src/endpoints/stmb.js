@@ -1658,7 +1658,7 @@ router.post('/update-entry-by-uid', async (request, response) => {
         : String(request.body.expectedContentHash || '').trim();
     const expectedTitle = request.body?.expectedTitle === undefined || request.body?.expectedTitle === null
         ? ''
-        : String(request.body.expectedTitle || '').trim();
+        : String(request.body.expectedTitle || '');
     const expectedClipType = String(request.body?.expectedClipType || '').trim();
     const metadataUpdates = request.body?.metadataUpdates || {};
     const entryOverrides = request.body?.entryOverrides || {};
