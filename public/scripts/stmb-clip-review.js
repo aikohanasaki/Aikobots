@@ -10,11 +10,13 @@ import {
     MEMORY_ASSISTANCE_MODE_AUTOMATIC,
     MEMORY_ASSISTANCE_MODE_OFF,
     MEMORY_ASSISTANCE_MODE_UPDATE_AND_SUGGEST,
+    applyAutomaticClipReviewCandidates,
     makeClipReviewRecord,
     normalizeMemoryAssistanceMode,
     packClipReviewBatches,
     parseClipReviewResponse,
     parseClipSuggestionsResponse,
+    rebuildOrdinaryClipAdditions,
     renderClipReviewReport,
     shouldPreserveClipReviewReport,
 } from './stmb-clip-review-policy.js';
@@ -88,10 +90,10 @@ ${compiledSceneToText(compiledScene)}
 ${JSON.stringify(existing, null, 2)}
 
 === REQUIRED JSON RESPONSE ===
-Return one JSON object with a "topics" array containing zero to five new Topical Clip suggestions.
+${tr(`Return one JSON object with a "topics" array containing zero to five new Topical Clip suggestions.
 Each item must contain "topic" as a non-empty string and "keywords" as an array of activation-keyword strings.
 If no new topics are needed, return {"topics":[]}.
-Return only JSON. Do not return Markdown fences, reasons, message IDs, or explanations.`;
+Return only JSON. Do not return Markdown fences, reasons, message IDs, or explanations.`, 'STMemoryBooks_ClipSuggestions_ResponseContract')}`;
 }
 
 async function requestText(prompt, profile, signal) {
@@ -230,6 +232,7 @@ async function executeMemoryAssistanceJob(job, context) {
     let suggestionPassSucceeded = !suggestTopics;
     let suggestionPassCompleted = false;
     let suggestionPassFailed = false;
+    let suggestionPassDeclined = false;
     const threshold = Math.max(1000, Number(payload.tokenWarningThreshold) || 50000);
     if (suggestTopics) {
         try {
@@ -243,7 +246,7 @@ async function executeMemoryAssistanceJob(job, context) {
                 suggestionPassSucceeded = true;
                 suggestionPassCompleted = true;
             } else {
-                suggestionPassFailed = true;
+                suggestionPassDeclined = true;
             }
         } catch (error) {
             if (context.signal?.aborted) throw error;
@@ -287,21 +290,16 @@ async function executeMemoryAssistanceJob(job, context) {
     let reviewCount = 0;
     let status = failedBatchCount > 0 || suggestionPassFailed ? 'partial' : 'complete';
     if (mode === MEMORY_ASSISTANCE_MODE_AUTOMATIC) {
-        pendingCandidates = [];
         status = 'automatic';
-        for (const candidate of candidates) {
-            if (candidate.type === 'topical') {
-                pendingCandidates.push(candidate);
-                reviewCount++;
-                continue;
-            }
-            try {
-                if (await applyClipReviewSuggestion(lorebookName, candidate, { skipLongEntryWarning: true })) appliedCount++;
-            } catch {
-                failedCount++;
-                pendingCandidates.push({ ...candidate, applyError: tr('Failed to apply the Clip suggestion.', 'STMemoryBooks_ClipReview_ApplyFailed') });
-            }
-        }
+        ({ pendingCandidates, appliedCount, failedCount, reviewCount } = await applyAutomaticClipReviewCandidates(
+            candidates,
+            candidate => applyClipReviewSuggestion(lorebookName, candidate, { skipLongEntryWarning: true }),
+            {
+                signal: context.signal,
+                applyError: tr('Failed to apply the Clip suggestion.', 'STMemoryBooks_ClipReview_ApplyFailed'),
+                onFailure: error => console.warn('STMB Memory Assistance automatic apply failed', error),
+            },
+        ));
     }
 
     context.setState('saving', { detail: tr('Memory Assistance', 'STMemoryBooks_ClipReview_Name') });
@@ -313,6 +311,7 @@ async function executeMemoryAssistanceJob(job, context) {
         topicSuggestions,
         suggestionPassCompleted,
         suggestionPassFailed,
+        suggestionPassDeclined,
     }, {
         expectedReportHash: priorReportHash,
         expectMissing: !priorReportEntry,
@@ -378,6 +377,7 @@ async function persistRemainingReport(lorebookName, metadata, expectedReportHash
         topicSuggestions: Array.isArray(metadata.topicSuggestions) ? metadata.topicSuggestions : [],
         suggestionPassCompleted: metadata.suggestionPassCompleted === true,
         suggestionPassFailed: metadata.suggestionPassFailed === true,
+        suggestionPassDeclined: metadata.suggestionPassDeclined === true,
     }, { expectedReportHash });
 }
 
@@ -457,7 +457,7 @@ export async function showClipReviewSuggestionsPopup(options = {}) {
             if (!candidate) return;
             if (event.target.closest('.stmb-clip-review-apply')) {
                 const edited = String(section.querySelector('.stmb-clip-review-draft')?.value || '').trim();
-                if (candidate.type === 'ordinary') candidate.additions = edited.split(/\r?\n/).map((text, index) => ({ ...(candidate.additions?.[index] || candidate.additions?.[0]), text: text.trim() })).filter(item => item.text);
+                if (candidate.type === 'ordinary') candidate.additions = rebuildOrdinaryClipAdditions(candidate, edited);
                 else candidate.proposedContent = edited;
                 if (!await applyClipReviewSuggestion(lorebookName, candidate)) return;
             } else if (!event.target.closest('.stmb-clip-review-dismiss')) return;
@@ -468,8 +468,10 @@ export async function showClipReviewSuggestionsPopup(options = {}) {
             }
             await persistRemainingReport(lorebookName, metadata, reportExpectedHash);
             await load(lorebookName);
-        } catch {
-            toastr.error(tr('Failed to apply the Clip suggestion.', 'STMemoryBooks_ClipReview_ApplyFailed'), 'STMB');
+        } catch (error) {
+            console.error('STMB Memory Assistance suggestion action failed', error);
+            toastr.error(error?.message || tr('Failed to apply the Clip suggestion.', 'STMemoryBooks_ClipReview_ApplyFailed'), 'STMB');
+            if (error?.code === 'CLIP_REVIEW_REPORT_CHANGED') await load(lorebookName);
         }
     });
     const select = popup.dlg?.querySelector('#stmb-clip-review-book');

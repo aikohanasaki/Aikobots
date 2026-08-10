@@ -13,6 +13,45 @@ const SIDE_PROMPT_TITLE_SUFFIXES = [
     ' (STMB Tracker)',
 ];
 
+/** Validates and strips a regeneration context down to chat identity fields. */
+function normalizeRegenerationSceneContext(sceneContext) {
+    if (!sceneContext || typeof sceneContext !== 'object' || Array.isArray(sceneContext)) {
+        throw new Error('Memory regeneration requires chat identity.');
+    }
+
+    const chatId = String(sceneContext.chatId || '').trim();
+    const chatRef = sceneContext.chatRef;
+    if (!chatId || !chatRef || typeof chatRef !== 'object' || Array.isArray(chatRef)) {
+        throw new Error('Memory regeneration requires chat identity.');
+    }
+
+    if (chatRef.type === 'group') {
+        const groupId = String(sceneContext.groupId || '').trim();
+        const referenceChatId = String(chatRef.chatId || '').trim();
+        if (!groupId || !referenceChatId || referenceChatId !== chatId) {
+            throw new Error('Memory regeneration requires valid group chat identity.');
+        }
+        return {
+            chatRef: { type: 'group', chatId: referenceChatId },
+            chatId,
+            groupId,
+        };
+    }
+
+    if (chatRef.type === 'character') {
+        const avatarUrl = String(chatRef.avatarUrl || '').trim();
+        const fileName = String(chatRef.fileName || '').trim();
+        if (!fileName || fileName !== chatId) {
+            throw new Error('Memory regeneration requires valid character chat identity.');
+        }
+        const normalizedChatRef = { type: 'character', fileName };
+        if (avatarUrl) normalizedChatRef.avatarUrl = avatarUrl;
+        return { chatRef: normalizedChatRef, chatId };
+    }
+
+    throw new Error('Memory regeneration requires a valid chat identity.');
+}
+
 /** Builds the content-free queue record for one regeneration request. */
 export function buildRegenerationJobInput({ lorebookName, entryUid, sceneContext } = {}) {
     const normalizedLorebookName = String(lorebookName || '').trim();
@@ -23,7 +62,7 @@ export function buildRegenerationJobInput({ lorebookName, entryUid, sceneContext
     return {
         type: 'regeneration',
         lorebookName: normalizedLorebookName,
-        sceneContext,
+        sceneContext: normalizeRegenerationSceneContext(sceneContext),
         payload: { entryUid: normalizedEntryUid },
     };
 }

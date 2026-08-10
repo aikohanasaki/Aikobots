@@ -33,7 +33,17 @@ function memory(uid, number, overrides = {}) {
 
 describe('STMB regeneration eligibility and replacement', () => {
     it('builds a content-free regeneration queue job', () => {
-        const sceneContext = { chatId: 'chat-1', chatRef: { type: 'character', fileName: 'chat-1' } };
+        const sceneContext = {
+            chatId: 'chat-1',
+            chatRef: {
+                type: 'character',
+                avatarUrl: 'alice.png',
+                fileName: 'chat-1',
+                content: 'nested entry content',
+            },
+            messages: [{ mes: 'chat content' }],
+            characterName: 'Alice',
+        };
         expect(buildRegenerationJobInput({
             lorebookName: ' Book ',
             entryUid: ' 8 ',
@@ -41,10 +51,31 @@ describe('STMB regeneration eligibility and replacement', () => {
         })).toEqual({
             type: 'regeneration',
             lorebookName: 'Book',
-            sceneContext,
+            sceneContext: {
+                chatId: 'chat-1',
+                chatRef: { type: 'character', avatarUrl: 'alice.png', fileName: 'chat-1' },
+            },
             payload: { entryUid: '8' },
         });
         expect(() => buildRegenerationJobInput({ lorebookName: 'Book' })).toThrow(/entry UID/);
+        expect(() => buildRegenerationJobInput({ lorebookName: 'Book', entryUid: '8' })).toThrow(/chat identity/);
+    });
+
+    it('stores only a validated group chat identity', () => {
+        expect(buildRegenerationJobInput({
+            lorebookName: 'Book',
+            entryUid: '8',
+            sceneContext: {
+                chatId: 'chat-1',
+                groupId: 'group-1',
+                chatRef: { type: 'group', chatId: 'chat-1', content: 'nested entry content' },
+                groupParticipants: [{ content: 'entry content' }],
+            },
+        }).sceneContext).toEqual({
+            chatRef: { type: 'group', chatId: 'chat-1' },
+            chatId: 'chat-1',
+            groupId: 'group-1',
+        });
     });
 
     it('stores and validates the exact side-prompt regeneration inputs', () => {

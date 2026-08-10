@@ -54,7 +54,7 @@ Write in tight, factual prose, bullet points, or labeled attribute blocks (your 
 
 CONTENT RULES:
 - Gather all facts concerning this topic.
-Include: concrete facts, names, relationships, preferences, places, constraints, promises, secrets, unresolved issues, and meaningful changes over time from either source section.
+- Include: concrete facts, names, relationships, preferences, places, constraints, promises, secrets, unresolved issues, and meaningful changes over time from either source section.
 - Exclude: events, context, or details unrelated to {{TOPIC}} even if they appear in the source memories.
 - Resolve later information against earlier information. Distinguish current state, completed events, decisions, unresolved issues, and future plans.
 - Conflicts: if source memories contradict each other, first review if it is a correction or a true contradiction. Corrections can be made directly. If contradictory information is found, note the conflict explicitly (e.g. "Claimed X in one account, Y in another") rather than silently picking one.

@@ -6134,6 +6134,7 @@
   ,"STMemoryBooks_ClipSuggestions_KeepForLater": "Für später aufbewahren"
   ,"STMemoryBooks_ClipSuggestions_Prompt": "Prompt für Themenvorschläge"
   ,"STMemoryBooks_ClipSuggestions_Review": "Themen überprüfen"
+  ,"STMemoryBooks_ClipSuggestions_ResponseContract": "Gib ein einzelnes JSON-Objekt mit einem \"topics\"-Array zurück, das null bis fünf Vorschläge für neue Themen-Clips enthält.\nJedes Element muss \"topic\" als nicht leere Zeichenfolge und \"keywords\" als Array von Aktivierungsschlüsselwörtern enthalten.\nWenn keine neuen Themen benötigt werden, gib {\"topics\":[]} zurück.\nGib nur JSON zurück. Gib keine Markdown-Codeblöcke, Begründungen, Nachrichten-IDs oder Erklärungen zurück."
   ,"STMemoryBooks_ClipSuggestions_Title": "Vorgeschlagene neue Themen-Clips"
   ,"STMemoryBooks_ClipSuggestions_None": "Es wurden keine neuen Themen vorgeschlagen. Sie können manuell eines hinzufügen."
   ,"STMemoryBooks_ClipReview_SelectDescription": "„{{lorebookName}}“ enthält mehr als fünf Clips. Wähle bestimmte Einträge aus oder frage alle ab."

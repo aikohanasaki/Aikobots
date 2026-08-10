@@ -6137,6 +6137,7 @@
   ,"STMemoryBooks_ClipSuggestions_KeepForLater": "後で保存しておいてください"
   ,"STMemoryBooks_ClipSuggestions_Prompt": "トピックの提案プロンプト"
   ,"STMemoryBooks_ClipSuggestions_Review": "トピックのレビュー"
+  ,"STMemoryBooks_ClipSuggestions_ResponseContract": "0～5件の新しいトピッククリップ候補を含む\"topics\"配列を持つ、単一のJSONオブジェクトを返してください。\n各項目には、空でない文字列の\"topic\"と、発動キーワード文字列の配列である\"keywords\"を含める必要があります。\n新しいトピックが不要な場合は、{\"topics\":[]}を返してください。\nJSONのみを返してください。Markdownコードブロック、理由、メッセージID、説明は返さないでください。"
   ,"STMemoryBooks_ClipSuggestions_Title": "提案された新しいトピッククリップ"
   ,"STMemoryBooks_ClipSuggestions_None": "新しいトピックは提案されませんでした。手動で追加できます。"
   ,"STMemoryBooks_ClipReview_SelectDescription": "「{{lorebookName}}」には6件以上のクリップがあります。特定のエントリを選択するか、すべてを照会してください。"

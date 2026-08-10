@@ -159,11 +159,18 @@ export function parseClipReviewResponse(text, records, sceneMessages) {
     }));
     const accepted = [];
     const responseEntries = Object.entries(parsed);
+    let hasSuggestion = false;
+    let hasInvalidEntry = false;
     for (const [rawUid, rawSuggestion] of responseEntries) {
         const uid = String(rawUid);
         const record = byUid.get(uid);
-        const suggestion = typeof rawSuggestion === 'string' ? rawSuggestion.trim() : '';
-        if (!record || !suggestion) continue;
+        if (!record || typeof rawSuggestion !== 'string') {
+            hasInvalidEntry = true;
+            continue;
+        }
+        const suggestion = rawSuggestion.trim();
+        if (!suggestion) continue;
+        hasSuggestion = true;
         if (record.type === 'ordinary') {
             const normalizedSuggestion = normalizeForMatch(suggestion);
             const sourceMessage = normalizedSuggestion ? messages.find(message => message.text.includes(normalizedSuggestion)) : null;
@@ -187,13 +194,51 @@ export function parseClipReviewResponse(text, records, sceneMessages) {
             });
         }
     }
-    if (responseEntries.length > 0 && accepted.length === 0) {
+    if (accepted.length === 0 && (hasSuggestion || hasInvalidEntry)) {
         throw new Error('Memory Assistance returned suggestions, but none matched the requested Clips and response rules.');
     }
     return accepted;
 }
 
-export function renderClipReviewReport({ sceneStart, sceneEnd, candidates = [], topicSuggestions = [], status = 'complete', appliedCount = 0, failedCount = 0, reviewCount = 0, failedBatchCount = 0, suggestionPassCompleted = false, suggestionPassFailed = false }) {
+/** Rebuilds edited ordinary-Clip additions while preserving their source message IDs. */
+export function rebuildOrdinaryClipAdditions(candidate, editedText) {
+    const additions = Array.isArray(candidate?.additions) ? candidate.additions : [];
+    const fallbackAddition = additions[0] || {};
+    const fallbackMessageId = fallbackAddition.messageId ?? candidate?.evidenceMessageIds?.[0];
+    return String(editedText ?? '').split(/\r?\n/).map((text, index) => {
+        const addition = additions[index] || fallbackAddition;
+        return {
+            ...addition,
+            ...(addition.messageId == null && fallbackMessageId != null ? { messageId: fallbackMessageId } : {}),
+            text: text.trim(),
+        };
+    }).filter(item => item.text);
+}
+
+/** Applies ordinary Clip candidates sequentially while preserving failures for review. */
+export async function applyAutomaticClipReviewCandidates(candidates, applySuggestion, { signal, applyError, onFailure } = {}) {
+    const result = { pendingCandidates: [], appliedCount: 0, failedCount: 0, reviewCount: 0 };
+    for (const candidate of candidates || []) {
+        signal?.throwIfAborted();
+        if (candidate.type === 'topical') {
+            result.pendingCandidates.push(candidate);
+            result.reviewCount++;
+            continue;
+        }
+        try {
+            if (await applySuggestion(candidate)) result.appliedCount++;
+        } catch (error) {
+            if (signal?.aborted) throw error;
+            onFailure?.(error);
+            result.failedCount++;
+            result.pendingCandidates.push({ ...candidate, applyError });
+        }
+        signal?.throwIfAborted();
+    }
+    return result;
+}
+
+export function renderClipReviewReport({ sceneStart, sceneEnd, candidates = [], topicSuggestions = [], status = 'complete', appliedCount = 0, failedCount = 0, reviewCount = 0, failedBatchCount = 0, suggestionPassCompleted = false, suggestionPassFailed = false, suggestionPassDeclined = false }) {
     const lines = ['=== Memory Assistance ===', `Scene: messages ${sceneStart}-${sceneEnd}`];
     if (status === 'automatic') {
         lines.push('', `Automatic mode applied ${appliedCount} Clip update${appliedCount === 1 ? '' : 's'}.`);
@@ -209,6 +254,7 @@ export function renderClipReviewReport({ sceneStart, sceneEnd, candidates = [], 
         lines.push('', 'No Clip updates were suggested for this scene.');
     }
     if (suggestionPassFailed) lines.push('', 'Warning: Topical Clip discovery failed, so new-topic suggestions are unavailable for this scene.');
+    if (suggestionPassDeclined) lines.push('', 'Topical Clip discovery was skipped because the token warning was declined.');
     if (status !== 'automatic' && failedBatchCount > 0) lines.push('', `${failedBatchCount} review batch${failedBatchCount === 1 ? '' : 'es'} failed, so existing-Clip update suggestions may be incomplete.`);
     if (candidates.length > 0) {
         if (status === 'partial') lines.push('', 'Warning: one or more Memory Assistance batches failed. The suggestions below are incomplete.');
@@ -217,7 +263,13 @@ export function renderClipReviewReport({ sceneStart, sceneEnd, candidates = [], 
             if (candidate.applyError) lines.push(`Automatic update error: ${candidate.applyError}`);
             if (candidate.reason) lines.push(`Reason: ${candidate.reason}`);
             if (candidate.evidenceMessageIds?.length) lines.push(`Source message: ${candidate.evidenceMessageIds.join(', ')}`);
-            if (candidate.type === 'ordinary') lines.push('Suggested additions:', ...candidate.additions.map(item => `- [${item.messageId}] ${item.text}`));
+            if (candidate.type === 'ordinary') {
+                const additions = (candidate.additions || []).map(item => {
+                    const messageId = String(item?.messageId ?? '').trim();
+                    return messageId ? `- [${messageId}] ${item?.text ?? ''}` : `- ${item?.text ?? ''}`;
+                });
+                lines.push('Suggested additions:', ...additions);
+            }
             else lines.push('Suggested replacement:', candidate.proposedContent);
         }
     }
