@@ -293,7 +293,7 @@ async function executeMemoryAssistanceJob(job, context) {
         status = 'automatic';
         ({ pendingCandidates, appliedCount, failedCount, reviewCount } = await applyAutomaticClipReviewCandidates(
             candidates,
-            candidate => applyClipReviewSuggestion(lorebookName, candidate, { skipLongEntryWarning: true }),
+            candidate => applyClipReviewSuggestion(lorebookName, candidate, { deferLongEntryToReview: true }),
             {
                 signal: context.signal,
                 applyError: tr('Failed to apply the Clip suggestion.', 'STMemoryBooks_ClipReview_ApplyFailed'),
@@ -413,7 +413,7 @@ export async function showClipReviewSuggestionsPopup(options = {}) {
         const candidateHtml = candidates.map(candidate => {
             const currentEntry = Object.values(lorebookData?.entries || {}).find(entry => String(entry?.uid) === String(candidate.uid));
             const suggestion = candidate.type === 'ordinary' ? (candidate.additions || []).map(item => item.text).join('\n') : candidate.proposedContent;
-            return `<section class="info_block marginTop10" data-clip-review-uid="${escapeHtml(candidate.uid)}"><h4>${escapeHtml(candidate.title)}</h4>${candidate.applyError ? `<p class="redWarning">${escapeHtml(candidate.applyError)}</p>` : ''}<h5>${escapeHtml(tr('Current entry content', 'STMemoryBooks_Clip_CurrentContent'))}</h5><textarea class="text_pole" rows="5" readonly>${escapeHtml(currentEntry?.content || '')}</textarea><h5>${escapeHtml(tr('Suggested edit', 'STMemoryBooks_ClipReview_SuggestedEdit'))}</h5><textarea class="text_pole stmb-clip-review-draft" rows="6">${escapeHtml(suggestion || '')}</textarea><div class="buttons_block gap10px"><button type="button" class="menu_button stmb-clip-review-apply">${escapeHtml(tr('Apply', 'STMemoryBooks_ClipReview_Apply'))}</button><button type="button" class="menu_button stmb-clip-review-dismiss">${escapeHtml(tr('Dismiss', 'STMemoryBooks_ClipReview_Dismiss'))}</button></div></section>`;
+            return `<section class="info_block marginTop10" data-clip-review-uid="${escapeHtml(candidate.uid)}"><h4>${escapeHtml(candidate.title)}</h4>${candidate.applyError ? `<p class="redWarning">${escapeHtml(candidate.applyError)}</p>` : ''}${candidate.reviewReason ? `<p class="warning">${escapeHtml(candidate.reviewReason)}</p>` : ''}<h5>${escapeHtml(tr('Current entry content', 'STMemoryBooks_Clip_CurrentContent'))}</h5><textarea class="text_pole" rows="5" readonly>${escapeHtml(currentEntry?.content || '')}</textarea><h5>${escapeHtml(tr('Suggested edit', 'STMemoryBooks_ClipReview_SuggestedEdit'))}</h5><textarea class="text_pole stmb-clip-review-draft" rows="6">${escapeHtml(suggestion || '')}</textarea><div class="buttons_block gap10px"><button type="button" class="menu_button stmb-clip-review-apply">${escapeHtml(tr('Apply', 'STMemoryBooks_ClipReview_Apply'))}</button><button type="button" class="menu_button stmb-clip-review-dismiss">${escapeHtml(tr('Dismiss', 'STMemoryBooks_ClipReview_Dismiss'))}</button></div></section>`;
         }).join('');
         target.innerHTML = topicHtml || candidateHtml ? `${topicHtml}${candidateHtml}` : `<div class="opacity70p">${escapeHtml(tr('There are no current Memory Assistance suggestions.', 'STMemoryBooks_ClipReview_NoSuggestions'))}</div>`;
     };
@@ -464,7 +464,7 @@ export async function showClipReviewSuggestionsPopup(options = {}) {
             metadata.candidates = metadata.candidates.filter(item => String(item.uid) !== String(candidate.uid));
             if (metadata.status === 'automatic') {
                 metadata.failedCount = metadata.candidates.filter(item => Boolean(item.applyError)).length;
-                metadata.reviewCount = metadata.candidates.filter(item => item.type === 'topical' && !item.applyError).length;
+                metadata.reviewCount = metadata.candidates.filter(item => !item.applyError).length;
             }
             await persistRemainingReport(lorebookName, metadata, reportExpectedHash);
             await load(lorebookName);

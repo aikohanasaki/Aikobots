@@ -214,14 +214,14 @@ function getJobStateLabel(job = {}) {
 
 function getJobTypeLabel(type = '') {
     switch (String(type || '')) {
-        case 'sidePrompt': return 'Side Prompt';
-        case 'sidePromptBatch': return 'Side Prompt';
-        case 'memoryAssistance': return 'Memory Assistance';
-        case 'consolidation': return 'Consolidation';
+        case 'sidePrompt': return t`Side Prompt`;
+        case 'sidePromptBatch': return t`Side Prompt`;
+        case 'memoryAssistance': return t`Memory Assistance`;
+        case 'consolidation': return t`Consolidation`;
         case 'regeneration': return t`Regenerate memory`;
         case 'memory':
         default:
-            return 'Memory';
+            return t`Memory`;
     }
 }
 

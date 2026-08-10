@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+    CLIP_REVIEW_REQUIRES_REVIEW,
     applyAutomaticClipReviewCandidates,
+    getSelectedClipReviewUids,
+    isLongClipEntryContent,
     makeClipReviewRecord,
     matchesClipReviewTargetIdentity,
     normalizeMemoryAssistanceMode,
@@ -13,12 +16,26 @@ import {
     shouldPreserveClipReviewReport,
 } from '../public/scripts/stmb-clip-review-policy.js';
 
+test('reads only checked Memory Assistance Clip choices', () => {
+    assert.deepEqual(getSelectedClipReviewUids([]), []);
+    assert.deepEqual(getSelectedClipReviewUids([
+        { checked: false, value: '1' },
+        { checked: true, value: 2 },
+        { checked: true, value: '3' },
+    ]), ['2', '3']);
+});
+
 test('normalizes Memory Assistance modes and migrates the legacy checkbox', () => {
     assert.equal(normalizeMemoryAssistanceMode('off', true), 'off');
     assert.equal(normalizeMemoryAssistanceMode('Suggest'), 'update');
     assert.equal(normalizeMemoryAssistanceMode('update and suggest'), 'update_and_suggest');
     assert.equal(normalizeMemoryAssistanceMode('automatic'), 'automatic');
     assert.equal(normalizeMemoryAssistanceMode('', true), 'update');
+});
+
+test('classifies Clip content above the 500-token estimate as long', () => {
+    assert.equal(isLongClipEntryContent('x'.repeat(2000)), false);
+    assert.equal(isLongClipEntryContent('x'.repeat(2001)), true);
 });
 
 test('normalizes and filters Topical Clip suggestions', () => {
@@ -61,6 +78,18 @@ test('renders unattributed ordinary additions without placeholder IDs', () => {
     assert.doesNotMatch(report, /\[(?:undefined|null)\]/);
 });
 
+test('reports oversized automatic updates as requiring review', () => {
+    const report = renderClipReviewReport({
+        sceneStart: 1,
+        sceneEnd: 2,
+        status: 'automatic',
+        reviewCount: 1,
+        candidates: [{ type: 'ordinary', title: 'Long Clip', reviewReason: 'long entry', additions: [] }],
+    });
+    assert.match(report, /1 Clip update requires approval/);
+    assert.match(report, /Review required: long entry/);
+});
+
 test('reports a declined topic token warning without calling discovery failed', () => {
     const report = renderClipReviewReport({ sceneStart: 1, sceneEnd: 2, suggestionPassDeclined: true });
     assert.match(report, /Topical Clip discovery was skipped because the token warning was declined\./);
@@ -93,19 +122,28 @@ test('automatic apply stops after cancellation and reports ordinary failures', a
 test('automatic apply preserves topical and failed candidates for review', async () => {
     const failures = [];
     const result = await applyAutomaticClipReviewCandidates(
-        [{ uid: 1, type: 'ordinary' }, { uid: 2, type: 'topical' }, { uid: 3, type: 'ordinary' }],
+        [{ uid: 1, type: 'ordinary' }, { uid: 2, type: 'topical' }, { uid: 3, type: 'ordinary' }, { uid: 4, type: 'ordinary' }],
         async candidate => {
             if (candidate.uid === 3) throw new Error('conflict');
+            if (candidate.uid === 4) {
+                const error = new Error('long entry');
+                error.code = CLIP_REVIEW_REQUIRES_REVIEW;
+                throw error;
+            }
             return true;
         },
         { applyError: 'apply failed', onFailure: error => failures.push(error.message) },
     );
 
     assert.deepEqual(result, {
-        pendingCandidates: [{ uid: 2, type: 'topical' }, { uid: 3, type: 'ordinary', applyError: 'apply failed' }],
+        pendingCandidates: [
+            { uid: 2, type: 'topical' },
+            { uid: 3, type: 'ordinary', applyError: 'apply failed' },
+            { uid: 4, type: 'ordinary', reviewReason: 'long entry' },
+        ],
         appliedCount: 1,
         failedCount: 1,
-        reviewCount: 1,
+        reviewCount: 2,
     });
     assert.deepEqual(failures, ['conflict']);
 });

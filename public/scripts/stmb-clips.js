@@ -7,7 +7,12 @@ import { createStmbEntry, generateStmbText, updateStmbEntryByUid } from './stmb-
 import { compiledSceneToText, STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
 import { syncStmbLocalizedPromptFields } from './stmb-prompt-default-migration.js';
-import { matchesClipReviewTargetIdentity } from './stmb-clip-review-policy.js';
+import {
+    CLIP_LONG_ENTRY_TOKEN_THRESHOLD,
+    CLIP_REVIEW_REQUIRES_REVIEW,
+    isLongClipEntryContent,
+    matchesClipReviewTargetIdentity,
+} from './stmb-clip-review-policy.js';
 import { isSidePromptEntryTitle } from './stmb-sideprompts.js';
 import { escapeHtml, withGoBackButton } from './utils.js';
 import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
@@ -15,7 +20,6 @@ import { refreshStmbMacroCache } from './stmb-macros.js';
 
 const MODULE_NAME = 'STMB Clips';
 const CREATE_NEW_VALUE = '__stmb_create_new_clip_entry__';
-const TOKEN_WARNING_THRESHOLD = 500;
 const FLOATING_CLIP_X_OFFSET = 6;
 const FLOATING_CLIP_Y_OFFSET = -4;
 const FLOATING_CLIP_VIEWPORT_PADDING = 8;
@@ -680,7 +684,7 @@ function attachClipModalHandlers(popup, lorebookName, lorebookData, clipEntries)
 
         if (currentContent) currentContent.value = current;
         if (updatedPreview) updatedPreview.value = preview;
-        if (tokenWarning) tokenWarning.hidden = estimateTokens(preview) <= TOKEN_WARNING_THRESHOLD;
+        if (tokenWarning) tokenWarning.hidden = !isLongClipEntryContent(preview);
     };
 
     entrySelect?.addEventListener('change', () => {
@@ -708,7 +712,7 @@ function attachClipModalHandlers(popup, lorebookName, lorebookData, clipEntries)
 }
 
 async function showLongEntryWarning(lorebookName, lorebookData, entry, content) {
-    if (estimateTokens(content) <= TOKEN_WARNING_THRESHOLD) return true;
+    if (!isLongClipEntryContent(content)) return true;
 
     const popup = new Popup(
         DOMPurify.sanitize(`<h3>${escapeHtml(tr('Long Clip Entry'))}</h3><p>${escapeHtml(tr('This clip entry is getting long. Long constant entries can waste context or crowd out more relevant memory. Review, edit, or compact it.'))}</p>`),
@@ -1933,7 +1937,18 @@ export async function applyClipReviewSuggestion(lorebookName, candidate, options
             content = buildUpdatedExistingContent({ ...entry, content }, addition?.text, headline);
         }
         if (content === entry.content) return false;
-        if (!options.skipLongEntryWarning && !await showLongEntryWarning(lorebookName, lorebookData, entry, content)) return false;
+        if (options.deferLongEntryToReview && isLongClipEntryContent(content)) {
+            const error = new Error(formatTopicalMessage(tr(
+                'Automatic update paused because the resulting Clip is estimated at {{estimatedTokens}} tokens, above the {{threshold}}-token long-entry threshold. Review, compact, or apply it manually.',
+                'STMemoryBooks_ClipReview_LongEntryRequiresReview',
+            ), {
+                estimatedTokens: estimateTokens(content),
+                threshold: CLIP_LONG_ENTRY_TOKEN_THRESHOLD,
+            }));
+            error.code = CLIP_REVIEW_REQUIRES_REVIEW;
+            throw error;
+        }
+        if (!options.deferLongEntryToReview && !await showLongEntryWarning(lorebookName, lorebookData, entry, content)) return false;
     } else {
         content = createTopicalClipEntryContent(headline, candidate.proposedContent);
         const prior = getTopicalClipMetadata(entry) || {};
@@ -2175,13 +2190,17 @@ export async function showTopicalClipPopup(options = {}) {
             ? ''
             : tr('This entry has no Topical Clip run history. The first update will use all eligible source memories.');
     };
+    const renderSourceVisibility = () => {
+        const updateMode = getMode() === 'update';
+        if (rebuildRow) rebuildRow.hidden = !updateMode || !includeMemoriesInput?.checked;
+        if (messageRange) messageRange.hidden = !includeMessagesInput?.checked;
+        if (selectMemoriesButton) selectMemoriesButton.hidden = !includeMemoriesInput?.checked;
+    };
     const renderMode = () => {
         const updateMode = getMode() === 'update';
         clearSourceSelection();
         if (targetRow) targetRow.hidden = !updateMode;
-        if (rebuildRow) rebuildRow.hidden = !updateMode || !includeMemoriesInput?.checked;
-        if (messageRange) messageRange.hidden = !includeMessagesInput?.checked;
-        if (selectMemoriesButton) selectMemoriesButton.hidden = !includeMemoriesInput?.checked;
+        renderSourceVisibility();
         renderTargetMetadataMessage();
         renderDiagnostics();
     };
@@ -2231,8 +2250,16 @@ export async function showTopicalClipPopup(options = {}) {
         clearSourceSelection();
         renderDiagnostics();
     });
-    includeMemoriesInput?.addEventListener('change', renderMode);
-    includeMessagesInput?.addEventListener('change', renderMode);
+    includeMemoriesInput?.addEventListener('change', () => {
+        clearSourceSelection();
+        renderSourceVisibility();
+        renderDiagnostics();
+    });
+    includeMessagesInput?.addEventListener('change', () => {
+        clearDraft();
+        renderSourceVisibility();
+        renderDiagnostics();
+    });
     messageStartInput?.addEventListener('input', clearDraft);
     messageEndInput?.addEventListener('input', clearDraft);
     topicInput?.addEventListener('input', clearDraft);
@@ -2343,9 +2370,11 @@ export async function showTopicalClipPopup(options = {}) {
         let sourceMessages = null;
         let messageSource = null;
         if (includeMessages) {
-            const start = Number(messageStartInput?.value);
-            const end = Number(messageEndInput?.value);
-            if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start > end) {
+            const startText = String(messageStartInput?.value ?? '').trim();
+            const endText = String(messageEndInput?.value ?? '').trim();
+            const start = Number(startText);
+            const end = Number(endText);
+            if (!startText || !endText || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start > end) {
                 toastr.error(tr('Enter a valid message range within the current chat.', 'STMemoryBooks_TopicalClip_InvalidMessageRange'), 'STMB');
                 return;
             }
@@ -2499,7 +2528,7 @@ export async function showTopicalClipPopup(options = {}) {
     }
     renderMode();
     await loadSelectedLorebook(getSelectedLorebookName() || defaultLorebookName);
-    return await showPromise === POPUP_RESULT.AFFIRMATIVE;
+    return (await showPromise) === POPUP_RESULT.AFFIRMATIVE;
 }
 
 export async function showStmbEntryReviewPopup(options = {}) {

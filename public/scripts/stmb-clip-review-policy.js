@@ -8,6 +8,8 @@ export const MEMORY_ASSISTANCE_MODE_OFF = 'off';
 export const MEMORY_ASSISTANCE_MODE_UPDATE = 'update';
 export const MEMORY_ASSISTANCE_MODE_UPDATE_AND_SUGGEST = 'update_and_suggest';
 export const MEMORY_ASSISTANCE_MODE_AUTOMATIC = 'automatic';
+export const CLIP_LONG_ENTRY_TOKEN_THRESHOLD = 500;
+export const CLIP_REVIEW_REQUIRES_REVIEW = 'CLIP_REVIEW_REQUIRES_REVIEW';
 
 export const DEFAULT_CLIP_REVIEW_PROMPT = `SYSTEM: You review existing Memory Book Clips against one newly processed chat scene.
 
@@ -35,6 +37,13 @@ Rules:
 - Omit entries that do not need an update.
 - Do not greet, explain the task, or return Markdown fences.`;
 
+/** Returns the checked Clip-review choice UIDs in DOM order. */
+export function getSelectedClipReviewUids(choices = []) {
+    return Array.from(choices)
+        .filter(choice => choice?.checked)
+        .map(choice => String(choice.value));
+}
+
 /** Normalizes persisted Memory Assistance modes, including the legacy checkbox. */
 export function normalizeMemoryAssistanceMode(value, legacyAlwaysRun = false) {
     const normalized = String(value || '').trim().toLowerCase();
@@ -48,6 +57,11 @@ export function normalizeMemoryAssistanceMode(value, legacyAlwaysRun = false) {
 
 export function isTopicalClipEntry(entry) {
     return Boolean(entry?.data?.extensions?.aikobots?.topical_clip);
+}
+
+/** Checks the shared approximate-token threshold used for long Clip warnings. */
+export function isLongClipEntryContent(content) {
+    return Math.ceil(String(content || '').length / 4) > CLIP_LONG_ENTRY_TOKEN_THRESHOLD;
 }
 
 /** Checks the optional immutable identity evidence supplied with a reviewed Clip update. */
@@ -229,6 +243,11 @@ export async function applyAutomaticClipReviewCandidates(candidates, applySugges
             if (await applySuggestion(candidate)) result.appliedCount++;
         } catch (error) {
             if (signal?.aborted) throw error;
+            if (error?.code === CLIP_REVIEW_REQUIRES_REVIEW) {
+                result.reviewCount++;
+                result.pendingCandidates.push({ ...candidate, reviewReason: error.message });
+                continue;
+            }
             onFailure?.(error);
             result.failedCount++;
             result.pendingCandidates.push({ ...candidate, applyError });
@@ -242,7 +261,7 @@ export function renderClipReviewReport({ sceneStart, sceneEnd, candidates = [], 
     const lines = ['=== Memory Assistance ===', `Scene: messages ${sceneStart}-${sceneEnd}`];
     if (status === 'automatic') {
         lines.push('', `Automatic mode applied ${appliedCount} Clip update${appliedCount === 1 ? '' : 's'}.`);
-        if (reviewCount > 0) lines.push(`${reviewCount} Topical Clip update${reviewCount === 1 ? '' : 's'} require${reviewCount === 1 ? 's' : ''} approval and remain below for review.`);
+        if (reviewCount > 0) lines.push(`${reviewCount} Clip update${reviewCount === 1 ? '' : 's'} require${reviewCount === 1 ? 's' : ''} approval and remain below for review.`);
         if (failedCount > 0) lines.push(`${failedCount} suggested update${failedCount === 1 ? '' : 's'} could not be applied and remain below for review.`);
         if (reviewCount === 0 && failedCount === 0) lines.push('There are no suggestions awaiting review.');
         if (failedBatchCount > 0) lines.push(`${failedBatchCount} review batch${failedBatchCount === 1 ? '' : 'es'} failed, so the automatic results may be incomplete.`);
@@ -261,6 +280,7 @@ export function renderClipReviewReport({ sceneStart, sceneEnd, candidates = [], 
         for (const candidate of candidates) {
             lines.push('', `## ${candidate.title}`, `Type: ${candidate.type === 'topical' ? 'Topical Clip' : 'Clip'}`);
             if (candidate.applyError) lines.push(`Automatic update error: ${candidate.applyError}`);
+            if (candidate.reviewReason) lines.push(`Review required: ${candidate.reviewReason}`);
             if (candidate.reason) lines.push(`Reason: ${candidate.reason}`);
             if (candidate.evidenceMessageIds?.length) lines.push(`Source message: ${candidate.evidenceMessageIds.join(', ')}`);
             if (candidate.type === 'ordinary') {

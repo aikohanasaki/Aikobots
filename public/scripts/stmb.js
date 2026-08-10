@@ -186,7 +186,7 @@ import {
     upsertSet,
     upsertTemplate,
 } from './stmb-sideprompts-manager.js';
-import { CLIP_REVIEW_TEMPLATE_KEY } from './stmb-clip-review-policy.js';
+import { CLIP_REVIEW_TEMPLATE_KEY, getSelectedClipReviewUids } from './stmb-clip-review-policy.js';
 import { escapeHtml, flashHighlight, withGoBackButton } from './utils.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
@@ -1386,6 +1386,13 @@ async function openPlannerApprovalPopup(job = {}, { force = false } = {}) {
                     { text: translate('Query Selected', 'STMemoryBooks_ClipReview_QuerySelected'), result: POPUP_RESULT.CUSTOM1, appendAtEnd: true },
                     { text: translate('Query All', 'STMemoryBooks_ClipReview_QueryAll'), result: POPUP_RESULT.CUSTOM2, appendAtEnd: true },
                 ],
+                onClosing: closingPopup => {
+                    if (closingPopup.result !== POPUP_RESULT.CUSTOM1) return true;
+                    const selectedUids = getSelectedClipReviewUids(closingPopup.dlg?.querySelectorAll('.stmb-memory-assistance-choice') || []);
+                    if (selectedUids.length > 0) return true;
+                    toastr.warning(translate('Select at least one Clip, or choose Query All.', 'STMemoryBooks_ClipReview_SelectNone'), 'STMB');
+                    return false;
+                },
             });
             const result = await popup.show();
             if (result === POPUP_RESULT.CUSTOM2) {
@@ -1393,7 +1400,7 @@ async function openPlannerApprovalPopup(job = {}, { force = false } = {}) {
                 return true;
             }
             if (result === POPUP_RESULT.CUSTOM1) {
-                const selectedUids = Array.from(popup.dlg?.querySelectorAll('.stmb-memory-assistance-choice:checked') || []).map(input => String(input.value));
+                const selectedUids = getSelectedClipReviewUids(popup.dlg?.querySelectorAll('.stmb-memory-assistance-choice') || []);
                 if (selectedUids.length > 0) {
                     await respondStmbPlannerApproval({ jobId, decision: 'approve', editedData: { selectedUids } });
                     return true;
@@ -1614,7 +1621,7 @@ async function handlePlannerCompletedJob(job) {
         toastr.success(t`SidePrompt "${String(result.title || 'Unknown')}" updated.`, 'STMB');
     }
 
-    if (result?.type === 'memoryAssistance' && getModuleSettings().showNotifications) {
+    if (result?.type === 'memoryAssistance' && result.status !== 'skipped_secure' && getModuleSettings().showNotifications) {
         const withParams = (value, params = {}) => String(value).replace(/\{\{\s*(\w+)\s*\}\}/g, (_match, name) => String(params[name] ?? ''));
         if (result.status === 'failed_preserved') {
             toastr.error(translate('A Memory Assistance batch failed.', 'STMemoryBooks_ClipReview_BatchFailed'), 'STMB');
@@ -1625,9 +1632,9 @@ async function handlePlannerCompletedJob(job) {
                 ? translate('Memory Assistance automatically applied 1 Clip update.', 'STMemoryBooks_ClipReview_AutomaticAppliedOne')
                 : withParams(translate('Memory Assistance automatically applied {{count}} Clip updates.', 'STMemoryBooks_ClipReview_AutomaticAppliedMany'), { count: appliedCount });
             const reviewMessage = reviewCount === 1
-                ? translate('1 Topical Clip update awaits approval.', 'STMemoryBooks_ClipReview_TopicalAwaitingReviewOne')
+                ? translate('1 Clip update awaits approval.', 'STMemoryBooks_ClipReview_AwaitingReviewOne')
                 : reviewCount > 1
-                    ? withParams(translate('{{count}} Topical Clip updates await approval.', 'STMemoryBooks_ClipReview_TopicalAwaitingReviewMany'), { count: reviewCount })
+                    ? withParams(translate('{{count}} Clip updates await approval.', 'STMemoryBooks_ClipReview_AwaitingReviewMany'), { count: reviewCount })
                     : '';
             toastr.info([appliedMessage, reviewMessage].filter(Boolean).join(' '), 'STMB');
         } else {
@@ -4634,7 +4641,7 @@ async function readSidePromptEditorPayload(dialog, template = null) {
 
     if (template?.specialKind === 'clipReview') {
         const suggestionsPrompt = String(dialog?.querySelector('#stmb-sp-editor-suggestions-prompt')?.value || '').trim();
-        if (!suggestionsPrompt) throw new Error(translate('Prompt cannot be empty'));
+        if (!suggestionsPrompt) throw new Error(translate('The topic suggestions prompt cannot be empty.', 'STMemoryBooks_ClipSuggestions_PromptEmpty'));
         const overrideProfileEnabled = Boolean(dialog?.querySelector('#stmb-sp-editor-override-profile-enabled')?.checked);
         const settings = {
             ...(template.settings || {}),
@@ -9304,7 +9311,7 @@ async function applyManualFixedMemoryJson(correctedRaw, context) {
                     enqueueStmbJob(job);
                 }
             } catch (error) {
-                if (!isStmbAbortError(error)) console.warn('STMB Memory Assistance planning after manual repair failed');
+                if (!isStmbAbortError(error)) console.warn('STMB Memory Assistance planning after manual repair failed', error);
             }
 
             await maybePromptAutoConsolidation(1, {
@@ -9448,7 +9455,7 @@ async function executeMemoryJob(job, context) {
                 enqueueStmbJob(assistanceJob);
             }
         } catch (error) {
-            if (!isStmbAbortError(error)) console.warn('STMB Memory Assistance planning after memory save failed');
+            if (!isStmbAbortError(error)) console.warn('STMB Memory Assistance planning after memory save failed', error);
         }
         return;
     }
