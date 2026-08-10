@@ -11,6 +11,7 @@ import {
     MEMORY_ASSISTANCE_MODE_OFF,
     MEMORY_ASSISTANCE_MODE_UPDATE_AND_SUGGEST,
     applyAutomaticClipReviewCandidates,
+    classifyMemoryAssistanceOutcome,
     makeClipReviewRecord,
     normalizeMemoryAssistanceMode,
     packClipReviewBatches,
@@ -18,7 +19,6 @@ import {
     parseClipSuggestionsResponse,
     rebuildOrdinaryClipAdditions,
     renderClipReviewReport,
-    shouldPreserveClipReviewReport,
 } from './stmb-clip-review-policy.js';
 import { compiledSceneToText } from './stmb-core.js';
 import { awaitStmbJobApproval, registerStmbJobExecutor } from './stmb-jobs.js';
@@ -198,14 +198,25 @@ async function executeMemoryAssistanceJob(job, context) {
     const lorebookName = String(job?.lorebookName || payload.lorebookName || '').trim();
     const compiledScene = payload.compiledScene;
     const mode = normalizeMemoryAssistanceMode(payload.mode);
-    if (!lorebookName || !compiledScene || mode === MEMORY_ASSISTANCE_MODE_OFF) return;
+    if (!lorebookName || !compiledScene || !Array.isArray(compiledScene.messages)) {
+        throw new Error(tr('Failed to run Memory Assistance.', 'STMemoryBooks_ClipReview_CommandFailed'));
+    }
+    if (mode === MEMORY_ASSISTANCE_MODE_OFF) {
+        context.setResult({ type: 'memoryAssistance', status: 'skipped_off' });
+        context.patch({ state: 'skipped', detail: tr('Memory Assistance is off. Choose a mode before running it.', 'STMemoryBooks_ClipReview_CommandOff') });
+        return;
+    }
     if (getLorebookStorageForRequest(lorebookName) !== 'user') {
         context.setResult({ type: 'memoryAssistance', status: 'skipped_secure' });
+        context.patch({ state: 'skipped', detail: tr('Memory Assistance skipped this protected Memory Book.', 'STMemoryBooks_ClipReview_SkippedProtected') });
         return;
     }
 
     context.setState('assembling_prompt', { detail: tr('Memory Assistance', 'STMemoryBooks_ClipReview_Name') });
     const lorebookData = await loadWorldInfo(lorebookName);
+    if (!lorebookData?.entries) {
+        throw new Error(tr('Memory Assistance could not load its target Memory Book.', 'STMemoryBooks_ClipReview_TargetUnavailable'));
+    }
     const priorReportEntry = findReportEntry(lorebookData);
     const priorReportHash = priorReportEntry ? makeClipReviewRecord(priorReportEntry).contentHash : '';
     const records = getClipEntries(lorebookData).map(makeClipReviewRecord);
@@ -257,13 +268,14 @@ async function executeMemoryAssistanceJob(job, context) {
     const batches = packClipReviewBatches(selected, compiledSceneToText(compiledScene), threshold);
     const candidates = [];
     let failedBatchCount = 0;
+    let declinedBatchCount = 0;
     for (const batch of batches) {
         try {
             context.setState('generating', { detail: tr('Memory Assistance', 'STMemoryBooks_ClipReview_Name') });
             const finalPrompt = buildReviewPrompt(template.prompt, compiledScene, batch);
             if (mode !== MEMORY_ASSISTANCE_MODE_AUTOMATIC
                 && !await allowOversizedBatch(context, Math.ceil(finalPrompt.length / 4) + 800, threshold)) {
-                failedBatchCount++;
+                declinedBatchCount++;
                 continue;
             }
             candidates.push(...parseClipReviewResponse(await requestText(finalPrompt, profile, context.signal), batch, compiledScene.messages));
@@ -274,24 +286,40 @@ async function executeMemoryAssistanceJob(job, context) {
     }
     const messageSource = buildMessageSource(compiledScene);
     for (const candidate of candidates) candidate.messageSource = messageSource;
-    if (shouldPreserveClipReviewReport({
+    let outcome = classifyMemoryAssistanceOutcome({
         batchCount: batches.length,
         failedBatchCount,
+        declinedBatchCount,
         suggestionPassRequested: suggestTopics,
         suggestionPassSucceeded,
         suggestionPassFailed,
-    })) {
-        context.setResult({ type: 'memoryAssistance', status: 'failed_preserved', mode, candidateCount: 0 });
-        throw new Error(tr('A Memory Assistance batch failed.', 'STMemoryBooks_ClipReview_BatchFailed'));
+        suggestionPassDeclined,
+    });
+    if (outcome.preserveReport) {
+        const status = outcome.terminalState === 'failed' ? 'failed_preserved' : 'canceled_preserved';
+        context.setResult({
+            type: 'memoryAssistance',
+            status,
+            mode,
+            candidateCount: 0,
+            failedBatchCount,
+            declinedBatchCount,
+            suggestionPassFailed,
+            suggestionPassDeclined,
+        });
+        if (outcome.terminalState === 'failed') {
+            throw new Error(tr('A Memory Assistance batch failed.', 'STMemoryBooks_ClipReview_BatchFailed'));
+        }
+        context.patch({ state: 'canceled', detail: tr('Cancel', 'STMemoryBooks_Cancel') });
+        return;
     }
 
     let pendingCandidates = candidates;
     let appliedCount = 0;
     let failedCount = 0;
     let reviewCount = 0;
-    let status = failedBatchCount > 0 || suggestionPassFailed ? 'partial' : 'complete';
+    let status = outcome.reportStatus;
     if (mode === MEMORY_ASSISTANCE_MODE_AUTOMATIC) {
-        status = 'automatic';
         ({ pendingCandidates, appliedCount, failedCount, reviewCount } = await applyAutomaticClipReviewCandidates(
             candidates,
             candidate => applyClipReviewSuggestion(lorebookName, candidate, { deferLongEntryToReview: true }),
@@ -301,6 +329,18 @@ async function executeMemoryAssistanceJob(job, context) {
                 onFailure: error => console.warn('STMB Memory Assistance automatic apply failed', error),
             },
         ));
+        outcome = classifyMemoryAssistanceOutcome({
+            batchCount: batches.length,
+            failedBatchCount,
+            declinedBatchCount,
+            suggestionPassRequested: suggestTopics,
+            suggestionPassSucceeded,
+            suggestionPassFailed,
+            suggestionPassDeclined,
+            applyFailedCount: failedCount,
+            automatic: true,
+        });
+        status = outcome.reportStatus;
     }
 
     context.setState('saving', { detail: tr('Memory Assistance', 'STMemoryBooks_ClipReview_Name') });
@@ -309,6 +349,7 @@ async function executeMemoryAssistanceJob(job, context) {
         failedCount,
         reviewCount,
         failedBatchCount,
+        declinedBatchCount,
         topicSuggestions,
         suggestionPassCompleted,
         suggestionPassFailed,
@@ -326,7 +367,14 @@ async function executeMemoryAssistanceJob(job, context) {
         appliedCount,
         failedCount,
         reviewCount,
+        failedBatchCount,
+        declinedBatchCount,
+        suggestionPassFailed,
+        suggestionPassDeclined,
     });
+    if (outcome.terminalState === 'failed') {
+        throw new Error(tr('A Memory Assistance batch failed.', 'STMemoryBooks_ClipReview_BatchFailed'));
+    }
 }
 
 /** Builds dependent Memory Assistance jobs without reading Clip content into the queue payload. */
@@ -375,6 +423,7 @@ async function persistRemainingReport(lorebookName, metadata, expectedReportHash
         failedCount: Number(metadata.failedCount || 0),
         reviewCount: Number(metadata.reviewCount || 0),
         failedBatchCount: Number(metadata.failedBatchCount || 0),
+        declinedBatchCount: Number(metadata.declinedBatchCount || 0),
         topicSuggestions: Array.isArray(metadata.topicSuggestions) ? metadata.topicSuggestions : [],
         suggestionPassCompleted: metadata.suggestionPassCompleted === true,
         suggestionPassFailed: metadata.suggestionPassFailed === true,

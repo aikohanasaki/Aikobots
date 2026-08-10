@@ -47,6 +47,7 @@ test('failed, blocked, and canceled jobs are retryable', () => {
         assert.equal(isStmbJobRetryable({ state }), true);
     }
     assert.equal(isStmbJobRetryable({ state: 'completed' }), false);
+    assert.equal(isStmbJobRetryable({ state: 'skipped' }), false);
 });
 
 test('individual side-prompt retry drops its failed memory dependency', () => {

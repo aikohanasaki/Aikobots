@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
     CLIP_REVIEW_REQUIRES_REVIEW,
     applyAutomaticClipReviewCandidates,
+    classifyMemoryAssistanceOutcome,
     getSelectedClipReviewUids,
     isLongClipEntryContent,
     makeClipReviewRecord,
@@ -73,6 +74,53 @@ test('fails the run while preserving the previous report when every requested op
     }), false);
 });
 
+test('classifies partial, automatic, and declined Memory Assistance outcomes', () => {
+    assert.deepEqual(
+        classifyMemoryAssistanceOutcome({ batchCount: 2, failedBatchCount: 1 }),
+        {
+            successfulBatchCount: 1,
+            successfulOperationCount: 1,
+            failedOperationCount: 1,
+            declinedOperationCount: 0,
+            hasFailures: true,
+            hasDeclines: false,
+            preserveReport: false,
+            reportStatus: 'partial',
+            terminalState: 'failed',
+        },
+    );
+    assert.equal(classifyMemoryAssistanceOutcome({
+        batchCount: 1,
+        suggestionPassRequested: true,
+        suggestionPassFailed: true,
+    }).terminalState, 'failed');
+    assert.equal(classifyMemoryAssistanceOutcome({
+        batchCount: 1,
+        applyFailedCount: 1,
+        automatic: true,
+    }).terminalState, 'failed');
+    assert.deepEqual(
+        classifyMemoryAssistanceOutcome({ batchCount: 2, declinedBatchCount: 2 }),
+        {
+            successfulBatchCount: 0,
+            successfulOperationCount: 0,
+            failedOperationCount: 0,
+            declinedOperationCount: 2,
+            hasFailures: false,
+            hasDeclines: true,
+            preserveReport: true,
+            reportStatus: 'partial',
+            terminalState: 'canceled',
+        },
+    );
+    assert.equal(classifyMemoryAssistanceOutcome({ batchCount: 2, declinedBatchCount: 1 }).terminalState, 'completed');
+    assert.equal(classifyMemoryAssistanceOutcome({
+        suggestionPassRequested: true,
+        suggestionPassDeclined: true,
+    }).terminalState, 'canceled');
+    assert.equal(classifyMemoryAssistanceOutcome().terminalState, 'completed');
+});
+
 test('renders persisted ordinary candidates without additions', () => {
     const report = renderClipReviewReport({ sceneStart: 1, sceneEnd: 2, candidates: [{ type: 'ordinary', title: 'Legacy Clip' }] });
     assert.match(report, /## Legacy Clip\nType: Clip\nSuggested additions:/);
@@ -106,8 +154,9 @@ test('reports oversized automatic updates as requiring review', () => {
 });
 
 test('reports a declined topic token warning without calling discovery failed', () => {
-    const report = renderClipReviewReport({ sceneStart: 1, sceneEnd: 2, suggestionPassDeclined: true });
+    const report = renderClipReviewReport({ sceneStart: 1, sceneEnd: 2, suggestionPassDeclined: true, declinedBatchCount: 2 });
     assert.match(report, /Topical Clip discovery was skipped because the token warning was declined\./);
+    assert.match(report, /2 review batches were skipped because the token warning was declined\./);
     assert.doesNotMatch(report, /discovery failed/);
 });
 

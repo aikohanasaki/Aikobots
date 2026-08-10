@@ -26,7 +26,7 @@ const ACTIVE_JOB_STATES = new Set([
     'saving',
     'post_save',
 ]);
-const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'blocked', 'canceled']);
+const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'blocked', 'canceled', 'skipped']);
 const RECENT_HISTORY_LIMIT = 20;
 const RENDER_INTERVAL_MS = 1000;
 const CONCURRENT_JOB_TYPES = new Set(['sidePrompt']);
@@ -208,6 +208,7 @@ function getJobStateLabel(job = {}) {
         case 'completed': return 'Completed';
         case 'failed': return 'Failed';
         case 'canceled': return 'Canceled';
+        case 'skipped': return t`Skipped`;
         default: return state || 'Queued';
     }
 }
@@ -274,6 +275,7 @@ function getStatusToneClass(job = {}) {
     if (job.state === 'completed') return 'stmb-jobs-tone-completed';
     if (job.state === 'failed') return 'stmb-jobs-tone-failed';
     if (job.state === 'canceled') return 'stmb-jobs-tone-canceled';
+    if (job.state === 'skipped') return 'stmb-jobs-tone-canceled';
     if (job.state === 'awaiting_approval') return 'stmb-jobs-tone-awaiting';
     if (ACTIVE_JOB_STATES.has(job.state)) return 'stmb-jobs-tone-running';
     return 'stmb-jobs-tone-idle';

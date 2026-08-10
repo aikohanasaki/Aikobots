@@ -103,10 +103,47 @@ export function packClipReviewBatches(records, sceneText, tokenLimit, reserveTok
     return batches;
 }
 
-export function shouldPreserveClipReviewReport({ batchCount = 0, failedBatchCount = 0, suggestionPassRequested = false, suggestionPassSucceeded = false, suggestionPassFailed = false } = {}) {
-    const allReviewBatchesFailed = batchCount > 0 && failedBatchCount === batchCount;
-    const topicOnlyPassFailed = batchCount === 0 && suggestionPassRequested && suggestionPassFailed;
-    return (allReviewBatchesFailed && (!suggestionPassRequested || !suggestionPassSucceeded)) || topicOnlyPassFailed;
+/** Classifies generation, approval, and automatic-apply outcomes without conflating declines with failures. */
+export function classifyMemoryAssistanceOutcome({
+    batchCount = 0,
+    failedBatchCount = 0,
+    declinedBatchCount = 0,
+    suggestionPassRequested = false,
+    suggestionPassSucceeded = false,
+    suggestionPassFailed = false,
+    suggestionPassDeclined = false,
+    applyFailedCount = 0,
+    automatic = false,
+} = {}) {
+    const totalBatches = Math.max(0, Math.trunc(Number(batchCount) || 0));
+    const failedBatches = Math.min(totalBatches, Math.max(0, Math.trunc(Number(failedBatchCount) || 0)));
+    const declinedBatches = Math.min(totalBatches - failedBatches, Math.max(0, Math.trunc(Number(declinedBatchCount) || 0)));
+    const successfulBatchCount = Math.max(0, totalBatches - failedBatches - declinedBatches);
+    const topicSucceeded = suggestionPassRequested && suggestionPassSucceeded;
+    const topicFailed = suggestionPassRequested && suggestionPassFailed;
+    const topicDeclined = suggestionPassRequested && !topicFailed && suggestionPassDeclined;
+    const failedApplyCount = Math.max(0, Math.trunc(Number(applyFailedCount) || 0));
+    const successfulOperationCount = successfulBatchCount + (topicSucceeded ? 1 : 0);
+    const failedOperationCount = failedBatches + (topicFailed ? 1 : 0) + failedApplyCount;
+    const declinedOperationCount = declinedBatches + (topicDeclined ? 1 : 0);
+    const hasFailures = failedOperationCount > 0;
+    const hasDeclines = declinedOperationCount > 0;
+
+    return {
+        successfulBatchCount,
+        successfulOperationCount,
+        failedOperationCount,
+        declinedOperationCount,
+        hasFailures,
+        hasDeclines,
+        preserveReport: successfulOperationCount === 0 && (hasFailures || hasDeclines),
+        reportStatus: automatic ? 'automatic' : (hasFailures || hasDeclines ? 'partial' : 'complete'),
+        terminalState: hasFailures ? 'failed' : (successfulOperationCount === 0 && hasDeclines ? 'canceled' : 'completed'),
+    };
+}
+
+export function shouldPreserveClipReviewReport(details = {}) {
+    return classifyMemoryAssistanceOutcome(details).preserveReport;
 }
 
 function stripJsonFence(text) {
@@ -257,7 +294,7 @@ export async function applyAutomaticClipReviewCandidates(candidates, applySugges
     return result;
 }
 
-export function renderClipReviewReport({ sceneStart, sceneEnd, candidates = [], topicSuggestions = [], status = 'complete', appliedCount = 0, failedCount = 0, reviewCount = 0, failedBatchCount = 0, suggestionPassCompleted = false, suggestionPassFailed = false, suggestionPassDeclined = false }) {
+export function renderClipReviewReport({ sceneStart, sceneEnd, candidates = [], topicSuggestions = [], status = 'complete', appliedCount = 0, failedCount = 0, reviewCount = 0, failedBatchCount = 0, declinedBatchCount = 0, suggestionPassCompleted = false, suggestionPassFailed = false, suggestionPassDeclined = false }) {
     const lines = ['=== Memory Assistance ===', `Scene: messages ${sceneStart}-${sceneEnd}`];
     if (status === 'automatic') {
         lines.push('', `Automatic mode applied ${appliedCount} Clip update${appliedCount === 1 ? '' : 's'}.`);
@@ -275,8 +312,9 @@ export function renderClipReviewReport({ sceneStart, sceneEnd, candidates = [], 
     if (suggestionPassFailed) lines.push('', 'Warning: Topical Clip discovery failed, so new-topic suggestions are unavailable for this scene.');
     if (suggestionPassDeclined) lines.push('', 'Topical Clip discovery was skipped because the token warning was declined.');
     if (status !== 'automatic' && failedBatchCount > 0) lines.push('', `${failedBatchCount} review batch${failedBatchCount === 1 ? '' : 'es'} failed, so existing-Clip update suggestions may be incomplete.`);
+    if (declinedBatchCount > 0) lines.push('', `${declinedBatchCount} review batch${declinedBatchCount === 1 ? ' was' : 'es were'} skipped because the token warning was declined.`);
     if (candidates.length > 0) {
-        if (status === 'partial') lines.push('', 'Warning: one or more Memory Assistance batches failed. The suggestions below are incomplete.');
+        if (status === 'partial' && (failedBatchCount > 0 || suggestionPassFailed)) lines.push('', 'Warning: one or more Memory Assistance batches failed. The suggestions below are incomplete.');
         for (const candidate of candidates) {
             lines.push('', `## ${candidate.title}`, `Type: ${candidate.type === 'topical' ? 'Topical Clip' : 'Clip'}`);
             if (candidate.applyError) lines.push(`Automatic update error: ${candidate.applyError}`);

@@ -187,7 +187,12 @@ import {
     upsertSet,
     upsertTemplate,
 } from './stmb-sideprompts-manager.js';
-import { CLIP_REVIEW_TEMPLATE_KEY, getSelectedClipReviewUids } from './stmb-clip-review-policy.js';
+import {
+    CLIP_REVIEW_TEMPLATE_KEY,
+    MEMORY_ASSISTANCE_MODE_OFF,
+    getSelectedClipReviewUids,
+    normalizeMemoryAssistanceMode,
+} from './stmb-clip-review-policy.js';
 import { escapeHtml, flashHighlight, withGoBackButton } from './utils.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
@@ -1624,6 +1629,9 @@ async function handlePlannerCompletedJob(job) {
 
     if (result?.type === 'memoryAssistance' && result.status !== 'skipped_secure' && getModuleSettings().showNotifications) {
         const withParams = (value, params = {}) => String(value).replace(/\{\{\s*(\w+)\s*\}\}/g, (_match, name) => String(params[name] ?? ''));
+        if (Number(result.declinedBatchCount || 0) > 0 || result.suggestionPassDeclined === true) {
+            toastr.warning(translate('Memory Assistance completed with some requested work skipped.', 'STMemoryBooks_ClipReview_CompletedWithSkippedWork'), 'STMB');
+        }
         if (result.status === 'failed_preserved') {
             toastr.error(translate('A Memory Assistance batch failed.', 'STMemoryBooks_ClipReview_BatchFailed'), 'STMB');
         } else if (result.status === 'automatic') {
@@ -9358,7 +9366,9 @@ async function applyManualFixedMemoryJson(correctedRaw, context) {
                     enqueueStmbJob(job);
                 }
             } catch (error) {
-                if (!isStmbAbortError(error)) console.warn('STMB Memory Assistance planning after manual repair failed', error);
+                if (isStmbAbortError(error)) throw error;
+                console.warn('STMB Memory Assistance planning after manual repair failed');
+                toastr.error(translate('Memory was saved, but Memory Assistance could not be queued.', 'STMemoryBooks_ClipReview_PostSaveQueueFailed'), 'STMB');
             }
 
             await maybePromptAutoConsolidation(1, {
@@ -9502,7 +9512,9 @@ async function executeMemoryJob(job, context) {
                 enqueueStmbJob(assistanceJob);
             }
         } catch (error) {
-            if (!isStmbAbortError(error)) console.warn('STMB Memory Assistance planning after memory save failed', error);
+            if (isStmbAbortError(error)) throw error;
+            console.warn('STMB Memory Assistance planning after memory save failed');
+            throw new Error(translate('Memory was saved, but Memory Assistance could not be queued.', 'STMemoryBooks_ClipReview_PostSaveQueueFailed'));
         }
         return;
     }
@@ -10475,6 +10487,79 @@ async function nextMemoryCommand() {
     return '';
 }
 
+/** Queues standalone Memory Assistance for an explicit or marked scene range. */
+async function memoryAssistanceCommand(_, rangeText) {
+    const rawRange = String(rangeText || '').trim();
+    let range;
+    try {
+        if (rawRange) {
+            range = parseSceneRange(rawRange);
+        } else {
+            const markers = getSceneMarkers() || {};
+            if (markers.sceneStart == null || markers.sceneEnd == null) {
+                toastr.error(translate('No scene markers set. Use chevron buttons to mark start and end points first.'), 'STMB');
+                return '';
+            }
+            range = getCurrentSceneRange();
+        }
+
+        const moduleSettings = getModuleSettings();
+        const mode = normalizeMemoryAssistanceMode(moduleSettings.memoryAssistanceMode, moduleSettings.clipReviewAlwaysAfterMemory === true);
+        if (mode === MEMORY_ASSISTANCE_MODE_OFF) {
+            toastr.info(translate('Memory Assistance is off. Choose a mode before running it.', 'STMemoryBooks_ClipReview_CommandOff'), 'STMB');
+            return '';
+        }
+        if (!validateMemoryCreationContext()) return '';
+
+        const sceneContext = buildStmbSceneContext();
+        const lorebookName = await ensureLorebookName();
+        if (getLorebookStorageForRequest(lorebookName) !== 'user') {
+            toastr.error(translate('No Memory Books were found.', 'STMemoryBooks_Compaction_NoLorebooks'), 'STMB');
+            return '';
+        }
+
+        const profile = buildEffectiveMemoryProfile(getActiveStmbProfile(stmbSettings, stmbSettings.defaultProfile ?? null));
+        if (!validateConnectionProfilePreflight(profile)) return '';
+        const compiledScene = (await captureStmbSceneRange(range, {
+            skipSystemMessages: !moduleSettings.unhideBeforeMemory,
+            sceneContext,
+        }))?.compiledScene;
+        if (!compiledScene) throw new Error(translate('Failed to run Memory Assistance.', 'STMemoryBooks_ClipReview_CommandFailed'));
+
+        let manualGroupSnapshot = null;
+        if (sceneContext.isGroupChat && moduleSettings.manualModeEnabled) {
+            manualGroupSnapshot = await prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext);
+            if (!manualGroupSnapshot) return '';
+        }
+
+        const lorebookNames = [
+            lorebookName,
+            ...(manualGroupSnapshot ? buildManualGroupCopyTargets(manualGroupSnapshot, lorebookName).map(target => target.lorebookName) : []),
+        ];
+        const queuedProfile = await snapshotStmbProfileConnection(profile);
+        const jobs = buildQueuedMemoryAssistanceJobs({
+            lorebookNames,
+            compiledScene,
+            range,
+            settings: stmbSettings,
+            profile: queuedProfile,
+            sceneContext,
+        });
+        if (jobs.length === 0) {
+            toastr.error(translate('No Memory Books were found.', 'STMemoryBooks_Compaction_NoLorebooks'), 'STMB');
+            return '';
+        }
+        for (const job of jobs) enqueueStmbJob(job);
+        toastr.info(translate('Memory Assistance queued.', 'STMemoryBooks_ClipReview_CommandQueued'), 'STMB');
+    } catch (error) {
+        if (!isStmbLorebookHandledError(error)) {
+            showSlashCommandError(error?.message || translate('Failed to run Memory Assistance.', 'STMemoryBooks_ClipReview_CommandFailed'), error);
+        }
+    }
+
+    return '';
+}
+
 async function stmbCatchupCommand(namedArgs = {}) {
     try {
         const sceneContext = buildStmbSceneContext();
@@ -10785,6 +10870,19 @@ function registerSlashCommands() {
         name: 'nextmemory',
         callback: nextMemoryCommand,
         helpString: 'Create memory from end of last memory to current message',
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'memory-assistance',
+        callback: memoryAssistanceCommand,
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: translate('Optional message range (X-Y format)', 'STMemoryBooks_ClipReview_CommandRange'),
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: false,
+            }),
+        ],
+        helpString: translate('Run Memory Assistance for the marked scene or a message range. Usage: /memory-assistance [X-Y]', 'STMemoryBooks_ClipReview_CommandHelp'),
     }));
 
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
