@@ -74,7 +74,7 @@ CRITICAL:
 - Do not offer alternative directions or options.
 - Do not explain what you are about to do.
 - Begin your response with the first word of the memory entry itself.
-- If the source memories contain insufficient information to write an entry, return only: [INSUFFICIENT DATA: <one sentence reason>]
+- If the provided source material contains insufficient information to write an entry, return only: [INSUFFICIENT DATA: <one sentence reason>]
 - Any response that is not the finished entry or the insufficient-data marker is a failure.`;
 export const STMB_CLIP_TITLE_SUFFIX = ' [STMB Clip]';
 
