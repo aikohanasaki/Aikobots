@@ -690,6 +690,8 @@
     "Don't show this again": "Não voltar a mostrar",
     "To generate a new swipe here, exclude all later messages from prompts first. They will be preserved.": "Para gerar um novo swipe aqui, exclua primeiro todas as mensagens seguintes dos prompts. Elas serão preservadas.",
     "Gestures": "Gestos",
+    "Allow pulling down from the top of the chat or top bar to refresh the page. Touch devices only.": "Permitir puxar para baixo a partir do topo do chat ou da barra superior para atualizar a página. Apenas dispositivos táteis.",
+    "Pull to Refresh": "Puxar para atualizar",
     "Auto-load Last Chat": "Carregar automaticamente o último Chat",
     "Auto-scroll Chat": "Chat de Rolagem Automática",
     "Save edits to messages without confirmation as you type": "Salvar edições em mensagens sem confirmação enquanto você digita",

@@ -631,6 +631,8 @@
     "Swipes": "Balayages",
     "Allow swipe gestures on messages to select alternate AI responses. Overswiping the last prompt-visible message generates another response. Mobile only, no effect on PC": "Autoriser les gestes de balayage sur les messages pour sélectionner d’autres réponses de l’IA. Dépasser la dernière réponse visible dans le prompt en génère une nouvelle. Mobile uniquement, aucun effet sur PC.",
     "Gestures": "Gestes",
+    "Allow pulling down from the top of the chat or top bar to refresh the page. Touch devices only.": "Autoriser le glissement vers le bas depuis le haut du chat ou la barre supérieure pour actualiser la page. Appareils tactiles uniquement.",
+    "Pull to Refresh": "Tirer pour actualiser",
     "Auto-load Last Chat": "Chargement automatique de la dernière discussion",
     "Auto-scroll Chat": "Défilement automatique de la discussion",
     "Save edits to messages without confirmation as you type": "Enregistrer les modifications apportées aux messages sans confirmation pendant la saisie",

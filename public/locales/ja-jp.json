@@ -685,6 +685,8 @@
     "Swipes": "スワイプ",
     "Allow swipe gestures on messages to select alternate AI responses. Overswiping the last prompt-visible message generates another response. Mobile only, no effect on PC": "メッセージ上のスワイプジェスチャーで別のAI応答を選択できるようにします。プロンプトに表示される最後のメッセージを越えてスワイプすると、新しい応答が生成されます。モバイル専用で、PCには影響しません。",
     "Gestures": "ジェスチャー",
+    "Allow pulling down from the top of the chat or top bar to refresh the page. Touch devices only.": "チャットまたはトップバーの上部から下に引いてページを更新できるようにします。タッチデバイス専用です。",
+    "Pull to Refresh": "引っ張って更新",
     "Auto-load Last Chat": "最後のチャットを自動読み込み",
     "Auto-scroll Chat": "チャットの自動スクロール",
     "Save edits to messages without confirmation as you type": "入力時に確認なしでメッセージの編集を保存する",

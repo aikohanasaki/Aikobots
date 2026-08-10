@@ -685,6 +685,8 @@
     "Swipes": "Wischgesten",
     "Allow swipe gestures on messages to select alternate AI responses. Overswiping the last prompt-visible message generates another response. Mobile only, no effect on PC": "Erlaube Wischgesten bei Nachrichten, um alternative KI-Antworten auszuwählen. Beim Weiterswipen der letzten im Prompt sichtbaren Nachricht wird eine weitere Antwort generiert. Nur Mobilgeräte, keine Auswirkung auf PCs.",
     "Gestures": "Gesten",
+    "Allow pulling down from the top of the chat or top bar to refresh the page. Touch devices only.": "Erlaubt das Herunterziehen vom oberen Rand des Chats oder der oberen Leiste, um die Seite zu aktualisieren. Nur für Touch-Geräte.",
+    "Pull to Refresh": "Zum Aktualisieren ziehen",
     "Auto-load Last Chat": "Letzten Chat automatisch laden",
     "Auto-scroll Chat": "Chat automatisch scrollen",
     "Save edits to messages without confirmation as you type": "Speichere Änderungen an Nachrichten ohne Bestätigung während du tippst",

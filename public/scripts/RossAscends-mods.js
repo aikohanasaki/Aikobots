@@ -725,6 +725,11 @@ function initPullToRefresh() {
     let refreshInProgress = false;
 
     document.addEventListener('touchstart', event => {
+        if (power_user.pull_to_refresh === false) {
+            gesture = null;
+            return;
+        }
+
         const target = event.target;
         const isChatSurface = target instanceof Element
             && Boolean(target.closest('#sheld'))
@@ -753,7 +758,7 @@ function initPullToRefresh() {
     }, { passive: true, capture: true });
 
     document.addEventListener('touchmove', event => {
-        if (!gesture || event.touches.length !== 1) {
+        if (power_user.pull_to_refresh === false || !gesture || event.touches.length !== 1) {
             gesture = null;
             return;
         }
@@ -777,7 +782,7 @@ function initPullToRefresh() {
     }, { passive: true, capture: true });
 
     document.addEventListener('touchend', event => {
-        const shouldRefresh = gesture?.armed === true;
+        const shouldRefresh = power_user.pull_to_refresh !== false && gesture?.armed === true;
         gesture = null;
 
         if (!shouldRefresh || refreshInProgress) {
