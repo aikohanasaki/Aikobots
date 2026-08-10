@@ -739,3 +739,7 @@ Memory Books profile and Advanced-run dialogs use the shared popup controls and 
 ## 22. Memory Books group and regeneration guidance
 
 The group participant chooser keeps `.stmb-group-participants-list` within half the viewport height and scrolls long member lists. The regeneration visibility warning can open General Settings, scroll to the hidden-message checkbox, and temporarily highlight its enclosing label with `.stmb-setting-focus-highlight`. Layouts may adjust spacing but should preserve both the scroll region and visible keyboard focus.
+
+## 23. Memory Books help drawer
+
+The main Memory Books popup places `.stmb-help-drawer` below its title. Its two `.stmb-help-drawer-content` rows keep the explanatory copy beside the external guide links on wider screens and stack below 600px. The drawer inherits smart-theme surfaces, borders, and buttons from `public/style.css`; layouts may adjust spacing but should preserve the native disclosure control and readable keyboard-accessible links.

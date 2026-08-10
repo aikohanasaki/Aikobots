@@ -676,25 +676,32 @@ export async function upsertTemplate(input) {
         }
     }
 
-    const next = {
-        key,
-        name: finalName,
-        enabled: typeof input.enabled === 'boolean' ? input.enabled : (previous?.enabled ?? false),
-        prompt: String(input.prompt ?? previous?.prompt ?? ''),
-        responseFormat: String(input.responseFormat ?? previous?.responseFormat ?? ''),
-        settings: { ...(previous?.settings || {}), ...(input.settings || {}) },
-        triggers: input.triggers ? input.triggers : (previous?.triggers || { commands: ['sideprompt'] }),
-        createdAt: previous?.createdAt || timestamp,
-        updatedAt: timestamp,
-        ...(previous?.recommendedSetup && typeof previous.recommendedSetup === 'object'
-            ? { recommendedSetup: structuredClone(previous.recommendedSetup) }
-            : {}),
-        ...(input.specialKind || previous?.specialKind
-            ? { specialKind: String(input.specialKind || previous.specialKind) }
-            : {}),
-    };
+    const isEnabledOnlyUpdate = Boolean(previous)
+        && typeof input.enabled === 'boolean'
+        && Object.keys(input).every(field => field === 'key' || field === 'enabled');
+    const next = isEnabledOnlyUpdate
+        ? { ...previous, enabled: input.enabled, updatedAt: timestamp }
+        : {
+            key,
+            name: finalName,
+            enabled: typeof input.enabled === 'boolean' ? input.enabled : (previous?.enabled ?? false),
+            prompt: String(input.prompt ?? previous?.prompt ?? ''),
+            responseFormat: String(input.responseFormat ?? previous?.responseFormat ?? ''),
+            settings: { ...(previous?.settings || {}), ...(input.settings || {}) },
+            triggers: input.triggers ? input.triggers : (previous?.triggers || { commands: ['sideprompt'] }),
+            createdAt: previous?.createdAt || timestamp,
+            updatedAt: timestamp,
+            ...(previous?.recommendedSetup && typeof previous.recommendedSetup === 'object'
+                ? { recommendedSetup: structuredClone(previous.recommendedSetup) }
+                : {}),
+            ...(input.specialKind || previous?.specialKind
+                ? { specialKind: String(input.specialKind || previous.specialKind) }
+                : {}),
+        };
 
-    normalizeTemplateTriggers(next);
+    if (!isEnabledOnlyUpdate) {
+        normalizeTemplateTriggers(next);
+    }
     if (key === CLIP_REVIEW_TEMPLATE_KEY) {
         next.name = 'Memory Assistance';
         next.specialKind = 'clipReview';
@@ -702,7 +709,13 @@ export async function upsertTemplate(input) {
         next.triggers = {};
     }
     data.prompts[key] = next;
-    await saveDoc(data);
+    try {
+        await saveDoc(data);
+    } catch (error) {
+        if (previous) data.prompts[key] = previous;
+        else delete data.prompts[key];
+        throw error;
+    }
     return key;
 }
 

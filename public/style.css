@@ -7567,6 +7567,52 @@ body.active-session-read-only [data-active-session-disabled="true"] {
     display: block;
 }
 
+.stmb-help-drawer {
+    margin: 0 0 10px;
+    padding: 0;
+    overflow: hidden;
+}
+
+.stmb-help-drawer > summary {
+    padding: 6px 10px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.stmb-help-drawer > summary i {
+    margin-right: 5px;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.stmb-help-drawer-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 4px 10px 10px 30px;
+}
+
+.stmb-help-drawer-copy {
+    min-width: 0;
+}
+
+.stmb-help-drawer-copy p {
+    margin: 0 0 4px;
+}
+
+p.stmb-help-drawer-copy {
+    margin: 0;
+}
+
+.stmb-help-drawer-manual {
+    padding-top: 10px;
+    border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+.stmb-help-drawer-link {
+    flex: 0 0 auto;
+}
+
 .stmb-regenerate-entry {
     display: inline-flex;
     align-items: center;
@@ -7617,6 +7663,11 @@ body.active-session-read-only [data-active-session-disabled="true"] {
 @media (max-width: 600px) {
     .stmb-manual-group-lorebook-row {
         grid-template-columns: 1fr;
+    }
+
+    .stmb-help-drawer-content {
+        align-items: flex-start;
+        flex-direction: column;
     }
 
     .stmb-regeneration-columns {

@@ -2425,6 +2425,33 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
     return `
         <div class="stmb-settings-popup">
             <h2 data-i18n="📕 Memory Books">📕 Memory Books</h2>
+            <details class="stmb-help-drawer info-block hint">
+                <summary>
+                    <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
+                    <span data-i18n="STMemoryBooks_InteractiveGuideSummary">Help &amp; Guides</span>
+                </summary>
+                <div class="stmb-help-drawer-content">
+                    <div class="stmb-help-drawer-copy">
+                        <p data-i18n="STMemoryBooks_InteractiveGuideDescription">Ask the Interactive Memory Books Guide about setup, features, workflows, and troubleshooting.</p>
+                        <small class="opacity70p" data-i18n="STMemoryBooks_InteractiveGuideSignInNote">Opens Gemini in a new tab. Google sign-in required.</small>
+                    </div>
+                    <a class="menu_button menu_button_icon interactable stmb-help-drawer-link"
+                        href="https://gemini.google.com/gem/1XRy0GEu_iWmqdjMV1ZpD59rexoFDJo7B?usp=sharing"
+                        target="_blank" rel="noopener noreferrer">
+                        <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i>
+                        <span data-i18n="STMemoryBooks_OpenInteractiveGuide">Open Interactive Guide</span>
+                    </a>
+                </div>
+                <div class="stmb-help-drawer-content stmb-help-drawer-manual">
+                    <p class="stmb-help-drawer-copy" data-i18n="STMemoryBooks_AIReferenceManualOption">Prefer another AI assistant? Download the Memory Books AI Reference Manual, upload it to your preferred assistant, and ask it questions about Memory Books.</p>
+                    <a class="menu_button menu_button_icon interactable stmb-help-drawer-link"
+                        href="https://github.com/aikohanasaki/SillyTavern-MemoryBooks/blob/main/userguides/1%20Memory_Books_AI_Reference_Manual.md"
+                        target="_blank" rel="noopener noreferrer">
+                        <i class="fa-solid fa-download" aria-hidden="true"></i>
+                        <span data-i18n="STMemoryBooks_DownloadAIReferenceManual">Download AI Reference Manual (.md)</span>
+                    </a>
+                </div>
+            </details>
             <div id="stmb-settings-scene-section">${buildSettingsPopupSceneSectionHtml(sceneData)}</div>
 
             <div id="stmb-settings-memory-status" class="info-block marginBot10">${buildSettingsPopupMemoryStatusHtml(sceneData)}</div>
@@ -3872,7 +3899,7 @@ function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
                     <tr>
                         <th style="text-align:center;" data-i18n="Name">Name</th>
                         <th style="width: 240px; text-align:center;" data-i18n="Triggers">Triggers</th>
-                        <th style="width: 120px; text-align:center;" data-i18n="Actions">Actions</th>
+                        <th style="width: 190px; text-align:center;" data-i18n="Actions">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -3892,7 +3919,7 @@ function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
                 <tr>
                     <th style="text-align:center;" data-i18n="Name">Name</th>
                     <th style="width: 240px; text-align:center;" data-i18n="Triggers">Triggers</th>
-                    <th style="width: 120px; text-align:center;" data-i18n="Actions">Actions</th>
+                    <th style="width: 190px; text-align:center;" data-i18n="Actions">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -3912,6 +3939,9 @@ function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
                         </td>
                         <td style="padding: 8px; text-align:right;">
                             <span class="stmb-sp-inline-actions whitespacenowrap" style="display: inline-flex; gap: 10px;">
+                            ${template.specialKind === 'clipReview' ? '' : `<button type="button" class="menu_button stmb-sp-action stmb-sp-action-toggle whitespacenowrap ${template.enabled ? '' : 'opacity50p'}" data-action="toggle" title="${escapeHtml(translate(template.enabled ? 'Disable side prompt' : 'Enable side prompt', template.enabled ? 'STMemoryBooks_DisableSidePrompt' : 'STMemoryBooks_EnableSidePrompt'))}" aria-label="${escapeHtml(translate(template.enabled ? 'Disable side prompt' : 'Enable side prompt', template.enabled ? 'STMemoryBooks_DisableSidePrompt' : 'STMemoryBooks_EnableSidePrompt'))}" aria-pressed="${template.enabled ? 'true' : 'false'}" data-i18n="[title]${template.enabled ? 'STMemoryBooks_DisableSidePrompt' : 'STMemoryBooks_EnableSidePrompt'};[aria-label]${template.enabled ? 'STMemoryBooks_DisableSidePrompt' : 'STMemoryBooks_EnableSidePrompt'}" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0; ${template.enabled ? 'color:var(--active);' : ''}">
+                                <i class="fa-solid fa-power-off" aria-hidden="true"></i>
+                            </button>`}
                             <button class="menu_button stmb-sp-action stmb-sp-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;" data-i18n="[title]Edit;[aria-label]Edit">
                                 <i class="fa-solid fa-pen"></i>
                             </button>
@@ -4992,7 +5022,15 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             const row = actionButton.closest('tr[data-template-key]');
             selectedTemplateKey = String(row?.dataset?.templateKey || '');
             try {
-                if (actionButton.classList.contains('stmb-sp-action-edit')) {
+                if (actionButton.classList.contains('stmb-sp-action-toggle')) {
+                    if (actionButton.dataset.pending === 'true') return;
+                    actionButton.dataset.pending = 'true';
+                    actionButton.disabled = true;
+                    const template = await getTemplate(selectedTemplateKey);
+                    if (!template) throw new Error(`Template "${selectedTemplateKey}" not found`);
+                    await upsertTemplate({ key: template.key, enabled: !template.enabled });
+                    window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
+                } else if (actionButton.classList.contains('stmb-sp-action-edit')) {
                     const savedKey = await openSidePromptEditorPopup({ templateKey: selectedTemplateKey });
                     if (!savedKey) {
                         return;
@@ -5034,7 +5072,12 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                 await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
                 await notifyChange();
             } catch (error) {
-                toastr.error(error?.message || 'Side prompt manager action failed', 'STMB');
+                actionButton.disabled = false;
+                delete actionButton.dataset.pending;
+                const message = actionButton.classList.contains('stmb-sp-action-toggle')
+                    ? translate('Failed to change Side Prompt enabled state.', 'STMemoryBooks_FailedToToggleSidePrompt')
+                    : error?.message || 'Side prompt manager action failed';
+                toastr.error(message, 'STMB');
             }
             return;
         }
