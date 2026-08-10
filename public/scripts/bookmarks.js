@@ -62,14 +62,15 @@ let namedBookmarksSortAscending = true;
 let currentNamedBookmarks = [];
 
 async function chooseStmbChatCopyMode(kind) {
-    const { getStmbChatCopyLockContext, hasStmbChatCopyBindings, isStmbChatCopyEnabled } = await import('./stmb.js');
-    if (!isStmbChatCopyEnabled()) {
-        return { copyMemoryBooks: false, prompted: false };
+    const { getStmbChatCopyKind, getStmbChatCopyLockContext, hasStmbChatCopyBindings } = await import('./stmb.js');
+    const copyKind = getStmbChatCopyKind(kind);
+    if (!copyKind) {
+        return { copyKind: '', copyMemoryBooks: false, prompted: false };
     }
     const lockContext = getStmbChatCopyLockContext();
     if (!hasStmbChatCopyBindings(chat_metadata, lockContext)) {
         const hasLocks = lockContext.soloMemoryBookLocked || lockContext.lockedCharacterBindingKeys.length > 0;
-        return { copyMemoryBooks: Boolean(hasLocks), prompted: false };
+        return { copyKind, copyMemoryBooks: Boolean(hasLocks), prompted: false };
     }
 
     const isCheckpoint = kind === 'checkpoint';
@@ -89,8 +90,8 @@ async function chooseStmbChatCopyMode(kind) {
         defaultResult: POPUP_RESULT.AFFIRMATIVE,
     });
     const result = await popup.show();
-    if (result === POPUP_RESULT.AFFIRMATIVE) return { copyMemoryBooks: true, prompted: true };
-    if (result === POPUP_RESULT.NEGATIVE) return { copyMemoryBooks: false, prompted: true };
+    if (result === POPUP_RESULT.AFFIRMATIVE) return { copyKind, copyMemoryBooks: true, prompted: true };
+    if (result === POPUP_RESULT.NEGATIVE) return { copyKind, copyMemoryBooks: false, prompted: true };
     return null;
 }
 
@@ -133,15 +134,15 @@ async function saveDirectChatCopy({ name, mesId, metadata, kind, copyMemoryBooks
         return { ok: false, error: 'source_chat_save_failed' };
     }
 
-    const response = await fetch('/api/chats/save-prefix', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
-            avatar_url: character.avatar,
-            source_file: sourceChatId,
-            target_file: name,
-            prefix_end_id: mesId,
-            header_overrides: { chat_metadata: metadata },
+    const body = {
+        avatar_url: character.avatar,
+        source_file: sourceChatId,
+        target_file: name,
+        prefix_end_id: mesId,
+        header_overrides: { chat_metadata: { ...chat_metadata, ...metadata } },
+    };
+    if (kind) {
+        Object.assign(body, {
             copy_kind: kind,
             copy_memory_books: copyMemoryBooks,
             solo_memory_book_locked: stmbCopyLockContext?.soloMemoryBookLocked === true,
@@ -151,7 +152,13 @@ async function saveDirectChatCopy({ name, mesId, metadata, kind, copyMemoryBooks
             base_revision: getChatSaveRevision(),
             save_session_id: getChatSaveSessionId(),
             operation_id: operationId,
-        }),
+        });
+    }
+
+    const response = await fetch('/api/chats/save-prefix', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify(body),
     });
     const data = await response.json().catch(() => ({}));
     return response.ok ? { ok: true, ...data } : { ok: false, ...data };
@@ -191,6 +198,7 @@ async function runBookmarkChatCopy({ name, mesId, metadata, kind, copyMemoryBook
         try {
             return await run(includeMemoryBooks, operationId);
         } catch {
+            if (!kind) return { ok: false, error: 'chat_copy_request_failed' };
             try {
                 return await run(includeMemoryBooks, operationId);
             } catch {
@@ -821,7 +829,7 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         name,
         mesId,
         metadata: newMetadata,
-        kind: 'branch',
+        kind: copyChoice.copyKind,
         copyMemoryBooks: copyChoice.copyMemoryBooks,
         swipeId: selectedSwipeId,
     });
@@ -886,7 +894,7 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
         name,
         mesId,
         metadata: newMetadata,
-        kind: 'checkpoint',
+        kind: copyChoice.copyKind,
         copyMemoryBooks: copyChoice.copyMemoryBooks,
     });
     if (!result?.ok) {

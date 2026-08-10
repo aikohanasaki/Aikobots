@@ -58,6 +58,11 @@ export const STMB_DEFAULT_TITLE_FORMATS = Object.freeze([
     '[000] - {{title}}',
 ]);
 
+/** Returns the STMB copy kind only while Memory Book copying is enabled. */
+export function resolveStmbChatCopyKind(kind, moduleSettings) {
+    return moduleSettings?.copyMemoryBooksWithChatCopies === false ? '' : String(kind || '');
+}
+
 export function normalizeStmbMemoryBoundaryMode(mode) {
     const value = String(mode ?? STMB_MEMORY_BOUNDARY_MODES.BOTH);
     return STMB_MEMORY_BOUNDARY_MODE_VALUES.has(value) ? value : STMB_MEMORY_BOUNDARY_MODES.BOTH;

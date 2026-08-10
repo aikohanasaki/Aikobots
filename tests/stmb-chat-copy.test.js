@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createDefaultStmbSettings, createManagedLorebookEntryData, normalizeStmbSettings } from '../public/scripts/stmb-core.js';
+import { createDefaultStmbSettings, createManagedLorebookEntryData, normalizeStmbSettings, resolveStmbChatCopyKind } from '../public/scripts/stmb-core.js';
 
 import {
     allocateStmbLorebookCopyName,
@@ -30,6 +30,8 @@ test('binding collection uses chat-bound or manual STMB targets without duplicat
 test('Memory Book chat copying is default-on and preserves an explicit opt-out', () => {
     assert.equal(createDefaultStmbSettings().moduleSettings.copyMemoryBooksWithChatCopies, true);
     assert.equal(normalizeStmbSettings({ moduleSettings: { copyMemoryBooksWithChatCopies: false } }).moduleSettings.copyMemoryBooksWithChatCopies, false);
+    assert.equal(resolveStmbChatCopyKind('branch', { copyMemoryBooksWithChatCopies: true }), 'branch');
+    assert.equal(resolveStmbChatCopyKind('checkpoint', { copyMemoryBooksWithChatCopies: false }), '');
 });
 
 test('new managed memories retain server-derived UUID boundaries', () => {

@@ -78,6 +78,7 @@ import {
     parseStmbCatchupCommandArgs,
     parseSequenceFromTitle,
     parseStructuredMemoryResponse,
+    resolveStmbChatCopyKind,
     resolveStmbProfileConnectionSummary,
     buildStmbCatchupChunks,
 } from './stmb-core.js';
@@ -6631,9 +6632,9 @@ function getModuleSettings() {
     return stmbSettings.moduleSettings || {};
 }
 
-/** Returns whether branch and checkpoint creation should offer Memory Book copying. */
-export function isStmbChatCopyEnabled() {
-    return getModuleSettings().copyMemoryBooksWithChatCopies !== false;
+/** Returns the requested copy kind, or the base chat-copy mode when STMB copying is disabled. */
+export function getStmbChatCopyKind(kind) {
+    return resolveStmbChatCopyKind(kind, getModuleSettings());
 }
 
 /** Returns content-free lock exclusions for coordinated branch and checkpoint copying. */
