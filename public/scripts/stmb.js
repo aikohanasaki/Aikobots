@@ -4949,6 +4949,9 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
         if (!(target instanceof HTMLElement)) {
             return;
         }
+        if (target.closest('.stmb-sp-special-mode')) {
+            return;
+        }
 
         const setActionButton = target.closest('.stmb-sp-set-action');
         if (setActionButton) {
