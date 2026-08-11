@@ -5,11 +5,14 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { finished } from 'node:stream/promises';
+import { fileURLToPath } from 'node:url';
 
 import { chromium, firefox, webkit } from 'playwright';
 import { defaultOutputDirectory, hashDirectory } from '../scripts/frontend-build-lib.mjs';
 
-const projectRoot = path.resolve(import.meta.dirname, '..');
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const serverStartAttempts = 3;
 const browserName = process.env.FRONTEND_SMOKE_BROWSER || 'chromium';
 const browserType = { chromium, firefox, webkit }[browserName];
 if (!browserType) {
@@ -30,13 +33,19 @@ function getAvailablePort() {
     });
 }
 
-async function waitForServer(url, child) {
+/** Waits until the spawned server reports readiness and serves the frontend bundle. */
+async function waitForServer(url, child, getOutput) {
     for (let attempt = 0; attempt < 120; attempt++) {
-        if (child.exitCode !== null) {
+        if (child.exitCode !== null || child.signalCode !== null) {
+            await Promise.allSettled([finished(child.stdout), finished(child.stderr)]);
             throw new Error(`Server exited before startup with code ${child.exitCode}.`);
         }
+        if (!getOutput().includes('Aikobots is listening on')) {
+            await new Promise(resolve => setTimeout(resolve, 250));
+            continue;
+        }
         try {
-            const response = await fetch(url);
+            const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
             if (response.ok) {
                 return;
             }
@@ -48,10 +57,54 @@ async function waitForServer(url, child) {
     throw new Error('Timed out waiting for the frontend smoke server.');
 }
 
+/** Stops a spawned smoke server if it is still running. */
+async function stopServer(child) {
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+        return;
+    }
+    const serverExit = new Promise(resolve => child.once('exit', resolve));
+    child.kill('SIGTERM');
+    await serverExit;
+}
+
+/** Starts the smoke server, retrying only when another process claimed the probed port. */
+async function startServer(configPath, dataRoot) {
+    let lastError;
+    for (let attempt = 0; attempt < serverStartAttempts; attempt++) {
+        const port = await getAvailablePort();
+        const child = spawn(process.execPath, [
+            path.join(projectRoot, 'server.js'),
+            '--configPath', configPath,
+            '--dataRoot', dataRoot,
+            '--port', String(port),
+            '--browserLaunchEnabled', 'false',
+        ], {
+            cwd: projectRoot,
+            env: { ...process.env, NODE_ENV: 'production' },
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let output = '';
+        child.stdout.on('data', chunk => output += chunk);
+        child.stderr.on('data', chunk => output += chunk);
+
+        try {
+            await waitForServer(`http://127.0.0.1:${port}/dist/app.js`, child, () => output);
+            return { child, output: () => output, port };
+        } catch (error) {
+            lastError = error;
+            await stopServer(child);
+            if (!output.includes('EADDRINUSE') || attempt === serverStartAttempts - 1) {
+                throw new Error(`${error.message}\n${output}`);
+            }
+            console.warn(`Frontend smoke server port ${port} was occupied; retrying.`);
+        }
+    }
+    throw lastError ?? new Error('Frontend smoke server did not start.');
+}
+
 const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'aikobots-frontend-smoke-'));
 const configPath = path.join(temporaryRoot, 'config.yaml');
 const dataRoot = path.join(temporaryRoot, 'data');
-const port = await getAvailablePort();
 const publicPath = value => value.split(path.sep).join('/');
 const committedBundleHashes = await hashDirectory(defaultOutputDirectory);
 
@@ -61,7 +114,6 @@ await fs.writeFile(configPath, [
     `defaultContentRoot: ${JSON.stringify(publicPath(path.join(projectRoot, 'default', 'content')))}`,
     `defaultScaffoldRoot: ${JSON.stringify(publicPath(path.join(projectRoot, 'default', 'scaffold')))}`,
     'listen: false',
-    `port: ${port}`,
     'browserLaunch:',
     '  enabled: false',
     'enableUserAccounts: false',
@@ -69,28 +121,18 @@ await fs.writeFile(configPath, [
     '',
 ].join('\n'));
 
-const server = spawn(process.execPath, [
-    path.join(projectRoot, 'server.js'),
-    '--configPath', configPath,
-    '--dataRoot', dataRoot,
-    '--port', String(port),
-    '--browserLaunchEnabled', 'false',
-], {
-    cwd: projectRoot,
-    env: { ...process.env, NODE_ENV: 'production' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-});
-
-let serverOutput = '';
-server.stdout.on('data', chunk => serverOutput += chunk);
-server.stderr.on('data', chunk => serverOutput += chunk);
-
+let server;
+let getServerOutput = () => '';
 let browser;
 const pageErrors = [];
 const browserDiagnostics = [];
+const fatalBrowserDiagnostics = [];
 try {
+    const startedServer = await startServer(configPath, dataRoot);
+    server = startedServer.child;
+    getServerOutput = startedServer.output;
+    const port = startedServer.port;
     const baseUrl = `http://127.0.0.1:${port}`;
-    await waitForServer(`${baseUrl}/dist/app.js`, server);
     const settingsPath = path.join(dataRoot, 'default-user', 'settings.json');
     const settings = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
     settings.firstRun = false;
@@ -109,13 +151,23 @@ try {
     page.on('pageerror', error => pageErrors.push(error.stack || error.message));
     page.on('console', message => {
         if (['error', 'warning'].includes(message.type()) || /activating extension|extension settings/iu.test(message.text())) {
-            browserDiagnostics.push(`${message.type()}: ${message.text()}`);
+            const diagnostic = `${message.type()}: ${message.text()}`;
+            browserDiagnostics.push(diagnostic);
+            if (message.type() === 'error') {
+                fatalBrowserDiagnostics.push(diagnostic);
+            }
         }
     });
-    page.on('requestfailed', request => browserDiagnostics.push(`request failed: ${request.url()} ${request.failure()?.errorText || ''}`));
+    page.on('requestfailed', request => {
+        const diagnostic = `request failed: ${request.url()} ${request.failure()?.errorText || ''}`;
+        browserDiagnostics.push(diagnostic);
+        fatalBrowserDiagnostics.push(diagnostic);
+    });
     page.on('response', response => {
         if (response.status() >= 400) {
-            browserDiagnostics.push(`response ${response.status()}: ${response.url()}`);
+            const diagnostic = `response ${response.status()}: ${response.url()}`;
+            browserDiagnostics.push(diagnostic);
+            fatalBrowserDiagnostics.push(diagnostic);
         }
     });
 
@@ -123,6 +175,7 @@ try {
     await page.waitForSelector('#top_chat_bar');
     await page.waitForFunction(() => Boolean(globalThis.SillyTavern?.getContext().SlashCommandParser.commands['stmb-highest']), null, { timeout: 30_000 });
 
+    assert.deepEqual(fatalBrowserDiagnostics, [], `Fatal browser diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
     const requests = [...applicationRequests].sort();
     assert.ok(requests.length <= 12, `Expected at most 12 startup JS/CSS requests, got ${requests.length}: ${requests.join(', ')}`);
     assert.deepEqual(pageErrors, [], `Browser page errors: ${pageErrors.join('\n')}\nRequests: ${requests.join(', ')}`);
@@ -140,13 +193,9 @@ try {
     assert.deepEqual(await hashDirectory(defaultOutputDirectory), committedBundleHashes, 'Production startup modified committed frontend artifacts.');
     console.log(`Frontend ${browserName} smoke passed with ${requests.length} JS/CSS requests: ${requests.join(', ')}`);
 } catch (error) {
-    throw new Error(`${error.message}\nPage errors:\n${pageErrors.join('\n')}\nBrowser diagnostics:\n${browserDiagnostics.join('\n')}\n${serverOutput}`);
+    throw new Error(`${error.message}\nPage errors:\n${pageErrors.join('\n')}\nBrowser diagnostics:\n${browserDiagnostics.join('\n')}\n${getServerOutput()}`);
 } finally {
     await browser?.close();
-    if (server.exitCode === null) {
-        const serverExit = new Promise(resolve => server.once('exit', resolve));
-        server.kill('SIGTERM');
-        await serverExit;
-    }
+    await stopServer(server);
     await fs.rm(temporaryRoot, { recursive: true, force: true });
 }
