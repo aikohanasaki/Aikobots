@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -12,6 +13,15 @@ import {
     rebaseCssUrls,
     retainedStylesheets,
 } from '../scripts/frontend-build-lib.mjs';
+
+test('frontend build rejects --output without a value', () => {
+    const result = spawnSync(process.execPath, [path.join(path.dirname(publicDirectory), 'scripts', 'build-frontend.mjs'), '--output'], {
+        encoding: 'utf8',
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Missing value for --output\./u);
+});
 
 test('legacy bundle preserves the declared classic-script order', async () => {
     const bundle = await fs.readFile(path.join(defaultOutputDirectory, 'legacy.js'), 'utf8');

@@ -59,7 +59,7 @@ export class SettingsUi {
     }
     async render() {
         if (!this.dom) {
-            const template = await renderTemplateAsync('scripts/extensions/quick-reply/html/settings.html', {}, false, false, true);
+            const template = await renderTemplateAsync('scripts/extensions/quick-reply/html/settings.html', {}, false, true, true);
             if (template) {
                 this.template = document.createRange().createContextualFragment(template).querySelector('#qr--settings');
                 // @ts-ignore

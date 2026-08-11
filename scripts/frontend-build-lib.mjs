@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import webpack from 'webpack';
 import getFrontendConfig from '../webpack.config.js';
 
-export const projectRoot = path.resolve(import.meta.dirname, '..');
+const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+export const projectRoot = path.resolve(moduleDirectory, '..');
 export const publicDirectory = path.join(projectRoot, 'public');
 export const defaultOutputDirectory = path.join(publicDirectory, 'dist');
 
@@ -64,6 +66,10 @@ const startupTemplateNames = [
     'welcomePrompt',
     'assistantNote',
 ];
+
+function compareNames(left, right) {
+    return left < right ? -1 : left > right ? 1 : 0;
+}
 
 function toPublicUrl(filePath) {
     return `/${path.relative(publicDirectory, filePath).split(path.sep).join('/')}`;
@@ -144,7 +150,7 @@ async function listFiles(directory, extension) {
             results.push(entryPath);
         }
     }
-    return results.sort((left, right) => left.localeCompare(right));
+    return results.sort(compareNames);
 }
 
 async function collectBuiltinExtensions() {
@@ -152,7 +158,8 @@ async function collectBuiltinExtensions() {
     const manifests = {};
     const resources = {};
 
-    for (const entry of await fs.readdir(extensionsDirectory, { withFileTypes: true })) {
+    const entries = await fs.readdir(extensionsDirectory, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => compareNames(left.name, right.name))) {
         if (!entry.isDirectory() || entry.name === 'third-party') {
             continue;
         }
