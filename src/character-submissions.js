@@ -516,6 +516,44 @@ async function upsertDefaultContentCharacter(relativeFilename) {
     });
 }
 
+/**
+ * Adds pushed character files that are missing from the default content index.
+ * Existing index entries are preserved so production-only state is never discarded.
+ * @returns {Promise<number>} Number of character entries added
+ */
+export async function refreshDefaultContentCharacterIndex() {
+    return runWithDefaultContentIndexLock(async (lock) => {
+        const charactersDirectory = path.join(DEFAULT_CONTENT_ROOT, 'characters');
+        if (!fs.existsSync(DEFAULT_CONTENT_INDEX) || !fs.existsSync(charactersDirectory)) {
+            return 0;
+        }
+
+        const [rawIndex, directoryEntries] = await lock.run(async () => await Promise.all([
+            fsPromises.readFile(DEFAULT_CONTENT_INDEX, 'utf8'),
+            fsPromises.readdir(charactersDirectory, { withFileTypes: true }),
+        ]));
+        const contentIndex = JSON.parse(rawIndex);
+        if (!Array.isArray(contentIndex)) {
+            throw new TypeError('Default content index must be an array.');
+        }
+
+        const indexedFilenames = new Set(contentIndex.map(item => item?.filename));
+        const missingFilenames = directoryEntries
+            .filter(entry => entry.isFile() && path.extname(entry.name).toLowerCase() === '.png')
+            .map(entry => `characters/${entry.name}`)
+            .filter(filename => !indexedFilenames.has(filename))
+            .sort();
+
+        if (missingFilenames.length === 0) {
+            return 0;
+        }
+
+        contentIndex.push(...missingFilenames.map(filename => ({ filename, type: 'character' })));
+        await lock.run(async () => await writeFileAtomic(DEFAULT_CONTENT_INDEX, JSON.stringify(contentIndex, null, 4)));
+        return missingFilenames.length;
+    });
+}
+
 function normalizeDefaultContentCharacterFilename(value) {
     const rawValue = String(value || '').trim();
     const parsed = path.parse(rawValue);

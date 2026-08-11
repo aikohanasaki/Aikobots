@@ -960,6 +960,10 @@ The browser message shown while generation is streaming remains ephemeral displa
 
 Generic range saves are deferred until both the final streaming mutation and authoritative read-back settle. An explicit chat flush waits for the same boundary, while an explicit server refresh discards deferred browser-save state. This prevents a courtesy streaming display or a delayed save timer from becoming authoritative or leaking into another chat.
 
+### Default content character index
+
+Before user content seeding, every server worker scans `DEFAULT_CONTENT_ROOT/characters` for pushed PNG files and appends missing character records to `DEFAULT_CONTENT_ROOT/index.json`. Reconciliation uses the existing cross-worker default-content directory lock and atomic index replacement, so concurrent PM2 startup and character publication cannot lose one another's entries. Existing records are preserved and the startup refresh never removes files or index entries; a missing or malformed index is not guessed or replaced.
+
 ### Recommended Chat Setup persistence
 
 Each configured character carries only a stable opaque `data.extensions.aikobots.recommended_chat_setup_key`. The key survives renames and distribution and is removed by character duplication. It is not an authorization credential: the server-side draft also records its authorized manager handles. Exact draft source bindings are returned only by the owner/admin management API; consumer summaries expose only component availability, botmaker display name, side-prompt count/name, and the current content revision.
