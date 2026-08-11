@@ -1,5 +1,5 @@
 import { DOMPurify } from '../lib.js';
-import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
+import { Popup, POPUP_TYPE } from './popup.js';
 import { generateStmbText, createStmbEntry, updateStmbEntryByUid } from './stmb-api.js';
 import { applyClipReviewSuggestion, isClipEntryTitle, showTopicalClipPopup } from './stmb-clips.js';
 import {
@@ -12,6 +12,7 @@ import {
     MEMORY_ASSISTANCE_MODE_UPDATE_AND_SUGGEST,
     applyAutomaticClipReviewCandidates,
     classifyMemoryAssistanceOutcome,
+    getDefaultClipReviewLorebookName,
     makeClipReviewRecord,
     normalizeMemoryAssistanceMode,
     packClipReviewBatches,
@@ -438,7 +439,9 @@ export async function showClipReviewSuggestionsPopup(options = {}) {
         toastr.error(tr('No Memory Books were found.', 'STMemoryBooks_Compaction_NoLorebooks'), 'STMB');
         return;
     }
-    const bookOptions = ['<option></option>', ...names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)].join('');
+    const requestedLorebookName = String(options.lorebookName || '').trim();
+    const defaultLorebookName = getDefaultClipReviewLorebookName(names, requestedLorebookName || runtime.getDefaultLorebookName?.());
+    const bookOptions = ['<option></option>', ...names.map(name => `<option value="${escapeHtml(name)}"${name === defaultLorebookName ? ' selected' : ''}>${escapeHtml(name)}</option>`)].join('');
     const popupOptions = { wide: true, large: true, allowVerticalScrolling: true, okButton: false, cancelButton: tr('Close', 'STMemoryBooks_Close') };
     const popup = new Popup(DOMPurify.sanitize(`
         <h3 data-i18n="STMemoryBooks_ClipReview_SuggestionsTitle">${escapeHtml(tr('Memory Assistance Suggestions', 'STMemoryBooks_ClipReview_SuggestionsTitle'))}</h3>
@@ -525,9 +528,9 @@ export async function showClipReviewSuggestionsPopup(options = {}) {
         }
     });
     const select = popup.dlg?.querySelector('#stmb-clip-review-book');
-    if (select && names[0]) {
-        select.value = names[0];
-        await load(names[0]);
+    if (select && defaultLorebookName) {
+        select.value = defaultLorebookName;
+        await load(defaultLorebookName);
     }
     await showPromise;
 }

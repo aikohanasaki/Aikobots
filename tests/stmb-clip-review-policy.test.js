@@ -4,6 +4,7 @@ import {
     CLIP_REVIEW_REQUIRES_REVIEW,
     applyAutomaticClipReviewCandidates,
     classifyMemoryAssistanceOutcome,
+    getDefaultClipReviewLorebookName,
     getSelectedClipReviewUids,
     isLongClipEntryContent,
     makeClipReviewRecord,
@@ -16,6 +17,12 @@ import {
     renderClipReviewReport,
     shouldPreserveClipReviewReport,
 } from '../public/scripts/stmb-clip-review-policy.js';
+
+test('defaults Memory Assistance suggestions to the active chat Memory Book', () => {
+    const lorebookNames = ['First Book', 'Chat Book', 'Last Book'];
+    assert.equal(getDefaultClipReviewLorebookName(lorebookNames, 'Chat Book'), 'Chat Book');
+    assert.equal(getDefaultClipReviewLorebookName(lorebookNames, 'Missing Book'), 'First Book');
+});
 
 test('reads only checked Memory Assistance Clip choices', () => {
     assert.deepEqual(getSelectedClipReviewUids([]), []);

@@ -1594,6 +1594,18 @@ async function acknowledgePlannerJobHandled(job) {
     }
 }
 
+async function showMemoryAssistanceUpdatedPopup(lorebookName) {
+    const popup = new Popup(DOMPurify.sanitize(`
+        <h3>${escapeHtml(translate('Memory suggestions updated', 'STMemoryBooks_ClipReview_UpdatedTitle'))}</h3>
+        <p>${escapeHtml(translate('Memory suggestions have been updated.', 'STMemoryBooks_ClipReview_UpdatedMessage'))}</p>
+    `), POPUP_TYPE.CONFIRM, '', {
+        okButton: translate('Go to Suggestions', 'STMemoryBooks_ClipReview_GoToSuggestions'),
+        cancelButton: translate('Dismiss', 'STMemoryBooks_ClipReview_Dismiss'),
+    });
+    if (await popup.show() !== POPUP_RESULT.AFFIRMATIVE) return;
+    await showClipReviewSuggestionsPopup({ lorebookName });
+}
+
 async function handlePlannerCompletedJob(job) {
     const result = job?.result && typeof job.result === 'object' ? job.result : {};
     const lorebookName = String(result?.lorebookName || job?.payload?.lorebookName || '').trim();
@@ -1659,6 +1671,14 @@ async function handlePlannerCompletedJob(job) {
                 ? withParams(translate('Memory Assistance found {{updateMessage}} and {{topicMessage}}.', 'STMemoryBooks_ClipReview_FoundUpdatesAndTopics'), { updateMessage, topicMessage })
                 : withParams(translate('Memory Assistance found {{updateMessage}}.', 'STMemoryBooks_ClipReview_FoundUpdates'), { updateMessage });
             toastr.info(message, 'STMB');
+        }
+        if (Number(result.candidateCount || 0) > 0 || Number(result.topicSuggestionCount || 0) > 0) {
+            try {
+                await showMemoryAssistanceUpdatedPopup(lorebookName);
+            } catch (error) {
+                console.warn('STMB Memory Assistance suggestions popup failed', error);
+                toastr.error(translate('Failed to open Memory Assistance Suggestions', 'STMemoryBooks_ClipReview_OpenFailed'), 'STMB');
+            }
         }
     }
 
@@ -7908,6 +7928,7 @@ function configureClipRuntime() {
     configureStmbClipReviewRuntime({
         getSettings: () => stmbSettings,
         translate,
+        getDefaultLorebookName: resolveLorebookName,
         getProfile: getCompactionProfileForRuntime,
         buildGenerateData: async (messages, profile) => buildStmbGenerateData(messages, profile),
     });
