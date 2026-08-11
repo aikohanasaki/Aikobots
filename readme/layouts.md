@@ -744,6 +744,10 @@ The group participant chooser keeps `.stmb-group-participants-list` within half 
 
 The main Memory Books popup places `.stmb-help-drawer` below its title. Its two `.stmb-help-drawer-content` rows keep the explanatory copy beside the external guide links on wider screens and stack below 600px. The drawer inherits smart-theme surfaces, borders, and buttons from `public/style.css`; layouts may adjust spacing but should preserve the native disclosure control and readable keyboard-accessible links.
 
+## 24. World Info preset and lock bar
+
+The World Info drawer header owns the core `.world-info-locks-bar`, its preset selector, and its standard `.menu_button` actions. The bar uses smart-theme text, border, and UI-background colors from `public/style.css`, fades in on hover or keyboard focus, wraps its actions as space narrows, and stacks the selector above the actions below 600px. Layouts may adjust spacing but should preserve the selector's available width, visible keyboard focus, accessible button labels, and mobile stacking behavior.
+
 ## Frontend production bundles
 
 The v5 client serves committed production bundles from `public/dist`; server and PM2 startup never compile frontend assets. After changing frontend JavaScript, static CSS, built-in extension manifests/resources, or startup templates, run `npm run build:frontend` and commit the generated files. CI and release checks should run `npm run check:frontend-build` to rebuild in a temporary directory and verify that the committed output is current.

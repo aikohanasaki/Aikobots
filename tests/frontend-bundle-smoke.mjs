@@ -14,6 +14,7 @@ import { defaultOutputDirectory, hashDirectory } from '../scripts/frontend-build
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const serverStartAttempts = 3;
 const browserName = process.env.FRONTEND_SMOKE_BROWSER || 'chromium';
+const extensionsEnabled = process.env.FRONTEND_SMOKE_DISABLE_EXTENSIONS !== '1';
 const browserType = { chromium, firefox, webkit }[browserName];
 if (!browserType) {
     throw new Error(`Unsupported FRONTEND_SMOKE_BROWSER: ${browserName}`);
@@ -118,6 +119,8 @@ await fs.writeFile(configPath, [
     '  enabled: false',
     'enableUserAccounts: false',
     'disableCsrfProtection: true',
+    'extensions:',
+    `  enabled: ${extensionsEnabled}`,
     '',
 ].join('\n'));
 
@@ -180,12 +183,14 @@ try {
     assert.ok(requests.length <= 12, `Expected at most 12 startup JS/CSS requests, got ${requests.length}: ${requests.join(', ')}`);
     assert.deepEqual(pageErrors, [], `Browser page errors: ${pageErrors.join('\n')}\nRequests: ${requests.join(', ')}`);
     assert.ok(requests.includes('/dist/stmb.js'), `STMB bundle was not loaded. Requests: ${requests.join(', ')}`);
-    assert.ok(requests.includes('/dist/chunks/builtins.js'), `Built-ins bundle was not loaded. Requests: ${requests.join(', ')}`);
+    assert.equal(requests.includes('/dist/chunks/builtins.js'), extensionsEnabled, `Built-ins bundle loading did not match the extension setting. Requests: ${requests.join(', ')}`);
     assert.ok(requests.every(request => request.startsWith('/dist/') || request.startsWith('/css/layouts/') || request === '/css/user.css'), `Unexpected source request: ${requests.join(', ')}`);
     assert.ok(requests.every(request => !/(?:kokoro|pdf|epub)/iu.test(request)), `Optional engine loaded during startup: ${requests.join(', ')}`);
     assert.equal(await page.locator('#tts_provider').count(), 0, 'Disabled TTS built-in executed.');
     assert.equal(await page.locator('#tts-css').count(), 0, 'Disabled TTS built-in style was applied.');
     assert.equal(await page.evaluate(() => Boolean(globalThis.SillyTavern)), true, 'globalThis.SillyTavern is unavailable.');
+    assert.equal(await page.locator('#world_info_locks_bar').count(), 1, 'Core World Info Locks bar was not initialized exactly once with extensions disabled.');
+    assert.equal(await page.evaluate(() => Boolean(globalThis.SillyTavern.getContext().SlashCommandParser.commands.wipreset)), true, 'Core /wipreset command was not registered with extensions disabled.');
     assert.equal(await page.locator('#stmb-menu-item').count(), 1, 'STMB menu was not initialized.');
     assert.equal(await page.locator('#stmb-jobs-topbar-button[aria-controls="top_chat_stmb_jobs"]').count(), 1, 'STMB jobs UI was not initialized.');
     assert.equal(await page.locator('#aiko-layout-css[href="css/layouts/classic.css"]').count(), 1, 'Selected runtime layout link was not retained.');

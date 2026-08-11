@@ -54,6 +54,12 @@ WorldInfoInfo was originally created by Len Anderson. Aikobots’ fork/integrati
 
 Current code also stores effective hidden lorebook bindings in server-side registries and resolves global and character-specific hidden lorebooks without relying only on user-visible lorebook selection.
 
+### 5a. World Info Locks / Presets
+
+Aikobots integrates the World Info Locks preset bar as core client code. The implementation is derived from SillyTavern-WorldInfoPresets by Len Anderson and the WorldInfoLocks fork by Aiko Hanasaki. It preserves the legacy `extension_settings.worldInfoPresets` and `chat_metadata.worldInfoPresetLock` formats for compatibility while loading independently of the extension subsystem.
+
+Core preset activation manages only ordinary user lorebooks. Secure and hidden selections remain active and are excluded from preset exports, logs, and bundled lorebook data.
+
 ### 6. Character Protection and Admin Push Workflows
 
 Aikobots adds character protection behavior and admin push workflows for distributing or managing characters and related lorebook data.

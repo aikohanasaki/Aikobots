@@ -2136,6 +2136,22 @@
                             <span class="fa-solid fa-circle-question note-link-span"></span>
                         </a>
                     </h3>
+                    <div id="world_info_locks_bar" class="world-info-locks-bar flex-container alignItemsCenter" aria-label="World Info presets and locks" data-i18n="[aria-label]World Info presets and locks">
+                        <label class="sr-only" for="world_info_locks_preset" data-i18n="World Info preset">World Info preset</label>
+                        <select id="world_info_locks_preset" class="world-info-locks-select" aria-label="World Info preset" data-i18n="[aria-label]World Info preset"></select>
+                        <div class="world-info-locks-actions flex-container alignItemsCenter">
+                            <button id="world_info_locks_lock" type="button" class="menu_button fa-solid fa-lock" title="Preset locks" aria-label="Preset locks" data-i18n="[title]Preset locks;[aria-label]Preset locks"></button>
+                            <button id="world_info_locks_settings" type="button" class="menu_button fa-solid fa-gear" title="World Info preset settings" aria-label="World Info preset settings" data-i18n="[title]World Info preset settings;[aria-label]World Info preset settings"></button>
+                            <button id="world_info_locks_rename" type="button" class="menu_button fa-solid fa-pencil" title="Rename current preset" aria-label="Rename current preset" data-i18n="[title]Rename current preset;[aria-label]Rename current preset"></button>
+                            <button id="world_info_locks_update" type="button" class="menu_button fa-solid fa-floppy-disk" title="Update current preset" aria-label="Update current preset" data-i18n="[title]Update current preset;[aria-label]Update current preset"></button>
+                            <button id="world_info_locks_create" type="button" class="menu_button fa-solid fa-file-circle-plus" title="Save current selection as a preset" aria-label="Save current selection as a preset" data-i18n="[title]Save current selection as a preset;[aria-label]Save current selection as a preset"></button>
+                            <button id="world_info_locks_restore" type="button" class="menu_button fa-solid fa-rotate-left" title="Restore current preset" aria-label="Restore current preset" data-i18n="[title]Restore current preset;[aria-label]Restore current preset"></button>
+                            <button id="world_info_locks_import" type="button" class="menu_button fa-solid fa-file-import" title="Import preset" aria-label="Import preset" data-i18n="[title]Import preset;[aria-label]Import preset"></button>
+                            <button id="world_info_locks_export" type="button" class="menu_button fa-solid fa-file-export" title="Export current preset" aria-label="Export current preset" data-i18n="[title]Export current preset;[aria-label]Export current preset"></button>
+                            <button id="world_info_locks_delete" type="button" class="menu_button redWarningBG fa-solid fa-trash-can" title="Delete current preset" aria-label="Delete current preset" data-i18n="[title]Delete current preset;[aria-label]Delete current preset"></button>
+                        </div>
+                        <input id="world_info_locks_import_file" class="displayNone" type="file" accept="application/json,.json" multiple>
+                    </div>
                 </div>
                 <div id="wi-holder" class="margin5">
                     <div id="wiTopBlock" class="flex-container">

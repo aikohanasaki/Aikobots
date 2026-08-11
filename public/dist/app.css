@@ -10772,6 +10772,51 @@ p.stmb-help-drawer-copy {
     border-radius: 4px;
 }
 
+.world-info-locks-bar {
+    flex: 1 1 100%;
+    min-width: 0;
+    gap: 5px;
+    padding-block: 2px;
+    opacity: 0.55;
+    transition: opacity 200ms ease;
+}
+
+.world-info-locks-bar:hover,
+.world-info-locks-bar:focus-within {
+    opacity: 1;
+}
+
+.world-info-locks-select {
+    min-width: 8rem;
+    flex: 1 1 12rem;
+    color: var(--SmartThemeBodyColor);
+    border-color: var(--SmartThemeBorderColor);
+    background-color: var(--SmartThemeBlurTintColor);
+}
+
+.world-info-locks-actions {
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    gap: 3px;
+}
+
+.world-info-locks-actions > .menu_button {
+    min-width: 2rem;
+    min-height: 2rem;
+}
+
+@media (max-width: 600px) {
+    .world-info-locks-bar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .world-info-locks-select {
+        width: 100%;
+        flex-basis: auto;
+    }
+}
+
 /* css/st-tailwind.css */
 .text_warning {
     color: rgb(220 173 16);

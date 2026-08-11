@@ -284,6 +284,7 @@ import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
 import { clearPendingGeneration, getPendingGeneration, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
+import { initWorldInfoLocks, loadWorldInfoLocksSettings } from './scripts/world-info-locks.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
 
@@ -4001,6 +4002,7 @@ async function firstLoadInit() {
     initAuthorsNote();
     await initPersonas();
     initWorldInfo();
+    initWorldInfoLocks();
     initRossMods();
     initStats();
     initCfg();
@@ -13910,6 +13912,8 @@ export async function getSettings() {
             await loadExtensionSettings(settings, isVersionChanged, enableAutoUpdate);
             await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED);
         }
+
+        loadWorldInfoLocksSettings(settings);
 
         firstRun = !!settings.firstRun;
 

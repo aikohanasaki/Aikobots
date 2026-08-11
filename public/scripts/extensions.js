@@ -12,6 +12,7 @@ import { addLocaleData, getCurrentLocale, t, translate } from './i18n.js';
 import { debounce_timeout } from './constants.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { SimpleMutex } from './util/SimpleMutex.js';
+import { isCoreWorldInfoLocksExtension } from './world-info-locks-policy.js';
 
 export {
     getContext,
@@ -40,6 +41,9 @@ export let modules = [];
  * @type {Set<string>}
  */
 const activeExtensions = new Set();
+
+/** Legacy packages whose functionality is now provided directly by Aikobots core. */
+const supersededExtensions = new Set();
 
 /**
  * Errors that occurred while loading extensions.
@@ -321,6 +325,7 @@ export async function disableExtension(name, reload = true) {
  */
 async function activateExtensions() {
     extensionLoadErrors.clear();
+    supersededExtensions.clear();
     const clientVersion = CLIENT_VERSION.split(':')[1];
     const extensions = Object.entries(manifests).sort((a, b) => sortManifestsByOrder(a[1], b[1]));
     const extensionNames = extensions.map(x => x[0]);
@@ -335,6 +340,10 @@ async function activateExtensions() {
         const displayName = manifest.display_name || name;
 
         if (activeExtensions.has(name)) {
+            continue;
+        }
+        if (isCoreWorldInfoLocksExtension(name, manifest)) {
+            supersededExtensions.add(name);
             continue;
         }
         // Client version requirement: pass if 'minimum_client_version' is undefined or null.
@@ -688,9 +697,10 @@ async function addExtensionLocale(name, manifest) {
  * @param {boolean} isDisabled - Whether the extension is disabled or not.
  * @param {boolean} isExternal - Whether the extension is external or not.
  * @param {string} checkboxClass - The class for the checkbox HTML element.
+ * @param {boolean} isSuperseded - Whether core now provides this package's feature.
  * @return {string} - The HTML string that represents the extension.
  */
-function generateExtensionHtml(name, manifest, isActive, isDisabled, isExternal, checkboxClass) {
+function generateExtensionHtml(name, manifest, isActive, isDisabled, isExternal, checkboxClass, isSuperseded = false) {
     function getExtensionIcon() {
         const type = getExtensionType(name);
         switch (type) {
@@ -715,24 +725,28 @@ function generateExtensionHtml(name, manifest, isActive, isDisabled, isExternal,
         originHtml = '<a>';
     }
 
-    let toggleElement = isActive || isDisabled ?
-        '<input type="checkbox" title="' + t`Click to toggle` + `" data-name="${name}" class="${isActive ? 'toggle_disable' : 'toggle_enable'} ${checkboxClass}" ${isActive ? 'checked' : ''}>` :
-        `<input type="checkbox" title="Cannot enable extension" data-name="${name}" class="extension_missing ${checkboxClass}" disabled data-i18n="[title]Cannot enable extension">`;
+    let toggleElement = isSuperseded
+        ? '<input type="checkbox" checked disabled title="Provided by Aikobots core" data-i18n="[title]Provided by Aikobots core">'
+        : isActive || isDisabled ?
+            '<input type="checkbox" title="' + t`Click to toggle` + `" data-name="${name}" class="${isActive ? 'toggle_disable' : 'toggle_enable'} ${checkboxClass}" ${isActive ? 'checked' : ''}>` :
+            `<input type="checkbox" title="Cannot enable extension" data-name="${name}" class="extension_missing ${checkboxClass}" disabled data-i18n="[title]Cannot enable extension">`;
 
     let deleteButton = isExternal ? `<button class="btn_delete menu_button" data-name="${externalId}" data-i18n="[title]Delete" title="Delete"><i class="fa-fw fa-solid fa-trash-can"></i></button>` : '';
     let updateButton = isExternal ? `<button class="btn_update menu_button displayNone" data-name="${externalId}" title="Update available" data-i18n="[title]Update available"><i class="fa-solid fa-download fa-fw"></i></button>` : '';
     let moveButton = isExternal && isUserAdmin ? `<button class="btn_move menu_button" data-name="${externalId}" data-i18n="[title]Move" title="Move"><i class="fa-solid fa-folder-tree fa-fw"></i></button>` : '';
     let branchButton = isExternal && isUserAdmin ? `<button class="btn_branch menu_button" data-name="${externalId}" data-i18n="[title]Switch branch" title="Switch branch"><i class="fa-solid fa-code-branch fa-fw"></i></button>` : '';
-    let modulesInfo = '';
+    let modulesInfo = isSuperseded
+        ? '<div class="extension_modules" data-i18n="Provided by Aikobots core">Provided by Aikobots core</div>'
+        : '';
 
-    if (isActive && Array.isArray(manifest.optional)) {
+    if (!isSuperseded && isActive && Array.isArray(manifest.optional)) {
         const optional = new Set(manifest.optional);
         modules.forEach(x => optional.delete(x));
         if (optional.size > 0) {
             const optionalString = DOMPurify.sanitize([...optional].join(', '));
             modulesInfo = '<div class="extension_modules">' + t`Optional modules:` + ` <span class="optional">${optionalString}</span></div>`;
         }
-    } else if (!isDisabled) { // Neither active nor disabled
+    } else if (!isSuperseded && !isDisabled) { // Neither active nor disabled
         const requirements = new Set(manifest.requires);
         modules.forEach(x => requirements.delete(x));
         if (requirements.size > 0) {
@@ -753,7 +767,7 @@ function generateExtensionHtml(name, manifest, isActive, isDisabled, isExternal,
             </div>
             <div class="flexGrow extension_text_block">
                 ${originHtml}
-                <span class="${isActive ? 'extension_enabled' : isDisabled ? 'extension_disabled' : 'extension_missing'}">
+                <span class="${isActive || isSuperseded ? 'extension_enabled' : isDisabled ? 'extension_disabled' : 'extension_missing'}">
                     <span class="extension_name">${DOMPurify.sanitize(displayName)}</span>
                     <span class="extension_version">${DOMPurify.sanitize(displayVersion)}</span>
                     ${modulesInfo}
@@ -784,10 +798,11 @@ function getExtensionData(extension) {
     const isActive = activeExtensions.has(name);
     const isDisabled = extension_settings.disabledExtensions.includes(name);
     const isExternal = name.startsWith('third-party');
+    const isSuperseded = supersededExtensions.has(name);
 
     const checkboxClass = isDisabled ? 'checkbox_disabled' : '';
 
-    const extensionHtml = generateExtensionHtml(name, manifest, isActive, isDisabled, isExternal, checkboxClass);
+    const extensionHtml = generateExtensionHtml(name, manifest, isActive, isDisabled, isExternal, checkboxClass, isSuperseded);
 
     return { isExternal, extensionHtml };
 }

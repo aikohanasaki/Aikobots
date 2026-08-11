@@ -40,6 +40,7 @@ import {
     normalizeWorldInfoSortOrder,
     SEARCH_WORLD_INFO_SORT_ORDER,
 } from './world-info-sort-order.js';
+import { mergeWorldInfoPresetSelection } from './world-info-locks-policy.js';
 
 export const world_info_logic = {
     AND_ANY: 0,
@@ -364,6 +365,42 @@ function getWorldInfoReadOnlyMessage(item) {
 
 export function getSecureWorldNames() {
     return world_info_items.filter(item => item.storage === 'secure').map(item => item.name);
+}
+
+/** Returns ordinary user lorebooks that may be stored in and changed by a World Info preset. */
+export function getPresetEligibleWorldNames() {
+    return world_info_items
+        .filter(item => item.storage === 'user' && !item.reservedTemplate)
+        .map(item => item.name);
+}
+
+/**
+ * Replaces the preset-managed user lorebooks while preserving secure and hidden selections.
+ * @param {string[]} names Ordinary user lorebook names requested by the preset.
+ * @returns {string[]} The ordinary lorebooks that were applied.
+ */
+export function applyWorldInfoPresetSelection(names = []) {
+    const eligibleNames = new Set(getPresetEligibleWorldNames());
+    const secureNames = new Set(getSecureWorldNames());
+    const requestedNames = normalizeArray(Array.isArray(names) ? names : []).filter(name => eligibleNames.has(name));
+
+    selected_world_info = mergeWorldInfoPresetSelection(
+        selected_world_info,
+        requestedNames,
+        eligibleNames,
+        secureNames,
+        new Set(world_names),
+    );
+    Object.assign(world_info, { globalSelect: selected_world_info });
+
+    $('#world_info option').each(function () {
+        const worldName = world_names[Number($(this).val())];
+        $(this).prop('selected', Boolean(worldName && selected_world_info.includes(worldName)));
+    });
+
+    saveSettingsDebounced();
+    eventSource.emit(event_types.WORLDINFO_SETTINGS_UPDATED);
+    return requestedNames;
 }
 
 /** Returns whether a listed world is designated as a Recommended Chat Setup template draft. */
