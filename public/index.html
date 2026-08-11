@@ -17,35 +17,15 @@
             background-color: rgb(36, 36, 37);
         }
     </style>
-    <link rel="preload" as="style" href="style.css">
-    <link rel="preload" as="style" href="css/layouts/layout-contract.css">
+    <link rel="preload" as="style" href="dist/app.css">
     <link rel="preload" as="style" href="css/layouts/layout-structure.css">
     <link rel="preload" as="style" href="css/layouts/classic.css">
     <link rel="manifest" crossorigin="use-credentials" href="manifest.json">
-    <link href="webfonts/NotoSans/stylesheet.css" rel="stylesheet">
-    <link href="webfonts/NotoSansMono/stylesheet.css" rel="stylesheet">
-    <link href="css/fontawesome.min.css" rel="stylesheet">
-    <link href="css/solid.min.css" rel="stylesheet">
-    <link href="css/brands.min.css" rel="stylesheet">
-    <link href="css/jquery-ui.min.css" rel="stylesheet">
-    <link href="css/bright.min.css" rel="stylesheet">
-    <link href="css/cropper.min.css" rel="stylesheet">
-    <link href="css/toastr.min.css" rel="stylesheet">
-    <link href="css/select2.min.css" rel="stylesheet">
     <link rel="apple-touch-icon" sizes="57x57" href="img/apple-icon-57x57.png" />
     <link rel="apple-touch-icon" sizes="72x72" href="img/apple-icon-72x72.png" />
     <link rel="apple-touch-icon" sizes="114x114" href="img/apple-icon-114x114.png" />
     <link rel="apple-touch-icon" sizes="144x144" href="img/apple-icon-144x144.png" />
-    <link rel="stylesheet" type="text/css" href="style.css">
-    <link rel="stylesheet" type="text/css" href="css/st-tailwind.css">
-    <link rel="stylesheet" type="text/css" href="css/rm-groups.css">
-    <link rel="stylesheet" type="text/css" href="css/group-avatars.css">
-    <link rel="stylesheet" type="text/css" href="css/toggle-dependent.css">
-    <link rel="stylesheet" type="text/css" href="css/world-info.css">
-    <link rel="stylesheet" type="text/css" href="css/extensions-panel.css">
-    <link rel="stylesheet" type="text/css" href="css/select2-overrides.css">
-    <link rel="stylesheet" type="text/css" href="css/mobile-styles.css">
-    <link rel="stylesheet" type="text/css" href="css/layouts/layout-contract.css">
+    <link rel="stylesheet" type="text/css" href="dist/app.css">
     <link rel="stylesheet" type="text/css" href="css/layouts/layout-structure.css">
     <link id="aiko-layout-css" rel="stylesheet" type="text/css" href="css/layouts/classic.css">
     <link rel="stylesheet" type="text/css" href="css/user.css">
@@ -5837,30 +5817,11 @@
     <div id="secrets_datalists" class="displayNone"></div>
 
     <!-- Script includes -->
-    <script src="lib/polyfill.js"></script>
-    <script src="lib/jquery-3.5.1.min.js"></script>
-    <script src="lib/jquery-ui.min.js"></script>
-    <script src="lib/jquery.transit.min.js"></script>
-    <script src="lib/jquery-cookie-1.4.1.min.js"></script>
-    <script src="lib/jquery.ui.touch-punch.min.js"></script>
-    <script src="lib/cropper.min.js"></script>
-    <script src="lib/jquery-cropper.min.js"></script>
-    <script src="lib/toastr.min.js"></script>
-    <script src="lib/select2.min.js"></script>
-    <script src="lib/select2-search-placeholder.js"></script>
-    <script src="lib/pagination.js"></script>
-    <script src="lib/toolcool-color-picker.js"></script>
-    <script src="lib/jquery.izoomify.js"></script>
-    <script>
-        (() => {
-            window.aikoStartupModuleLoaded = () => {};
-        })();
-    </script>
-    <script type="module" src="lib/structured-clone/monkey-patch.js" data-startup-module="true"></script>
-    <script type="module" src="lib/swiped-events.js" data-startup-module="true"></script>
-    <script type="module" src="lib/eventemitter.js" data-startup-module="true"></script>
-    <script type="module" src="scripts/i18n.js" data-startup-module="true"></script>
-    <script type="module" src="script.js" data-startup-module="true" onload="window.aikoStartupModuleLoaded?.()"></script>
+    <script src="dist/legacy.js"></script>
+    <script src="dist/runtime.js"></script>
+    <script src="dist/vendor.js"></script>
+    <script src="dist/stmb.js"></script>
+    <script src="dist/app.js"></script>
     <script>
         window.addEventListener('load', (event) => {
             const documentHeight = () => {

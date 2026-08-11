@@ -1,74 +1,82 @@
-import process from 'node:process';
 import path from 'node:path';
-import isDocker from 'is-docker';
 import webpack from 'webpack';
 import { serverDirectory } from './src/server-directory.js';
 
+const publicDirectory = path.join(serverDirectory, 'public');
+
 /**
- * Get the Webpack configuration for the public/lib.js file.
- * 1. Docker has got cache and the output file pre-baked.
- * 2. Non-Docker environments use the global DATA_ROOT variable to determine the cache and output directories.
- * @param {boolean} forceDist Whether to force the use the /dist folder.
- * @returns {import('webpack').Configuration}
- * @throws {Error} If the DATA_ROOT variable is not set.
- * */
-export default function getPublicLibConfig(forceDist = false) {
-    function getCacheDirectory() {
-        if (forceDist || isDocker()) {
-            return path.resolve(process.cwd(), 'dist', '_webpack', webpack.version, 'cache');
-        }
-
-        if (typeof globalThis.DATA_ROOT === 'string') {
-            return path.resolve(globalThis.DATA_ROOT, '_webpack', webpack.version, 'cache');
-        }
-
-        throw new Error('DATA_ROOT variable is not set.');
-    }
-
-    function getOutputDirectory() {
-        if (forceDist || isDocker()) {
-            return path.resolve(process.cwd(), 'dist', '_webpack', webpack.version, 'output');
-        }
-
-        if (typeof globalThis.DATA_ROOT === 'string') {
-            return path.resolve(globalThis.DATA_ROOT, '_webpack', webpack.version, 'output');
-        }
-
-        throw new Error('DATA_ROOT variable is not set.');
-    }
-
-    const cacheDirectory = getCacheDirectory();
-    const outputDirectory = getOutputDirectory();
-
+ * Creates the production frontend bundle configuration.
+ * @param {object} options Build options.
+ * @param {string} options.outputPath Output directory.
+ * @param {Record<string, object>} options.builtinManifests Built-in extension manifests.
+ * @param {Record<string, object>} options.builtinResources Built-in extension resources.
+ * @param {Record<string, string>} options.startupTemplates Startup template contents.
+ * @returns {import('webpack').Configuration} Webpack configuration.
+ */
+export default function getFrontendConfig({ outputPath, builtinManifests, builtinResources, startupTemplates }) {
     return {
         mode: 'production',
-        entry: path.join(serverDirectory, 'public/lib.js'),
-        cache: {
-            type: 'filesystem',
-            cacheDirectory: cacheDirectory,
-            store: 'pack',
-            compression: 'gzip',
+        entry: {
+            app: path.join(publicDirectory, 'scripts', 'frontend-entry.js'),
         },
+        cache: false,
         devtool: false,
         watch: false,
-        module: {},
-        stats: {
-            preset: 'minimal',
-            assets: false,
-            modules: false,
-            colors: true,
-            timings: true,
+        plugins: [
+            new webpack.DefinePlugin({
+                __BUILTIN_EXTENSION_MANIFESTS__: JSON.stringify(builtinManifests),
+                __BUILTIN_EXTENSION_RESOURCES__: JSON.stringify(builtinResources),
+                __STARTUP_TEMPLATES__: JSON.stringify(startupTemplates),
+            }),
+        ],
+        resolve: {
+            alias: {
+                '/script.js': path.join(publicDirectory, 'script.js'),
+            },
         },
-        experiments: {
-            outputModule: true,
+        optimization: {
+            concatenateModules: false,
+            moduleIds: 'deterministic',
+            chunkIds: 'deterministic',
+            runtimeChunk: {
+                name: 'runtime',
+            },
+            splitChunks: {
+                chunks: 'all',
+                cacheGroups: {
+                    stmb: {
+                        test: module => Boolean(module.resource && /^stmb(?:-.+)?\.js$/u.test(path.basename(module.resource)) && path.dirname(module.resource) === path.join(publicDirectory, 'scripts')),
+                        name: 'stmb',
+                        priority: 40,
+                        enforce: true,
+                        reuseExistingChunk: true,
+                    },
+                    vendor: {
+                        test: /[\\/]node_modules[\\/]/u,
+                        name: 'vendor',
+                        priority: 30,
+                        enforce: true,
+                        reuseExistingChunk: true,
+                    },
+                },
+            },
         },
         performance: {
             hints: false,
         },
+        stats: {
+            preset: 'errors-warnings',
+            assets: true,
+            entrypoints: true,
+            modules: true,
+            timings: true,
+        },
         output: {
-            path: outputDirectory,
-            filename: 'lib.js',
-            libraryTarget: 'module',
+            path: outputPath,
+            publicPath: '/dist/',
+            filename: '[name].js',
+            chunkFilename: 'chunks/[name].js',
+            clean: true,
         },
     };
 }

@@ -1,4 +1,5 @@
 import { t, translate } from '../../../../i18n.js';
+import { renderTemplateAsync } from '../../../../templates.js';
 import { Popup } from '../../../../popup.js';
 import { getSortableDelay } from '../../../../utils.js';
 import { log, warn } from '../../index.js';
@@ -58,9 +59,9 @@ export class SettingsUi {
     }
     async render() {
         if (!this.dom) {
-            const response = await fetch('/scripts/extensions/quick-reply/html/settings.html', { cache: 'no-store' });
-            if (response.ok) {
-                this.template = document.createRange().createContextualFragment(await response.text()).querySelector('#qr--settings');
+            const template = await renderTemplateAsync('scripts/extensions/quick-reply/html/settings.html', {}, false, false, true);
+            if (template) {
+                this.template = document.createRange().createContextualFragment(template).querySelector('#qr--settings');
                 // @ts-ignore
                 this.dom = this.template.cloneNode(true);
                 this.prepareDom();

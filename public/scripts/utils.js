@@ -6,11 +6,11 @@ import {
     lodash,
 } from '../lib.js';
 
+import { debounce_timeout } from './constants.js';
 import { getContext } from './extensions.js';
 import { characters, getRequestHeaders, processDroppedFiles, this_chid, user_avatar } from '../script.js';
 import { isMobile } from './RossAscends-mods.js';
 import { collapseNewlines, power_user } from './power-user.js';
-import { debounce_timeout } from './constants.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { SlashCommandClosure } from './slash-commands/SlashCommandClosure.js';
 import { getTagsList } from './tags.js';
@@ -2087,8 +2087,8 @@ export async function getReadableText(document, textSelector = 'body') {
  */
 export async function extractTextFromPDF(blob) {
     if (!('pdfjsLib' in window)) {
-        await import('../lib/pdf.min.mjs');
-        await import('../lib/pdf.worker.min.mjs');
+        await import(/* webpackIgnore: true */ '../lib/pdf.min.mjs');
+        await import(/* webpackIgnore: true */ '../lib/pdf.worker.min.mjs');
     }
 
     const buffer = await getFileBuffer(blob);
@@ -2128,8 +2128,8 @@ export async function extractTextFromMarkdown(blob) {
 
 export async function extractTextFromEpub(blob) {
     if (!('ePub' in window)) {
-        await import('../lib/jszip.min.js');
-        await import('../lib/epub.min.js');
+        await import(/* webpackIgnore: true */ '../lib/jszip.min.js');
+        await import(/* webpackIgnore: true */ '../lib/epub.min.js');
     }
 
     const book = ePub(blob);

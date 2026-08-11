@@ -9,7 +9,7 @@ import { deleteExtension, extensionNames, getContext, installExtension, renderEx
 import { POPUP_TYPE, Popup, callGenericPopup } from '../../popup.js';
 import { executeSlashCommandsWithOptions } from '../../slash-commands.js';
 import { accountStorage } from '../../util/AccountStorage.js';
-import { flashHighlight, getStringHash, isValidUrl } from '../../utils.js';
+import { getStringHash, isValidUrl } from '../../utils.js';
 import { t, translate } from '../../i18n.js';
 import { isAdmin } from '../../user.js';
 export { MODULE_NAME };
@@ -111,8 +111,7 @@ async function downloadAssetsList(url) {
                 }
 
                 console.debug(DEBUG_PREFIX, 'Updated available assets to', availableAssets);
-                // First extensions, then everything else
-                const assetTypes = Object.keys(availableAssets).sort((a, b) => (a === 'extension') ? -1 : (b === 'extension') ? 1 : 0);
+                const assetTypes = Object.keys(availableAssets).filter(type => type !== 'extension');
 
                 $('#assets_type_select').empty();
                 $('#assets_search').val('');
@@ -122,10 +121,6 @@ async function downloadAssetsList(url) {
                     const text = translate(KNOWN_TYPES[type] || type);
                     const option = $('<option />', { value: type, text: text });
                     $('#assets_type_select').append(option);
-                }
-
-                if (assetTypes.includes('extension')) {
-                    $('#assets_type_select').val('extension');
                 }
 
                 $('#assets_type_select').off('change').on('change', filterAssets);
@@ -271,11 +266,6 @@ async function downloadAssetsList(url) {
                 $('#assets_menu').show();
             })
             .catch((error) => {
-                // Info hint if the user maybe... likely accidently was trying to install an extension and we wanna help guide them? uwu :3
-                const installButton = $('#third_party_extension_button');
-                flashHighlight(installButton, 10_000);
-                toastr.info(translate('Click the flashing button at the top right corner of the menu.'), translate('Trying to install a custom extension?'), { timeOut: 10_000 });
-
                 // Error logged after, to appear on top
                 console.error(error);
                 toastr.error(translate('Problem with assets URL'), DEBUG_PREFIX + 'Cannot get assets list');
@@ -461,16 +451,6 @@ jQuery(async () => {
     const charactersButton = windowHtml.find('#assets-characters-button');
     charactersButton.on('click', async function () {
         openCharacterBrowser(false);
-    });
-
-    const installHintButton = windowHtml.find('.assets-install-hint-link');
-    if (!isAdmin()) {
-        installHintButton.parent().hide();
-    }
-    installHintButton.on('click', async function () {
-        const installButton = $('#third_party_extension_button');
-        flashHighlight(installButton, 5000);
-        toastr.info(t`Click the flashing button to install extensions.`, t`How to install extensions?`);
     });
 
     const connectButton = windowHtml.find('#assets-connect-button');

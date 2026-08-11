@@ -1,11 +1,21 @@
 import { DOMPurify, Handlebars } from '../lib.js';
+import { getBundledExtensionTemplate } from './builtin-extension-registry.js';
 import { applyLocale, translate } from './i18n.js';
+
+/* global __STARTUP_TEMPLATES__ */
+
+/** @type {Record<string, string>} */
+const STARTUP_TEMPLATES = __STARTUP_TEMPLATES__;
 
 /**
  * @type {Map<string, function>}
  * @description Cache for Handlebars templates.
  */
 const TEMPLATE_CACHE = new Map();
+
+function getBundledTemplate(pathToTemplate) {
+    return STARTUP_TEMPLATES[pathToTemplate] ?? getBundledExtensionTemplate(pathToTemplate);
+}
 
 /**
  * Loads a URL content using XMLHttpRequest synchronously.
@@ -61,7 +71,7 @@ export async function renderTemplateAsync(templateId, templateData = {}, sanitiz
     async function fetchTemplateAsync(pathToTemplate) {
         let template = TEMPLATE_CACHE.get(pathToTemplate);
         if (!template) {
-            const templateContent = await getUrlAsync(pathToTemplate);
+            const templateContent = getBundledTemplate(pathToTemplate) ?? await getUrlAsync(pathToTemplate);
             template = Handlebars.compile(templateContent);
             TEMPLATE_CACHE.set(pathToTemplate, template);
         }
@@ -103,7 +113,7 @@ export function renderTemplate(templateId, templateData = {}, sanitize = true, l
     function fetchTemplateSync(pathToTemplate) {
         let template = TEMPLATE_CACHE.get(pathToTemplate);
         if (!template) {
-            const templateContent = getUrlSync(pathToTemplate);
+            const templateContent = getBundledTemplate(pathToTemplate) ?? getUrlSync(pathToTemplate);
             template = Handlebars.compile(templateContent);
             TEMPLATE_CACHE.set(pathToTemplate, template);
         }

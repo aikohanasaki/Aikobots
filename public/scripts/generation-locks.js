@@ -208,7 +208,7 @@ async function askToApplyGenerationLock(resolved) {
 }
 
 async function getConnectionManagerModule() {
-    return await import('./extensions/connection-manager/index.js');
+    return await import(/* webpackChunkName: "builtins" */ './extensions/connection-manager/index.js');
 }
 
 function getProfileById(profileId) {

@@ -1,6 +1,6 @@
 /**
  * Add all the libraries that you want to expose to the client here.
- * They are bundled and exposed by Webpack in the /lib.js file.
+ * They are bundled into the production frontend vendor/app chunks by Webpack.
  */
 import lodash from 'lodash';
 import Fuse from 'fuse.js';

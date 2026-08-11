@@ -5,7 +5,7 @@ import { parse as parseJs } from 'acorn';
 import { parse as parseHtml } from 'parse5';
 
 const PUBLIC_ROOT = path.resolve(process.cwd(), 'public');
-const SKIPPED_DIRECTORIES = new Set(['lib', 'locales', 'third-party']);
+const SKIPPED_DIRECTORIES = new Set(['dist', 'lib', 'locales', 'third-party']);
 const LOCALIZABLE_EXTENSIONS = new Set(['.html', '.js']);
 const ATTRIBUTE_DIRECTIVE = /^\[([^\]\s]+)\]([\s\S]+)$/;
 const LOCALIZABLE_ATTRIBUTES = ['title', 'placeholder', 'aria-label', 'alt'];

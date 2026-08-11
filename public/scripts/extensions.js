@@ -1,6 +1,7 @@
 import { DOMPurify, Popper } from '../lib.js';
 
 import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION } from '../script.js';
+import { getBuiltinExtensionManifests, getBuiltinExtensions, loadBuiltinExtension, loadBuiltinExtensionResources } from './builtin-extension-registry.js';
 import { showLoader } from './loader.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { renderTemplate, renderTemplateAsync } from './templates.js';
@@ -272,28 +273,6 @@ export async function doExtrasFetch(endpoint, args = {}) {
     return await fetch(endpoint, args);
 }
 
-/**
- * Discovers extensions from the API.
- * @returns {Promise<{name: string, type: string}[]>}
- */
-async function discoverExtensions() {
-    try {
-        const response = await fetch('/api/extensions/discover');
-
-        if (response.ok) {
-            const extensions = await response.json();
-            return extensions;
-        }
-        else {
-            return [];
-        }
-    }
-    catch (err) {
-        console.error(err);
-        return [];
-    }
-}
-
 function onDisableExtensionClick() {
     const name = $(this).data('name');
     disableExtension(name, false);
@@ -334,38 +313,6 @@ export async function disableExtension(name, reload = true) {
     } else {
         requiresReload = true;
     }
-}
-
-/**
- * Loads manifest.json files for extensions.
- * @param {string[]} names Array of extension names
- * @returns {Promise<Record<string, object>>} Object with extension names as keys and their manifests as values
- */
-async function getManifests(names) {
-    const obj = {};
-    const promises = [];
-
-    for (const name of names) {
-        const promise = new Promise((resolve, reject) => {
-            fetch(`/scripts/extensions/${name}/manifest.json`).then(async response => {
-                if (response.ok) {
-                    const json = await response.json();
-                    obj[name] = json;
-                    resolve();
-                } else {
-                    reject();
-                }
-            }).catch(err => {
-                reject();
-                console.log('Could not load manifest.json for ' + name, err);
-            });
-        });
-
-        promises.push(promise);
-    }
-
-    await Promise.allSettled(promises);
-    return obj;
 }
 
 /**
@@ -490,13 +437,6 @@ function autoConnectInputHandler() {
 }
 
 function syncAdminExtensionsControls() {
-    const controlSelector = '#extensions_notify_updates_label, #extensions_details, #third_party_extension_button';
-
-    if (!isAdmin()) {
-        $(controlSelector).remove();
-        return;
-    }
-
     if ($('#extensions_details').length) {
         return;
     }
@@ -508,17 +448,9 @@ function syncAdminExtensionsControls() {
     }
 
     extensionsHeading.after(`
-        <label id="extensions_notify_updates_label" for="extensions_notify_updates" class="checkbox_label flexNoGap">
-            <input id="extensions_notify_updates" type="checkbox">
-            <span data-i18n="Notify on extension updates">Notify on extension updates</span>
-        </label>
         <div id="extensions_details" class="menu_button_icon menu_button">
             <i class="fa-solid fa-cubes"></i>
             <span data-i18n="Manage extensions">Manage extensions</span>
-        </div>
-        <div id="third_party_extension_button" title="Import Extension From Git Repo" data-i18n="[title]Import Extension From Git Repo" class="menu_button menu_button_icon">
-            <i class="fa-solid fa-cloud-arrow-down"></i>
-            <span data-i18n="Install extension">Install extension</span>
         </div>
     `);
 }
@@ -617,14 +549,28 @@ function updateStatus(success) {
  * @param {object} manifest Extension manifest
  * @returns {Promise<void>} When the CSS is loaded
  */
-function addExtensionStyle(name, manifest) {
+async function addExtensionStyle(name, manifest) {
     if (!manifest.css) {
-        return Promise.resolve();
+        return;
+    }
+
+    const id = sanitizeSelector(`${name}-css`);
+    if (getExtensionType(name) === 'system') {
+        if (document.getElementById(id)) {
+            return;
+        }
+        const resources = await loadBuiltinExtensionResources(name);
+        if (resources?.style) {
+            const style = document.createElement('style');
+            style.id = id;
+            style.textContent = resources.style;
+            document.head.appendChild(style);
+        }
+        return;
     }
 
     return new Promise((resolve, reject) => {
         const url = `/scripts/extensions/${name}/${manifest.css}`;
-        const id = sanitizeSelector(`${name}-css`);
 
         if ($(`link[id="${id}"]`).length === 0) {
             const link = document.createElement('link');
@@ -639,6 +585,8 @@ function addExtensionStyle(name, manifest) {
                 reject(e);
             };
             document.head.appendChild(link);
+        } else {
+            resolve();
         }
     });
 }
@@ -649,9 +597,14 @@ function addExtensionStyle(name, manifest) {
  * @param {object} manifest Extension manifest
  * @returns {Promise<void>} When the script is loaded
  */
-function addExtensionScript(name, manifest) {
+async function addExtensionScript(name, manifest) {
     if (!manifest.js) {
-        return Promise.resolve();
+        return;
+    }
+
+    if (getExtensionType(name) === 'system') {
+        await loadBuiltinExtension(name);
+        return;
     }
 
     return new Promise((resolve, reject) => {
@@ -675,6 +628,8 @@ function addExtensionScript(name, manifest) {
                 }
             };
             document.body.appendChild(script);
+        } else {
+            resolve();
         }
     });
 }
@@ -684,10 +639,10 @@ function addExtensionScript(name, manifest) {
  * @param {string} name Extension name
  * @param {object} manifest Manifest object
  */
-function addExtensionLocale(name, manifest) {
+async function addExtensionLocale(name, manifest) {
     // No i18n data in the manifest
     if (!manifest.i18n || typeof manifest.i18n !== 'object') {
-        return Promise.resolve();
+        return;
     }
 
     const currentLocale = getCurrentLocale();
@@ -695,7 +650,16 @@ function addExtensionLocale(name, manifest) {
 
     // Manifest doesn't provide a locale file for the current locale
     if (!localeFile) {
-        return Promise.resolve();
+        return;
+    }
+
+    if (getExtensionType(name) === 'system') {
+        const resources = await loadBuiltinExtensionResources(name);
+        const data = resources?.locales?.[currentLocale];
+        if (data && typeof data === 'object') {
+            addLocaleData(currentLocale, data);
+        }
+        return;
     }
 
     return fetch(`/scripts/extensions/${name}/${localeFile}`)
@@ -867,7 +831,6 @@ function getExtensionLoadErrorsHtml() {
  * Generates the HTML strings for all extensions and displays them in a popup.
  */
 async function showExtensionsDetails() {
-    const abortController = new AbortController();
     let popupPromise;
     try {
         // If we are updating an extension, the "old" popup is still active. We should close that.
@@ -879,13 +842,6 @@ async function showExtensionsDetails() {
         }
         const htmlErrors = getExtensionLoadErrorsHtml();
         const htmlDefault = $('<div class="marginBot10"><h3 class="textAlignCenter">' + t`Built-in Extensions:` + '</h3></div>');
-        const htmlExternal = $('<div class="marginBot10"><h3 class="textAlignCenter">' + t`Installed Extensions:` + '</h3></div>');
-        const htmlLoading = $(`<div class="flex-container alignItemsCenter justifyCenter marginTop10 marginBot5">
-            <i class="fa-solid fa-spinner fa-spin"></i>
-            <span>` + t`Loading third-party extensions... Please wait...` + `</span>
-        </div>`);
-
-        htmlExternal.append(htmlLoading);
 
         const sortOrderKey = 'extensions_sortByName';
         const sortByName = accountStorage.getItem(sortOrderKey) === 'true';
@@ -893,37 +849,18 @@ async function showExtensionsDetails() {
         const extensions = Object.entries(manifests).sort((a, b) => sortFn(a[1], b[1])).map(getExtensionData);
 
         extensions.forEach(value => {
-            const { isExternal, extensionHtml } = value;
-            const container = isExternal ? htmlExternal : htmlDefault;
-            container.append(extensionHtml);
+            htmlDefault.append(value.extensionHtml);
         });
 
         const html = $('<div></div>')
             .addClass('extensions_info')
             .append(htmlErrors)
             .append(htmlDefault)
-            .append(htmlExternal)
             .append(getModuleInformation());
 
         {
-            const updateAction = async (force) => {
-                requiresReload = true;
-                await autoUpdateExtensions(force);
-                await popup.complete(POPUP_RESULT.AFFIRMATIVE);
-            };
-
             const toolbar = document.createElement('div');
             toolbar.classList.add('extensions_toolbar');
-
-            const updateAllButton = document.createElement('button');
-            updateAllButton.classList.add('menu_button', 'menu_button_icon');
-            updateAllButton.textContent = t`Update all`;
-            updateAllButton.addEventListener('click', () => updateAction(true));
-
-            const updateEnabledOnlyButton = document.createElement('button');
-            updateEnabledOnlyButton.classList.add('menu_button', 'menu_button_icon');
-            updateEnabledOnlyButton.textContent = t`Update enabled`;
-            updateEnabledOnlyButton.addEventListener('click', () => updateAction(false));
 
             const flexExpander = document.createElement('div');
             flexExpander.classList.add('expander');
@@ -932,12 +869,11 @@ async function showExtensionsDetails() {
             sortOrderButton.classList.add('menu_button', 'menu_button_icon');
             sortOrderButton.textContent = sortByName ? t`Sort: Display Name` : t`Sort: Loading Order`;
             sortOrderButton.addEventListener('click', async () => {
-                abortController.abort();
                 accountStorage.setItem(sortOrderKey, sortByName ? 'false' : 'true');
                 await showExtensionsDetails();
             });
 
-            toolbar.append(updateAllButton, updateEnabledOnlyButton, flexExpander, sortOrderButton);
+            toolbar.append(flexExpander, sortOrderButton);
             html.prepend(toolbar);
         }
 
@@ -966,14 +902,12 @@ async function showExtensionsDetails() {
         });
         popupPromise = popup.show();
         popup.content.scrollTop = initialScrollTop;
-        checkForUpdatesManual(sortFn, abortController.signal).finally(() => htmlLoading.remove());
     } catch (error) {
         console.error(error);
         toastr.error(appendErrorCode(t`Error loading extensions. See browser console for details.`, error));
     }
     if (popupPromise) {
         await popupPromise;
-        abortController.abort();
     }
     if (requiresReload) {
         showLoader();
@@ -1347,10 +1281,10 @@ export async function loadExtensionSettings(settings, versionChanged, enableAuto
 
     // Activate offline extensions
     await eventSource.emit(event_types.EXTENSIONS_FIRST_LOAD);
-    const extensions = await discoverExtensions();
+    const extensions = getBuiltinExtensions();
     extensionNames = extensions.map(x => x.name);
     extensionTypes = Object.fromEntries(extensions.map(x => [x.name, x.type]));
-    manifests = await getManifests(extensionNames);
+    manifests = getBuiltinExtensionManifests();
 
     if (versionChanged && enableAutoUpdate) {
         await autoUpdateExtensions(false);
@@ -1391,64 +1325,6 @@ function processVersionCheckQueue() {
         activeRequestsCount--;
         processVersionCheckQueue();
     });
-}
-
-/**
- * Performs a manual check for updates on all 3rd-party extensions.
- * @param {function} sortFn Sort function
- * @param {AbortSignal} abortSignal Signal to abort the operation
- * @returns {Promise<any[]>}
- */
-async function checkForUpdatesManual(sortFn, abortSignal) {
-    const promises = [];
-    for (const id of Object.keys(manifests).filter(x => x.startsWith('third-party')).sort((a, b) => sortFn(manifests[a], manifests[b]))) {
-        const externalId = id.replace('third-party', '');
-        const promise = enqueueVersionCheck(async () => {
-            try {
-                const data = await getExtensionVersion(externalId, abortSignal);
-                const extensionBlock = document.querySelector(`.extension_block[data-name="${externalId}"]`);
-                if (extensionBlock && data) {
-                    if (data.isUpToDate === false) {
-                        const buttonElement = extensionBlock.querySelector('.btn_update');
-                        if (buttonElement) {
-                            buttonElement.classList.remove('displayNone');
-                        }
-                        const nameElement = extensionBlock.querySelector('.extension_name');
-                        if (nameElement) {
-                            nameElement.classList.add('update_available');
-                        }
-                    }
-                    let branch = data.currentBranchName;
-                    let commitHash = data.currentCommitHash;
-                    let origin = data.remoteUrl;
-
-                    const originLink = extensionBlock.querySelector('a');
-                    if (originLink) {
-                        try {
-                            const url = new URL(origin);
-                            if (!['https:', 'http:'].includes(url.protocol)) {
-                                throw new Error('Invalid protocol');
-                            }
-                            originLink.href = url.href;
-                            originLink.target = '_blank';
-                            originLink.rel = 'noopener noreferrer';
-                        } catch (error) {
-                            console.log('Error setting origin link', originLink, error);
-                        }
-                    }
-
-                    const versionElement = extensionBlock.querySelector('.extension_version');
-                    if (versionElement) {
-                        versionElement.textContent += ` (${branch}-${commitHash.substring(0, 7)})`;
-                    }
-                }
-            } catch (error) {
-                console.error('Error checking for extension updates', error);
-            }
-        });
-        promises.push(promise);
-    }
-    return Promise.allSettled(promises);
 }
 
 /**

@@ -919,17 +919,6 @@ export {
     appendMediaToMessage as appendImageToMessage,
 };
 
-/**
- * Wait for page to load before continuing the app initialization.
- */
-await new Promise((resolve) => {
-    if (document.readyState === 'complete') {
-        resolve();
-    } else {
-        window.addEventListener('load', resolve);
-    }
-});
-
 // Configure toast library:
 toastr.options = {
     positionClass: 'toast-top-center',

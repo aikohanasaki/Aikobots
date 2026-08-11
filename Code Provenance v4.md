@@ -1,5 +1,7 @@
 # Aikobots v4: Native SQLite and Transactional Chat Mutations
 
+This document records the historical v4 architecture. Committed frontend production bundles and the bundled-client extension policy belong to [Code Provenance v5](Code%20Provenance%20v5.md).
+
 Aikobots v4 keeps the SQLite chat format introduced in v3, but changes how that format is used. v3 treated each `.sqlite` chat as a whole-file artifact loaded through `sql.js`, modified in memory, exported, and atomically replaced. v4 moves ordinary chat reads and writes to native SQLite through `better-sqlite3`, with bounded SQL reads, WAL-backed transactions, stable message and swipe identities, idempotent mutation receipts, and stronger client/server coordination.
 
 v4 also moves more Memory Books work behind server-managed lorebook operations, adds group-memory workflows, improves chat and swipe editing reliability, introduces Recent Chats and the character Catalog on the welcome screen, preserves per-lorebook sort choices, and adds a Selenium end-to-end test harness.

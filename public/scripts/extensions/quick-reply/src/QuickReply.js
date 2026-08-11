@@ -1,4 +1,5 @@
 import { t, translate } from '../../../i18n.js';
+import { renderTemplateAsync } from '../../../templates.js';
 import { hljs, morphdom } from '../../../../lib.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../../popup.js';
 import { setSlashCommandAutoComplete } from '../../../slash-commands.js';
@@ -389,9 +390,9 @@ export class QuickReply {
     }
 
     async showEditor() {
-        const response = await fetch('/scripts/extensions/quick-reply/html/qrEditor.html', { cache: 'no-store' });
-        if (response.ok) {
-            this.template = document.createRange().createContextualFragment(await response.text()).querySelector('#qr--modalEditor');
+        const template = await renderTemplateAsync('scripts/extensions/quick-reply/html/qrEditor.html', {}, false, false, true);
+        if (template) {
+            this.template = document.createRange().createContextualFragment(template).querySelector('#qr--modalEditor');
             /**@type {HTMLElement} */
             // @ts-ignore
             const dom = this.template.cloneNode(true);

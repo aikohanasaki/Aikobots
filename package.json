@@ -1,6 +1,6 @@
 {
     "name": "aikobots",
-    "version": "4.2.5",
+    "version": "5.0.0",
     "repository": {
         "type": "git",
         "url": "https://github.com/aikohanasaki/Aikobots.git"
@@ -94,7 +94,6 @@
         "url-join": "^5.0.0",
         "vectra": "^0.2.2",
         "wavefile": "^11.0.0",
-        "webpack": "^5.98.0",
         "write-file-atomic": "^5.0.1",
         "ws": "^8.18.3",
         "yaml": "^2.8.1",
@@ -123,6 +122,8 @@
         "start:deno": "deno run --allow-run --allow-net --allow-read --allow-write --allow-sys --allow-env server.js",
         "start:bun": "bun server.js",
         "start:no-csrf": "node server.js --disableCsrf",
+        "build:frontend": "node scripts/build-frontend.mjs",
+        "check:frontend-build": "node scripts/check-frontend-build.mjs",
         "postinstall": "node post-install.js",
         "lint": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js",
         "lint:fix": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js --fix",
@@ -136,6 +137,7 @@
         "smoke:worldinfo": "node tests/world-info-smoke.mjs",
         "test:selenium:mvp": "node tests/selenium/run.mjs",
         "test:selenium:mvp:smoke": "node tests/selenium/run.mjs --smoke",
+        "test:frontend:smoke": "node tests/frontend-bundle-smoke.mjs",
         "plugins:update": "node plugins update",
         "plugins:install": "node plugins install"
     },
@@ -179,6 +181,7 @@
         "dotenv": "^8.6.0",
         "eslint-plugin-jsdoc": "^62.8.1",
         "playwright": "^1.58.2",
-        "selenium-webdriver": "^4.34.0"
+        "selenium-webdriver": "^4.34.0",
+        "webpack": "^5.98.0"
     }
 }

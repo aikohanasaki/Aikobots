@@ -89,7 +89,7 @@ export class KokoroTtsProvider {
                 }
 
                 // Create a new worker
-                this.worker = new Worker(new URL('./kokoro-worker.js', import.meta.url), { type: 'module' });
+                this.worker = new Worker('/scripts/extensions/tts/kokoro-worker.js', { type: 'module' });
 
                 // Set up message handling
                 this.worker.onmessage = this.handleWorkerMessage.bind(this);

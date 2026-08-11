@@ -1,0 +1,52 @@
+{
+  "formatVersion": 1,
+  "initialRequestCount": 10,
+  "initialGzipBytes": 1661963,
+  "builtinExtensionCount": 13,
+  "stmbModuleCount": 28,
+  "assets": [
+    {
+      "name": "app.css",
+      "bytes": 487822,
+      "gzipBytes": 90763,
+      "sha256": "439e28b33c3e000ae69d320be7e116e854be2e92bfdf3ee68b2d5cc936e0b92b"
+    },
+    {
+      "name": "app.js",
+      "bytes": 1832948,
+      "gzipBytes": 491949,
+      "sha256": "2d0d9e49138724369af57d27c3a23f59c29522184c3aa39d7b8da07e80bed8ed"
+    },
+    {
+      "name": "chunks/builtins.js",
+      "bytes": 903157,
+      "gzipBytes": 187457,
+      "sha256": "b35f665cc9b6d4708576e86562536626d86b8d4548515ed87bda55b77176d4a1"
+    },
+    {
+      "name": "legacy.js",
+      "bytes": 578612,
+      "gzipBytes": 158729,
+      "sha256": "d1bd365a4c4c6f658d05f285822228d8ca824e5f8e65db3b7c19c2ac1f17510e"
+    },
+    {
+      "name": "runtime.js",
+      "bytes": 3658,
+      "gzipBytes": 1811,
+      "sha256": "5c479b1f67afbe1f2049f962c31e20c740a4fc7b141569cd4299cd4772337399"
+    },
+    {
+      "name": "stmb.js",
+      "bytes": 693202,
+      "gzipBytes": 172713,
+      "sha256": "1ceb0b020108f9b4d41015375ab0e0b02833557bab28b1422748113b44478f99"
+    },
+    {
+      "name": "vendor.js",
+      "bytes": 1814139,
+      "gzipBytes": 555521,
+      "sha256": "e8fc035e60c57e811f9bdfc43731328fa847308d999cde1f34814a20e9163fad"
+    }
+  ],
+  "warnings": []
+}
