@@ -134,7 +134,7 @@ describe('character submission distribution rollback', () => {
     });
 });
 
-describe('default content character deletion', () => {
+describe('default content character index', () => {
     let dataRoot;
     let defaultContentRoot;
     let previousDataRoot;
@@ -155,6 +155,31 @@ describe('default content character deletion', () => {
         if (dataRoot) {
             fs.rmSync(dataRoot, { recursive: true, force: true });
         }
+    });
+
+    it('adds pushed characters to the index without replacing production entries', async () => {
+        const charactersPath = path.join(defaultContentRoot, 'characters');
+        const indexPath = path.join(defaultContentRoot, 'index.json');
+        fs.mkdirSync(charactersPath, { recursive: true });
+        fs.writeFileSync(path.join(charactersPath, 'Existing.png'), Buffer.from(BASE_PNG, 'base64'));
+        fs.writeFileSync(path.join(charactersPath, 'Pushed.png'), Buffer.from(BASE_PNG, 'base64'));
+        fs.writeFileSync(path.join(charactersPath, 'Ignore.txt'), 'not a character', 'utf8');
+        fs.writeFileSync(indexPath, JSON.stringify([
+            { filename: 'settings.json', type: 'settings' },
+            { filename: 'characters/Existing.png', type: 'character' },
+            { filename: 'characters/ProductionOnly.png', type: 'character' },
+        ], null, 4));
+
+        const { refreshDefaultContentCharacterIndex } = await importCharacterSubmissionsModule('refreshDefaultContent');
+
+        await expect(refreshDefaultContentCharacterIndex()).resolves.toBe(1);
+        expect(JSON.parse(fs.readFileSync(indexPath, 'utf8'))).toEqual([
+            { filename: 'settings.json', type: 'settings' },
+            { filename: 'characters/Existing.png', type: 'character' },
+            { filename: 'characters/ProductionOnly.png', type: 'character' },
+            { filename: 'characters/Pushed.png', type: 'character' },
+        ]);
+        await expect(refreshDefaultContentCharacterIndex()).resolves.toBe(0);
     });
 
     it('removes the catalog character file and matching index entry', async () => {

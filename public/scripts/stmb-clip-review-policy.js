@@ -11,6 +11,13 @@ export const MEMORY_ASSISTANCE_MODE_AUTOMATIC = 'automatic';
 export const CLIP_LONG_ENTRY_TOKEN_THRESHOLD = 500;
 export const CLIP_REVIEW_REQUIRES_REVIEW = 'CLIP_REVIEW_REQUIRES_REVIEW';
 
+/** Chooses the active chat Memory Book when it is available, otherwise the first selectable book. */
+export function getDefaultClipReviewLorebookName(lorebookNames, preferredLorebookName = '') {
+    const names = Array.isArray(lorebookNames) ? lorebookNames : [];
+    const preferred = String(preferredLorebookName || '').trim();
+    return names.includes(preferred) ? preferred : String(names[0] || '');
+}
+
 export const DEFAULT_CLIP_REVIEW_PROMPT = `SYSTEM: You review existing Memory Book Clips against one newly processed chat scene.
 
 For each supplied Clip, gather all facts concerning this topic. Resolve later information against earlier information. Distinguish current state, completed events, decisions, unresolved issues, and future plans. Preserve exact details where available.
