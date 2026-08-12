@@ -226,6 +226,59 @@ class DataMaidDialog {
         const template = await renderTemplateAsync('dataMaidCategory', viewModel);
         const categoryElement = document.createElement('div');
         categoryElement.innerHTML = template;
+        const selectAll = categoryElement.querySelector('.dataMaidSelectAll');
+        const itemCheckboxes = () => Array.from(categoryElement.querySelectorAll('.dataMaidItemSelect'));
+        let deletionPending = false;
+
+        /** Synchronizes selection controls and displayed category totals with the remaining items. */
+        const updateCategoryUi = () => {
+            const checkboxes = itemCheckboxes();
+            const selectedCount = checkboxes.filter(checkbox => checkbox.checked).length;
+            selectAll.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
+            selectAll.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+            categoryElement.querySelector('.dataMaidSelectedCount').textContent = t`${selectedCount} selected`;
+            categoryElement.querySelector('.dataMaidDeleteSelected').disabled = deletionPending || selectedCount === 0;
+            categoryElement.querySelector('.dataMaidCategoryItemCount').textContent = items.length;
+            categoryElement.querySelector('.dataMaidCategoryTotalSize').textContent = humanFileSize(items.reduce((sum, item) => sum + item.size, 0));
+        };
+
+        /** Prevents overlapping category mutations while a delete request is pending. */
+        const setDeletionPending = (pending) => {
+            deletionPending = pending;
+            categoryElement.querySelectorAll('.dataMaidDeleteSelected, .dataMaidItemDelete, .dataMaidItemSelect, .dataMaidSelectAll')
+                .forEach(control => control.disabled = pending);
+            const deleteAll = categoryElement.querySelector('.dataMaidDeleteAll');
+            deleteAll.classList.toggle('disabled', pending);
+            deleteAll.setAttribute('aria-disabled', String(pending));
+            updateCategoryUi();
+        };
+
+        /** Removes successfully deleted records and refreshes or removes their category. */
+        const removeDeletedItems = (hashes) => {
+            const deletedHashes = new Set(hashes);
+            categoryElement.querySelectorAll('.dataMaidItem').forEach(item => {
+                if (deletedHashes.has(item.getAttribute('data-hash'))) {
+                    item.remove();
+                }
+            });
+            for (let index = items.length - 1; index >= 0; index--) {
+                if (deletedHashes.has(items[index].hash)) {
+                    items.splice(index, 1);
+                }
+            }
+            if (items.length === 0) {
+                categoryElement.remove();
+                this.displayEmptyPlaceholder();
+                return;
+            }
+            updateCategoryUi();
+        };
+
+        selectAll.addEventListener('change', () => {
+            itemCheckboxes().forEach(checkbox => checkbox.checked = selectAll.checked);
+            updateCategoryUi();
+        });
+        itemCheckboxes().forEach(checkbox => checkbox.addEventListener('change', updateCategoryUi));
         categoryElement.querySelectorAll('.dataMaidItemView').forEach(button => {
             button.addEventListener('click', async () => {
                 const item = button.closest('.dataMaidItem');
@@ -248,39 +301,77 @@ class DataMaidDialog {
         categoryElement.querySelectorAll('.dataMaidDeleteAll').forEach(button => {
             button.addEventListener('click', async (event) => {
                 event.stopPropagation();
-                const confirm = await Popup.show.confirm(t`Are you sure?`, t`This will permanently delete all files in this category. THIS CANNOT BE UNDONE!`);
+                if (deletionPending) {
+                    return;
+                }
+                setDeletionPending(true);
+                try {
+                    const confirm = await Popup.show.confirm(t`Are you sure?`, t`This will permanently delete all files in this category. THIS CANNOT BE UNDONE!`);
+                    if (!confirm) {
+                        return;
+                    }
+
+                    const hashes = items.map(item => item.hash).filter(hash => hash);
+                    if (await this.delete(hashes)) {
+                        removeDeletedItems(hashes);
+                    }
+                } finally {
+                    setDeletionPending(false);
+                }
+            });
+
+        });
+        categoryElement.querySelector('.dataMaidDeleteSelected').addEventListener('click', async () => {
+            if (deletionPending) {
+                return;
+            }
+            const hashes = itemCheckboxes()
+                .filter(checkbox => checkbox.checked)
+                .map(checkbox => checkbox.closest('.dataMaidItem')?.getAttribute('data-hash'))
+                .filter(hash => hash);
+            if (hashes.length === 0) {
+                return;
+            }
+
+            setDeletionPending(true);
+            try {
+                const confirm = await Popup.show.confirm(t`Are you sure?`, t`This will permanently delete the selected files. THIS CANNOT BE UNDONE!`);
                 if (!confirm) {
                     return;
                 }
 
-                const hashes = items.map(item => item.hash).filter(hash => hash);
-                await this.delete(hashes);
-
-                categoryElement.remove();
-                this.displayEmptyPlaceholder();
-            });
-
+                if (await this.delete(hashes)) {
+                    removeDeletedItems(hashes);
+                }
+            } finally {
+                setDeletionPending(false);
+            }
         });
         categoryElement.querySelectorAll('.dataMaidItemDelete').forEach(button => {
             button.addEventListener('click', async () => {
+                if (deletionPending) {
+                    return;
+                }
                 const item = button.closest('.dataMaidItem');
                 const hash = item?.getAttribute('data-hash');
                 if (hash) {
-                    const confirm = await Popup.show.confirm(t`Are you sure?`, t`This will permanently delete the file. THIS CANNOT BE UNDONE!`);
-                    if (!confirm) {
-                        return;
-                    }
-                    if (await this.delete([hash])) {
-                        item.remove();
-                        items.splice(items.findIndex(i => i.hash === hash), 1);
-                        if (items.length === 0) {
-                            categoryElement.remove();
-                            this.displayEmptyPlaceholder();
+                    setDeletionPending(true);
+                    try {
+                        const confirm = await Popup.show.confirm(t`Are you sure?`, t`This will permanently delete the file. THIS CANNOT BE UNDONE!`);
+                        if (!confirm) {
+                            return;
                         }
+
+                        if (await this.delete([hash])) {
+                            removeDeletedItems([hash]);
+                        }
+                    } finally {
+                        setDeletionPending(false);
                     }
                 }
             });
         });
+        updateCategoryUi();
         return categoryElement;
     }
 
@@ -351,6 +442,7 @@ class DataMaidDialog {
             return true;
         } catch (error) {
             console.error('Error deleting item:', error);
+            toastr.error(appendErrorCode(t`An error has occurred. Check the console for details.`, error));
             return false;
         }
     }

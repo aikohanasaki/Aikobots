@@ -95,7 +95,7 @@ function stripTrailingJsonExtension(name) {
     return String(name || '').replace(/\.json$/i, '');
 }
 
-function getCanonicalLorebookName(name) {
+export function getCanonicalLorebookName(name) {
     const sanitizedName = sanitize(String(name || '').trim());
     return stripTrailingJsonExtension(sanitizedName);
 }

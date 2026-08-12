@@ -75,24 +75,26 @@ function getCachedRegistry(filePath, stat) {
     }
 
     if (!stat && entry.mtimeMs === null) {
-        return structuredClone(entry.data);
+        return { ...entry, data: structuredClone(entry.data) };
     }
 
     if (stat && entry.mtimeMs === stat.mtimeMs) {
-        return structuredClone(entry.data);
+        return { ...entry, data: structuredClone(entry.data) };
     }
 
     return null;
 }
 
-function setCachedRegistry(filePath, data, mtimeMs) {
+function setCachedRegistry(filePath, data, mtimeMs, { loadFailed = false, loadErrorMessage = '' } = {}) {
     cache.set(filePath, {
         mtimeMs,
         data: structuredClone(data),
+        loadFailed,
+        loadErrorMessage,
     });
 }
 
-export function readHiddenLorebookBindings({ rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
+export function readHiddenLorebookBindings({ rootDir = globalThis.DATA_ROOT || process.cwd(), throwOnError = false } = {}) {
     const filePath = getRegistryPath(rootDir);
     let stat = null;
     try {
@@ -105,7 +107,10 @@ export function readHiddenLorebookBindings({ rootDir = globalThis.DATA_ROOT || p
     const cached = getCachedRegistry(filePath, stat);
 
     if (cached) {
-        return cached;
+        if (cached.loadFailed && throwOnError) {
+            throw new Error(cached.loadErrorMessage || 'Failed to read hidden lorebook bindings registry.');
+        }
+        return cached.data;
     }
 
     if (!stat) {
@@ -120,9 +125,15 @@ export function readHiddenLorebookBindings({ rootDir = globalThis.DATA_ROOT || p
         setCachedRegistry(filePath, normalized, stat.mtimeMs);
         return normalized;
     } catch (error) {
+        if (throwOnError) {
+            throw error;
+        }
         console.warn('[Lorebooks] Failed to read hidden lorebook bindings registry. Falling back to an empty registry.', error);
         const emptyRegistry = normalizeHiddenLorebookBindings();
-        setCachedRegistry(filePath, emptyRegistry, stat.mtimeMs);
+        setCachedRegistry(filePath, emptyRegistry, stat.mtimeMs, {
+            loadFailed: true,
+            loadErrorMessage: String(error?.message || error),
+        });
         return emptyRegistry;
     }
 }

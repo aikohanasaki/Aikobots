@@ -1692,4 +1692,9 @@
   ,"This file contains group preset locks. Import them?": "Este ficheiro contém bloqueios de predefinição de grupo. Importá-los?"
   ,"Import Default Preset": "Importar predefinição padrão"
   ,"Set the imported preset as the global default?": "Definir a predefinição importada como padrão global?"
+  ,"0 selected": "0 selecionados"
+  ,"${0} selected": "${0} selecionados"
+  ,"Delete selected": "Eliminar selecionados"
+  ,"Select this item": "Selecionar este item"
+  ,"This will permanently delete the selected files. THIS CANNOT BE UNDONE!": "Isto eliminará permanentemente os ficheiros selecionados. ESTA AÇÃO NÃO PODE SER ANULADA!"
 }

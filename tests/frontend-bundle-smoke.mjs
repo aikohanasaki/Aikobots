@@ -103,6 +103,170 @@ async function startServer(configPath, dataRoot) {
     throw lastError ?? new Error('Frontend smoke server did not start.');
 }
 
+/** Exercises Data Maid category selection and every deletion path against mocked reports. */
+async function testDataMaidMultiSelect(page, fatalBrowserDiagnostics) {
+    const startingDiagnosticIndex = fatalBrowserDiagnostics.length;
+    await page.setViewportSize({ width: 390, height: 800 });
+    const seedItems = [
+        { name: 'alpha.txt', hash: 'hash-a', parent: 'files', size: 1024, mtime: 1 },
+        { name: 'beta.txt', hash: 'hash-b', parent: 'files', size: 2048, mtime: 2 },
+        { name: 'gamma.txt', hash: 'hash-c', parent: 'files', size: 4096, mtime: 3 },
+    ];
+    const emptyReport = {
+        images: [],
+        chats: [],
+        groupChats: [],
+        avatarThumbnails: [],
+        backgroundThumbnails: [],
+        personaThumbnails: [],
+        layouts: [],
+        layoutAssets: [],
+        chatBackups: [],
+        settingsBackups: [],
+    };
+    let remainingItems = seedItems.map(item => ({ ...item }));
+    const deleteRequests = [];
+
+    await page.route('**/api/data-maid/report', async route => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ report: { ...emptyReport, files: remainingItems }, token: 'data-maid-smoke-token' }),
+        });
+    });
+    await page.route('**/api/data-maid/delete', async route => {
+        const request = route.request().postDataJSON();
+        deleteRequests.push(request);
+        remainingItems = remainingItems.filter(item => !request.hashes.includes(item.hash));
+        await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.route('**/api/data-maid/finalize', async route => await route.fulfill({ status: 204 }));
+
+    await page.locator('#data_maid_button').evaluate(button => button.click());
+    const dialog = page.locator('.dataMaidDialog');
+    await dialog.locator('.dataMaidStartButton').click();
+    let category = dialog.locator('.dataMaidCategory');
+    await category.waitFor();
+    await category.locator('.inline-drawer-toggle').click();
+    assert.equal(
+        await category.locator('.dataMaidCategoryContent').evaluate(content => content.scrollWidth <= content.clientWidth + 1),
+        true,
+        'Data Maid category controls must not overflow a narrow viewport.',
+    );
+
+    const selectAll = category.locator('.dataMaidSelectAll');
+    const deleteSelected = category.locator('.dataMaidDeleteSelected');
+    assert.equal(await deleteSelected.isDisabled(), true, 'Delete Selected must start disabled.');
+    await category.locator('.dataMaidItem[data-hash="hash-a"] .dataMaidItemSelect').check();
+    assert.equal(await category.locator('.dataMaidSelectedCount').textContent(), '1 selected');
+    assert.equal(await selectAll.evaluate(checkbox => checkbox.indeterminate), true, 'Partial selection must make Select All indeterminate.');
+    assert.equal(await deleteSelected.isEnabled(), true, 'Delete Selected must enable when an item is checked.');
+
+    await deleteSelected.click();
+    let confirmation = page.locator('dialog.popup').filter({ hasText: 'This will permanently delete the selected files.' });
+    await confirmation.locator('.popup-button-cancel').click();
+    await confirmation.waitFor({ state: 'detached' });
+    assert.equal(deleteRequests.length, 0, 'Canceling selected deletion must not send a request.');
+    assert.equal(await category.locator('.dataMaidItem').count(), 3, 'Canceling selected deletion must preserve every row.');
+
+    await selectAll.check();
+    assert.equal(await category.locator('.dataMaidItemSelect:checked').count(), 3, 'Select All must check every item.');
+    await selectAll.uncheck();
+    assert.equal(await category.locator('.dataMaidItemSelect:checked').count(), 0, 'Clearing Select All must uncheck every item.');
+    await selectAll.focus();
+    await page.keyboard.press('Space');
+    assert.equal(await category.locator('.dataMaidItemSelect:checked').count(), 3, 'Select All must support keyboard selection.');
+    await page.keyboard.press('Space');
+    assert.equal(await category.locator('.dataMaidItemSelect:checked').count(), 0, 'Select All must support keyboard clearing.');
+    await category.locator('.dataMaidItem[data-hash="hash-a"] .dataMaidItemSelect').check();
+    await category.locator('.dataMaidItem[data-hash="hash-b"] .dataMaidItemSelect').check();
+    await deleteSelected.click();
+    confirmation = page.locator('dialog.popup').filter({ hasText: 'This will permanently delete the selected files.' });
+    await confirmation.locator('.popup-button-ok').click();
+    await confirmation.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.querySelectorAll('.dataMaidItem').length === 1);
+    assert.deepEqual([...deleteRequests[0].hashes].sort(), ['hash-a', 'hash-b'], 'Selected deletion must send only checked hashes.');
+    assert.equal(await category.locator('.dataMaidItem[data-hash="hash-c"]').count(), 1, 'Selected deletion must preserve unchecked rows.');
+    assert.equal(await category.locator('.dataMaidCategoryItemCount').textContent(), '1');
+    assert.equal(await category.locator('.dataMaidCategoryTotalSize').textContent(), '4.0 KiB');
+    assert.equal(await deleteSelected.isDisabled(), true, 'Successful deletion must clear and disable the selected action.');
+
+    await dialog.locator('.dataMaidStartButton').click();
+    category = dialog.locator('.dataMaidCategory');
+    await category.waitFor();
+    assert.equal(await category.locator('.dataMaidItemSelect:checked').count(), 0, 'Rescanning must not retain selection.');
+    assert.equal(await category.locator('.dataMaidDeleteSelected').isDisabled(), true, 'Rescanning must reset Delete Selected.');
+
+    const expectedErrorIndex = fatalBrowserDiagnostics.length;
+    await page.evaluate(() => {
+        const originalFetch = window.fetch;
+        window.fetch = (input, init) => {
+            const url = typeof input === 'string' ? input : input.url;
+            if (url === '/api/data-maid/delete') {
+                window.fetch = originalFetch;
+                return Promise.resolve(new Response('', { status: 503, statusText: 'Expected smoke failure' }));
+            }
+            return originalFetch(input, init);
+        };
+    });
+    await category.locator('.dataMaidDeleteAll').click();
+    confirmation = page.locator('dialog.popup').filter({ hasText: 'This will permanently delete all files in this category.' });
+    await confirmation.locator('.popup-button-ok').click();
+    await confirmation.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => !document.querySelector('.dataMaidItemDelete')?.disabled);
+    assert.equal(await category.locator('.dataMaidItem').count(), 1, 'Failed Delete All must preserve its category and rows.');
+    const expectedErrors = fatalBrowserDiagnostics.splice(expectedErrorIndex);
+    assert.equal(expectedErrors.length, 1, `Expected one handled deletion error, got: ${expectedErrors.join('\n')}`);
+    assert.match(expectedErrors[0], /Error deleting item/u);
+
+    await category.locator('.inline-drawer-toggle').click();
+    await category.locator('.dataMaidItemDelete').click();
+    confirmation = page.locator('dialog.popup').filter({ hasText: 'This will permanently delete the file.' });
+    await confirmation.locator('.popup-button-ok').click();
+    await confirmation.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.querySelectorAll('.dataMaidCategory').length === 0);
+    assert.equal(deleteRequests.at(-1).hashes[0], 'hash-c', 'Individual delete must still send its item hash.');
+    assert.equal(await dialog.locator('.dataMaidPlaceholder').textContent(), 'No items found to clean up. Come back later!');
+
+    remainingItems = seedItems.map(item => ({ ...item }));
+    await dialog.locator('.dataMaidStartButton').click();
+    category = dialog.locator('.dataMaidCategory');
+    await category.waitFor();
+    await category.locator('.dataMaidDeleteAll').click();
+    confirmation = page.locator('dialog.popup').filter({ hasText: 'This will permanently delete all files in this category.' });
+    await confirmation.locator('.popup-button-ok').click();
+    await confirmation.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.querySelectorAll('.dataMaidCategory').length === 0);
+    assert.deepEqual([...deleteRequests.at(-1).hashes].sort(), ['hash-a', 'hash-b', 'hash-c'], 'Delete All must still send every category hash.');
+
+    await page.locator('dialog.popup').filter({ has: dialog }).locator('.popup-button-close').evaluate(button => button.click());
+    await dialog.waitFor({ state: 'detached' });
+
+    // The longer interaction gives STMB's first-run prompt bootstrap time to observe and repair its three missing resources.
+    const bootstrapDiagnostics = fatalBrowserDiagnostics.splice(startingDiagnosticIndex);
+    const expectedBootstrapPaths = [
+        '/api/stmb/side-prompts',
+        '/user/files/stmb-arc-prompts.json',
+        '/user/files/stmb-summary-prompts.json',
+    ];
+    const responsePaths = bootstrapDiagnostics
+        .filter(diagnostic => diagnostic.startsWith('response 404: '))
+        .map(diagnostic => new URL(diagnostic.slice('response 404: '.length)).pathname)
+        .sort();
+    assert.deepEqual(
+        responsePaths.filter(responsePath => !expectedBootstrapPaths.includes(responsePath)),
+        [],
+        `Unexpected delayed bootstrap responses: ${bootstrapDiagnostics.join('\n')}`,
+    );
+    assert.equal(new Set(responsePaths).size, responsePaths.length, `Repeated delayed bootstrap responses: ${bootstrapDiagnostics.join('\n')}`);
+    assert.equal(
+        bootstrapDiagnostics.filter(diagnostic => diagnostic === 'error: Failed to load resource: the server responded with a status of 404 (Not Found)').length,
+        responsePaths.length,
+        `Unexpected delayed bootstrap console errors: ${bootstrapDiagnostics.join('\n')}`,
+    );
+    assert.equal(bootstrapDiagnostics.length, responsePaths.length * 2, `Unexpected delayed bootstrap diagnostics: ${bootstrapDiagnostics.join('\n')}`);
+}
+
 const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'aikobots-frontend-smoke-'));
 const configPath = path.join(temporaryRoot, 'config.yaml');
 const dataRoot = path.join(temporaryRoot, 'data');
@@ -194,6 +358,8 @@ try {
     assert.equal(await page.locator('#stmb-menu-item').count(), 1, 'STMB menu was not initialized.');
     assert.equal(await page.locator('#stmb-jobs-topbar-button[aria-controls="top_chat_stmb_jobs"]').count(), 1, 'STMB jobs UI was not initialized.');
     assert.equal(await page.locator('#aiko-layout-css[href="css/layouts/classic.css"]').count(), 1, 'Selected runtime layout link was not retained.');
+    await testDataMaidMultiSelect(page, fatalBrowserDiagnostics);
+    assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected Data Maid browser diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
     assert.equal(await page.evaluate(async () => (await (await globalThis.fetch('/version')).json()).pkgVersion), '5.0.0', 'Runtime version is not v5.');
     assert.deepEqual(await hashDirectory(defaultOutputDirectory), committedBundleHashes, 'Production startup modified committed frontend artifacts.');
     console.log(`Frontend ${browserName} smoke passed with ${requests.length} JS/CSS requests: ${requests.join(', ')}`);

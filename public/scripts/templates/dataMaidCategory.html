@@ -9,12 +9,12 @@
                 <div class="dataMaidCategoryInfo">
                     <small>
                         <i class="fa-solid fa-file-alt fa-sm"></i>
-                        {{totalItems}}
+                        <span class="dataMaidCategoryItemCount">{{totalItems}}</span>
                     </small>
                     <span>&VerticalBar;</span>
                     <small>
                         <i class="fa-solid fa-hdd fa-sm"></i>
-                        {{totalSize}}
+                        <span class="dataMaidCategoryTotalSize">{{totalSize}}</span>
                     </small>
                 </div>
             </div>
@@ -25,11 +25,23 @@
         <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
     </div>
     <div class="dataMaidCategoryContent inline-drawer-content">
+        <div class="flex-container alignitemscenter gap5px">
+            <label class="checkbox_label">
+                <input type="checkbox" class="dataMaidSelectAll">
+                <span data-i18n="Select All">Select All</span>
+            </label>
+            <small class="dataMaidSelectedCount" data-i18n="0 selected">0 selected</small>
+            <button type="button" class="dataMaidDeleteSelected menu_button menu_button_icon margin0" disabled>
+                <i class="fa-solid fa-fw fa-trash-alt"></i>
+                <span data-i18n="Delete selected">Delete selected</span>
+            </button>
+        </div>
         <div class="flex-container">
             {{#each items}}
             {{#with this}}
             <div class="dataMaidItem" data-hash="{{hash}}">
                 <div class="dataMaidItemHeader">
+                    <input type="checkbox" class="dataMaidItemSelect" aria-label="Select this item" data-i18n="[aria-label]Select this item">
                     <div class="dataMaidItemName">
                         {{#if parent}}
                         <span class="dataMaidItemParent">({{parent}})</span>

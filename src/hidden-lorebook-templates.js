@@ -286,8 +286,8 @@ function readHiddenLorebookTemplatesEntry({ rootDir = globalThis.DATA_ROOT || pr
     }
 }
 
-export function readHiddenLorebookTemplates({ rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
-    return readHiddenLorebookTemplatesEntry({ rootDir }).data;
+export function readHiddenLorebookTemplates({ rootDir = globalThis.DATA_ROOT || process.cwd(), throwOnError = false } = {}) {
+    return readHiddenLorebookTemplatesEntry({ rootDir, throwOnError }).data;
 }
 
 export function writeHiddenLorebookTemplates(data = {}, { rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
