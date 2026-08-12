@@ -2174,6 +2174,37 @@ export function listLorebookNamesForAllocation(user) {
     return [...names];
 }
 
+/** Returns content-free ordinary lorebook records eligible for cleanup assessment. */
+export function listOrdinaryUserLorebooksForCleanup(user) {
+    const handle = String(user?.profile?.handle || '').trim();
+    const worldsDirectory = user?.directories?.worlds;
+    if (!handle || !worldsDirectory || !fs.existsSync(worldsDirectory)) return [];
+
+    for (const indexPath of [getSecureIndexPath(), getSharedSecureIndexPath()]) {
+        if (!fs.existsSync(indexPath)) continue;
+        const index = readJsonFileSync(indexPath);
+        if (!index || typeof index !== 'object' || Array.isArray(index)
+            || !index.books || typeof index.books !== 'object' || Array.isArray(index.books)) {
+            throw new LorebookRepositoryError('LorebookCleanupUnavailable', 'Lorebook cleanup storage is unavailable.', 503);
+        }
+    }
+
+    const records = [];
+    for (const entry of fs.readdirSync(worldsDirectory, { withFileTypes: true })) {
+        if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.json') continue;
+        const name = getCanonicalLorebookName(path.parse(entry.name).name);
+        if (!name || entry.name !== `${name}.json`) continue;
+
+        const secureRecord = getSecureIndexEntry(name);
+        const sharedSecureRecord = getSharedSecureIndexEntry(name);
+        const isSecureBacking = Boolean(secureRecord || sharedSecureRecord);
+        if (isSecureBacking || isReservedRecommendedTemplateSource(handle, name)) continue;
+        records.push({ name, path: path.join(worldsDirectory, entry.name) });
+    }
+
+    return records.sort((left, right) => left.name.localeCompare(right.name));
+}
+
 /** Checks whether generation would resolve a name to an eligible ordinary user lorebook without reading its content. */
 export function hasOrdinaryUserLorebookForGeneration(user, name) {
     const canonicalName = assertCanonicalName(name);

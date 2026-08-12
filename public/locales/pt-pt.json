@@ -1697,4 +1697,8 @@
   ,"Delete selected": "Eliminar selecionados"
   ,"Select this item": "Selecionar este item"
   ,"This will permanently delete the selected files. THIS CANNOT BE UNDONE!": "Isto eliminará permanentemente os ficheiros selecionados. ESTA AÇÃO NÃO PODE SER ANULADA!"
+  ,"Lorebooks": "Livros de lore"
+  ,"Ordinary lorebooks that have no known references.": "Livros de lore comuns que não têm referências conhecidas."
+  ,"Lorebooks could not be checked safely and were omitted. Rescan before trying again.": "Não foi possível verificar os livros de lore em segurança, pelo que foram omitidos. Volte a analisar antes de tentar novamente."
+  ,"A lorebook is now in use or could not be checked safely. Nothing was deleted; rescan and try again.": "Um livro de lore está agora em utilização ou não pôde ser verificado em segurança. Nada foi eliminado; volte a analisar e tente novamente."
 }

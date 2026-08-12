@@ -9,6 +9,7 @@ import { appendErrorCode, humanFileSize, timestampToMoment } from './utils.js';
  * @typedef {object} DataMaidReportResult
  * @property {import('../../src/endpoints/data-maid.js').DataMaidSanitizedReport} report - The sanitized report of the Data Maid.
  * @property {string} token - The token to use for the Data Maid report.
+ * @property {string[]} [unavailableCategories] - Categories withheld because they could not be scanned safely.
  */
 
 /**
@@ -64,6 +65,10 @@ class DataMaidDialog {
             settingsBackups: {
                 name: t`Settings Backups`,
                 description: t`Automatically generated settings backups.`,
+            },
+            lorebooks: {
+                name: t`Lorebooks`,
+                description: t`Ordinary lorebooks that have no known references.`,
             },
         };
     }
@@ -180,6 +185,12 @@ class DataMaidDialog {
                 continue;
             }
             resultsList.appendChild(category);
+        }
+        if (report.unavailableCategories?.includes('lorebooks')) {
+            const warning = document.createElement('div');
+            warning.classList.add('info-block', 'warning', 'margin0');
+            warning.textContent = t`Lorebooks could not be checked safely and were omitted. Rescan before trying again.`;
+            resultsList.appendChild(warning);
         }
         this.displayEmptyPlaceholder();
     }
@@ -434,6 +445,11 @@ class DataMaidDialog {
                 headers: getRequestHeaders(),
                 body: JSON.stringify({ hashes: hashes, token: this.token }),
             });
+
+            if (response.status === 409) {
+                toastr.warning(t`A lorebook is now in use or could not be checked safely. Nothing was deleted; rescan and try again.`);
+                return false;
+            }
 
             if (!response.ok) {
                 throw new Error(`Error deleting item: ${response.statusText}`);

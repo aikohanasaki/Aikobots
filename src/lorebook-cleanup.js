@@ -9,11 +9,10 @@ import { readHiddenLorebookBindings } from './hidden-lorebook-bindings.js';
 import { readHiddenLorebookTemplates } from './hidden-lorebook-templates.js';
 import {
     getCanonicalLorebookName,
-    listLorebooksForManagement,
+    listOrdinaryUserLorebooksForCleanup,
     withLorebookManagementTransaction,
 } from './lorebook-repository.js';
 import { readPersonasDocument } from './persona-repository.js';
-import { isReservedRecommendedTemplateSource } from './recommended-chat-template-store.js';
 import { withSettingsPersonasLock } from './settings-lock.js';
 import { readStmbContextSettingsDocument } from './stmb-context-settings.js';
 import { readStmbSidePrompts } from './stmb-side-prompts-repository.js';
@@ -192,12 +191,7 @@ export async function collectReferencedLorebookNames(user) {
 }
 
 function listOrdinaryLorebookCandidates(user) {
-    return listLorebooksForManagement(user)
-        .filter(item => item.storage === 'user' && item.canDelete && !isReservedRecommendedTemplateSource(user.profile.handle, item.name))
-        .map(item => ({
-            name: getCanonicalLorebookName(item.name),
-            path: path.join(user.directories.worlds, `${getCanonicalLorebookName(item.name)}.json`),
-        }));
+    return listOrdinaryUserLorebooksForCleanup(user);
 }
 
 /** Lists ordinary user lorebooks that have no known durable references. */
@@ -212,7 +206,13 @@ export async function deleteUnboundUserLorebooks(user, names) {
     if (targets.length === 0) throw new LorebookCleanupConflictError();
 
     return await withLorebookManagementTransaction(async transaction => {
-        const available = new Map((await listUnboundUserLorebooks(user)).map(item => [item.name, item]));
+        let candidates;
+        try {
+            candidates = await listUnboundUserLorebooks(user);
+        } catch {
+            throw new LorebookCleanupConflictError();
+        }
+        const available = new Map(candidates.map(item => [item.name, item]));
         if (targets.some(name => !available.has(name))) throw new LorebookCleanupConflictError();
 
         const deleted = [];

@@ -9,6 +9,11 @@ import { tryParse } from '../util.js';
 import { SETTINGS_FILE } from '../constants.js';
 import { deleteChatStorageCompanions, getChatStorageCompanionPaths, withChatSaveLock } from '../chat-storage.js';
 import { exportDatabaseFile } from '../sqlite-manager.js';
+import {
+    deleteUnboundUserLorebooks,
+    listUnboundUserLorebooks,
+    LorebookCleanupConflictError,
+} from '../lorebook-cleanup.js';
 
 const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
 const LAYOUT_ASSET_ROUTE_PREFIX = '/api/layouts/assets/file/';
@@ -49,11 +54,21 @@ const isPathInAllowedDirectories = async (directories, filePath) => {
 
     return false;
 };
-const buildTokenPathsFromReport = report => Object.values(report)
-    .filter(value => Array.isArray(value))
-    .flat()
-    .map(filePath => ({ path: filePath, hash: sha256(filePath) }));
-const getAuthorizedPathsForUser = async (user, token) => {
+const buildTokenPathsFromReport = report => Object.entries(report)
+    .filter(([, value]) => Array.isArray(value))
+    .flatMap(([category, filePaths]) => filePaths.map(filePath => {
+        const isLorebook = category === 'lorebooks';
+        const stat = isLorebook && fs.existsSync(filePath) ? fs.statSync(filePath) : null;
+        return {
+            path: filePath,
+            hash: sha256(filePath),
+            kind: isLorebook ? 'lorebook' : 'file',
+            name: isLorebook ? path.parse(filePath).name : undefined,
+            size: stat?.size,
+            mtimeMs: stat?.mtimeMs,
+        };
+    }));
+const getAuthorizedPathsForUser = async (user, token, { includeLorebookConflicts = false } = {}) => {
     const tokenEntry = DataMaidService.TOKENS.get(token);
 
     if (tokenEntry) {
@@ -63,7 +78,17 @@ const getAuthorizedPathsForUser = async (user, token) => {
     console.warn('[Data Maid] Token not found in memory; regenerating report for authorization fallback.');
     const dataMaid = new DataMaidService(user.profile.handle, user.directories);
     const rawReport = await dataMaid.generateReport();
-    return buildTokenPathsFromReport(rawReport);
+    const authorizedPaths = buildTokenPathsFromReport(rawReport);
+    if (includeLorebookConflicts && fs.existsSync(user.directories.worlds)) {
+        const authorizedHashes = new Set(authorizedPaths.map(entry => entry.hash));
+        for (const entry of fs.readdirSync(user.directories.worlds, { withFileTypes: true })) {
+            if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.json') continue;
+            const filePath = path.join(user.directories.worlds, entry.name);
+            const hash = sha256(filePath);
+            if (!authorizedHashes.has(hash)) authorizedPaths.push({ path: filePath, hash, kind: 'lorebook-conflict' });
+        }
+    }
+    return authorizedPaths;
 };
 
 /**
@@ -79,6 +104,7 @@ const getAuthorizedPathsForUser = async (user, token) => {
  * @property {string[]} layoutAssets - List of loose custom layout image assets
  * @property {string[]} chatBackups - List of chat backups
  * @property {string[]} settingsBackups - List of settings backups
+ * @property {string[]} lorebooks - List of ordinary unbound lorebooks
  */
 
 /**
@@ -103,6 +129,7 @@ const getAuthorizedPathsForUser = async (user, token) => {
  * @property {DataMaidSanitizedRecord[]} layoutAssets - List of sanitized loose custom layout image assets
  * @property {DataMaidSanitizedRecord[]} chatBackups - List of sanitized chat backups
  * @property {DataMaidSanitizedRecord[]} settingsBackups - List of sanitized settings backups
+ * @property {DataMaidSanitizedRecord[]} lorebooks - List of sanitized ordinary unbound lorebooks
  */
 
 /**
@@ -140,7 +167,7 @@ const getAuthorizedPathsForUser = async (user, token) => {
 /**
  * @typedef {object} DataMaidTokenEntry
  * @property {string} handle - The user's handle or identifier.
- * @property {{path: string, hash: string}[]} paths - The list of file paths and their hashes that can be cleaned up.
+ * @property {{path: string, hash: string, kind: 'file'|'lorebook', name?: string, size?: number, mtimeMs?: number}[]} paths - Authorized cleanup targets.
  */
 
 /**
@@ -161,6 +188,8 @@ export class DataMaidService {
     constructor(handle, directories) {
         this.handle = handle;
         this.directories = directories;
+        this.user = { profile: { handle }, directories };
+        this.unavailableCategories = [];
     }
 
     /**
@@ -181,6 +210,7 @@ export class DataMaidService {
             layoutAssets: await this.#collectLayoutAssets(),
             chatBackups: await this.#collectChatBackups(),
             settingsBackups: await this.#collectSettingsBackups(),
+            lorebooks: await this.#collectLorebooks(),
         };
 
         return report;
@@ -222,9 +252,21 @@ export class DataMaidService {
             layoutAssets: await Promise.all(report.layoutAssets.map(i => this.#sanitizeRecord(i, false))),
             chatBackups: await Promise.all(report.chatBackups.map(i => this.#sanitizeRecord(i, false))),
             settingsBackups: await Promise.all(report.settingsBackups.map(i => this.#sanitizeRecord(i, false))),
+            lorebooks: await Promise.all(report.lorebooks.map(i => this.#sanitizeRecord(i, false))),
         };
 
         return sanitizedReport;
+    }
+
+    /** Collects ordinary lorebooks with no known durable references, failing the category closed. */
+    async #collectLorebooks() {
+        try {
+            return (await listUnboundUserLorebooks(this.user)).map(item => item.path);
+        } catch {
+            this.unavailableCategories.push('lorebooks');
+            console.error('[Data Maid] Lorebook cleanup scan is unavailable because a reference source could not be read.');
+            return [];
+        }
     }
 
     /**
@@ -785,7 +827,7 @@ export class DataMaidService {
         const token = crypto.randomBytes(32).toString('hex');
         const tokenEntry = {
             handle,
-            paths: Object.values(report).filter(v => Array.isArray(v)).flat().map(x => ({ path: x, hash: sha256(x) })),
+            paths: buildTokenPathsFromReport(report),
         };
         this.TOKENS.set(token, tokenEntry);
         return token;
@@ -806,7 +848,7 @@ router.post('/report', async (req, res) => {
         const report = await dataMaid.sanitizeReport(rawReport);
         const token = DataMaidService.generateToken(req.user.profile.handle, rawReport);
 
-        return res.json({ report, token });
+        return res.json({ report, token, unavailableCategories: dataMaid.unavailableCategories });
     } catch (error) {
         console.error('[Data Maid] Error generating data maid report:', error);
         return res.sendStatus(500);
@@ -902,16 +944,40 @@ router.post('/delete', async (req, res) => {
             return res.sendStatus(400);
         }
 
-        const authorizedPaths = await getAuthorizedPathsForUser(req.user, token);
+        const authorizedPaths = await getAuthorizedPathsForUser(req.user, token, { includeLorebookConflicts: true });
         if (!authorizedPaths) {
             return res.sendStatus(403);
         }
 
-        for (const hash of hashes) {
-            const fileEntry = authorizedPaths.find(entry => entry.hash === hash);
-            if (!fileEntry) {
-                continue;
+        const fileEntries = hashes
+            .map(hash => authorizedPaths.find(entry => entry.hash === hash))
+            .filter(Boolean);
+        const kinds = new Set(fileEntries.map(entry => entry.kind || 'file'));
+        if (kinds.has('lorebook-conflict')) {
+            return res.status(409).json({ error: 'lorebook_cleanup_conflict' });
+        }
+        if (kinds.size > 1) {
+            return res.sendStatus(400);
+        }
+
+        if (kinds.has('lorebook')) {
+            if (fileEntries.length !== hashes.length) {
+                return res.status(409).json({ error: 'lorebook_cleanup_conflict' });
             }
+            for (const fileEntry of fileEntries) {
+                if (!await isPathInAllowedDirectories(req.user.directories, fileEntry.path)) {
+                    return res.sendStatus(403);
+                }
+                const stat = fs.existsSync(fileEntry.path) ? await fs.promises.stat(fileEntry.path) : null;
+                if (!stat || stat.size !== fileEntry.size || stat.mtimeMs !== fileEntry.mtimeMs) {
+                    return res.status(409).json({ error: 'lorebook_cleanup_conflict' });
+                }
+            }
+            await deleteUnboundUserLorebooks(req.user, fileEntries.map(entry => entry.name));
+            return res.sendStatus(204);
+        }
+
+        for (const fileEntry of fileEntries) {
 
             if (!await isPathInAllowedDirectories(req.user.directories, fileEntry.path)) {
                 console.warn('[Data Maid] Attempted deletion of a file outside of the user directories:', fileEntry.path);
@@ -928,6 +994,9 @@ router.post('/delete', async (req, res) => {
 
         return res.sendStatus(204);
     } catch (error) {
+        if (error instanceof LorebookCleanupConflictError) {
+            return res.status(409).json({ error: 'lorebook_cleanup_conflict' });
+        }
         console.error('[Data Maid] Error deleting files:', error);
         return res.sendStatus(500);
     }

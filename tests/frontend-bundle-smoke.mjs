@@ -113,6 +113,7 @@ async function testDataMaidMultiSelect(page, fatalBrowserDiagnostics) {
         { name: 'gamma.txt', hash: 'hash-c', parent: 'files', size: 4096, mtime: 3 },
     ];
     const emptyReport = {
+        files: [],
         images: [],
         chats: [],
         groupChats: [],
@@ -123,24 +124,46 @@ async function testDataMaidMultiSelect(page, fatalBrowserDiagnostics) {
         layoutAssets: [],
         chatBackups: [],
         settingsBackups: [],
+        lorebooks: [],
     };
     let remainingItems = seedItems.map(item => ({ ...item }));
+    let reportMode = 'files';
+    let deleteConflict = false;
     const deleteRequests = [];
+    let resolveFinalized;
+    const finalized = new Promise(resolve => resolveFinalized = resolve);
 
     await page.route('**/api/data-maid/report', async route => {
         await route.fulfill({
             status: 200,
             contentType: 'application/json',
-            body: JSON.stringify({ report: { ...emptyReport, files: remainingItems }, token: 'data-maid-smoke-token' }),
+            body: JSON.stringify(reportMode === 'unavailable'
+                ? { report: emptyReport, token: 'data-maid-smoke-token', unavailableCategories: ['lorebooks'] }
+                : {
+                    report: {
+                        ...emptyReport,
+                        [reportMode]: reportMode === 'lorebooks'
+                            ? [{ name: 'Unused.json', hash: 'lorebook-hash', size: 512, mtime: 4 }]
+                            : remainingItems,
+                    },
+                    token: 'data-maid-smoke-token',
+                }),
         });
     });
     await page.route('**/api/data-maid/delete', async route => {
         const request = route.request().postDataJSON();
         deleteRequests.push(request);
+        if (deleteConflict) {
+            await route.fulfill({ status: 409, contentType: 'application/json', body: '{"error":"lorebook_cleanup_conflict"}' });
+            return;
+        }
         remainingItems = remainingItems.filter(item => !request.hashes.includes(item.hash));
         await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     });
-    await page.route('**/api/data-maid/finalize', async route => await route.fulfill({ status: 204 }));
+    await page.route('**/api/data-maid/finalize', async route => {
+        await route.fulfill({ status: 204 });
+        resolveFinalized();
+    });
 
     await page.locator('#data_maid_button').evaluate(button => button.click());
     const dialog = page.locator('.dataMaidDialog');
@@ -239,8 +262,41 @@ async function testDataMaidMultiSelect(page, fatalBrowserDiagnostics) {
     await page.waitForFunction(() => document.querySelectorAll('.dataMaidCategory').length === 0);
     assert.deepEqual([...deleteRequests.at(-1).hashes].sort(), ['hash-a', 'hash-b', 'hash-c'], 'Delete All must still send every category hash.');
 
+    reportMode = 'lorebooks';
+    deleteConflict = true;
+    await dialog.locator('.dataMaidStartButton').click();
+    category = dialog.locator('.dataMaidCategory');
+    await category.waitFor();
+    assert.equal((await category.locator('.dataMaidCategoryName').textContent()).trim(), 'Lorebooks');
+    assert.equal(await category.locator('.dataMaidItem').count(), 1, 'An unbound lorebook must populate the cleanup category.');
+    await category.locator('.inline-drawer-toggle').click();
+    const expectedConflictDiagnosticIndex = fatalBrowserDiagnostics.length;
+    await category.locator('.dataMaidItemDelete').click();
+    confirmation = page.locator('dialog.popup').filter({ hasText: 'This will permanently delete the file.' });
+    await confirmation.locator('.popup-button-ok').click();
+    await confirmation.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => !document.querySelector('.dataMaidItemDelete')?.disabled);
+    assert.equal(await category.locator('.dataMaidItem').count(), 1, 'A lorebook conflict must preserve the cleanup row.');
+    assert.deepEqual(deleteRequests.at(-1).hashes, ['lorebook-hash']);
+    const expectedConflictDiagnostics = fatalBrowserDiagnostics.splice(expectedConflictDiagnosticIndex);
+    assert.equal(expectedConflictDiagnostics.length, 2, `Expected the mocked 409 response diagnostics, got: ${expectedConflictDiagnostics.join('\n')}`);
+    assert.match(expectedConflictDiagnostics.join('\n'), /409.*Conflict|response 409/u);
+
+    reportMode = 'unavailable';
+    await dialog.locator('.dataMaidStartButton').click();
+    assert.equal(await dialog.locator('.dataMaidCategory').count(), 0);
+    assert.match(
+        await dialog.locator('.dataMaidResultsList .warning').textContent(),
+        /Lorebooks could not be checked safely/u,
+        'An uncertain lorebook scan must show a warning instead of candidates.',
+    );
+
     await page.locator('dialog.popup').filter({ has: dialog }).locator('.popup-button-close').evaluate(button => button.click());
-    await dialog.waitFor({ state: 'detached' });
+    await Promise.all([dialog.waitFor({ state: 'detached' }), finalized]);
+    await page.waitForTimeout(100);
+    for (let index = fatalBrowserDiagnostics.length - 1; index >= startingDiagnosticIndex; index--) {
+        if (fatalBrowserDiagnostics[index].includes('/api/data-maid/finalize')) fatalBrowserDiagnostics.splice(index, 1);
+    }
 
     // The longer interaction gives STMB's first-run prompt bootstrap time to observe and repair its three missing resources.
     const bootstrapDiagnostics = fatalBrowserDiagnostics.splice(startingDiagnosticIndex);
