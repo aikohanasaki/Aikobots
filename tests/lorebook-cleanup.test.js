@@ -67,7 +67,8 @@ test('lists only ordinary lorebooks absent from every durable reference source',
         const boundNames = [
             'Global', 'Extra', 'LegacyGlobal', 'PersonaCurrent', 'PersonaSaved', 'CharacterLock', 'LegacyCharacterLock',
             'CharacterPrimary', 'CharacterLinked', 'ChatPrimary', 'ChatManual', 'ChatCharacter', 'ChatSide',
-            'SqlitePrimary', 'LegacyGroup', 'HiddenBinding', 'HiddenTemplate', 'ContextSetting', 'SidePromptTarget', 'ReservedTemplate',
+            'SqlitePrimary', 'LegacyGroup', 'PresetMember', 'HiddenBinding', 'HiddenTemplate', 'ContextSetting', 'SidePromptTarget',
+            'ReservedTemplate',
         ];
         createLorebooks(user, ['Unused', ...boundNames]);
 
@@ -79,7 +80,10 @@ test('lists only ordinary lorebooks absent from every durable reference source',
             world_info_settings: { world_info: { globalSelect: ['LegacyGlobal'] } },
             power_user: { persona_description_lorebook: 'PersonaCurrent' },
             stmb_settings: { characterMemoryBookLocks: { 'bot.png': { lorebookName: 'CharacterLock' } } },
-            extension_settings: { STMemoryBooks: { characterMemoryBookLocks: { 'old.png': { lorebookName: 'LegacyCharacterLock' } } } },
+            extension_settings: {
+                STMemoryBooks: { characterMemoryBookLocks: { 'old.png': { lorebookName: 'LegacyCharacterLock' } } },
+                worldInfoPresets: { presetList: [{ name: 'Story', worldList: ['PresetMember'] }] },
+            },
         }), 'utf8');
         writePersonasDocument(user.directories, {
             personas: { 'user.png': { name: 'User', lorebook: 'PersonaSaved' } },
@@ -259,13 +263,15 @@ test('Data Maid rejects a lorebook replaced after its report was authorized', as
     }
 });
 
-test('Data Maid cross-worker fallback reports a newly bound lorebook as a conflict', async () => {
+test('Data Maid cross-worker fallback reports a newly STWIL-preset-bound lorebook as a conflict', async () => {
     const fixture = await createFixture();
     const { user } = fixture;
     try {
         createLorebooks(user, ['Candidate']);
         fs.writeFileSync(path.join(user.directories.root, SETTINGS_FILE), JSON.stringify({
-            world_info: { globalSelect: ['Candidate'] },
+            extension_settings: {
+                worldInfoPresets: { presetList: [{ name: 'Story', worldList: ['Candidate'] }] },
+            },
         }), 'utf8');
         const { router } = await import(`../src/endpoints/data-maid.js?boundFallback=${user.profile.handle}`);
         const deleteHandler = router.stack

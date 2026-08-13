@@ -119,6 +119,9 @@ function addSettingsReferences(names, settings, personas) {
     for (const lock of Object.values(settings?.extension_settings?.STMemoryBooks?.characterMemoryBookLocks || {})) {
         addLorebookName(names, lock?.lorebookName);
     }
+    for (const preset of settings?.extension_settings?.worldInfoPresets?.presetList || []) {
+        addLorebookNames(names, preset?.worldList);
+    }
     for (const persona of Object.values(personas?.personas || {})) addLorebookName(names, persona?.lorebook);
 }
 
