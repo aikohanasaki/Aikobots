@@ -323,6 +323,145 @@ async function testDataMaidMultiSelect(page, fatalBrowserDiagnostics) {
     assert.equal(bootstrapDiagnostics.length, responsePaths.length * 2, `Unexpected delayed bootstrap diagnostics: ${bootstrapDiagnostics.join('\n')}`);
 }
 
+/** Exercises one-shot bulk lorebook deletion through the existing full-save route. */
+async function testWorldInfoBulkDelete(page, fatalBrowserDiagnostics) {
+    const lorebookName = 'Bulk Delete Smoke';
+    const editRequests = [];
+    let failNextSave = false;
+
+    await page.route('**/api/worldinfo/edit', async route => {
+        const request = route.request().postDataJSON();
+        if (request?.name !== lorebookName) {
+            await route.continue();
+            return;
+        }
+
+        editRequests.push(request);
+        if (failNextSave) {
+            failNextSave = false;
+            await route.fulfill({
+                status: 503,
+                contentType: 'application/json',
+                body: JSON.stringify({ error: { message: 'Expected bulk delete smoke failure.' } }),
+            });
+            return;
+        }
+
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                ok: true,
+                metadata: { name: lorebookName, storage: 'user', ownerHandle: 'default-user' },
+            }),
+        });
+    });
+
+    await page.waitForFunction(name => Array.from(document.querySelectorAll('#world_editor_select option')).some(option => option.textContent === name), lorebookName);
+    await page.locator('#world_editor_select').evaluate((select, name) => {
+        const option = Array.from(select.options).find(candidate => candidate.textContent === name);
+        select.value = option.value;
+        globalThis.jQuery(select).trigger('change');
+    }, lorebookName);
+    await page.waitForFunction(() => document.querySelectorAll('#world_popup_entries_list .world_entry').length === 3);
+
+    await page.locator('#world_bulk_move_mode').evaluate(button => button.click());
+    await page.evaluate(() => {
+        for (const uid of ['0', '1']) {
+            const checkbox = document.querySelector(`#world_popup_entries_list .world_entry[uid="${uid}"] .wi-bulk-select-checkbox`);
+            checkbox.checked = true;
+            checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    });
+    assert.equal(await page.locator('#world_bulk_delete_apply').getAttribute('title'), 'Delete 2 selected lorebook entries');
+
+    await page.locator('#world_bulk_delete_apply').evaluate(button => button.click());
+    let confirmation = page.locator('dialog.popup').filter({ hasText: 'This action is irreversible. Type YES to confirm.' });
+    await confirmation.locator('.popup-input').fill('yes');
+    await confirmation.locator('.popup-button-ok').click();
+    assert.equal(await confirmation.count(), 1, 'Incorrect confirmation text must keep the popup open.');
+    assert.equal(editRequests.length, 0, 'Incorrect confirmation text must not save the lorebook.');
+    await confirmation.locator('.popup-button-cancel').click();
+    await confirmation.waitFor({ state: 'detached' });
+    assert.equal(editRequests.length, 0, 'Canceling bulk deletion must not save the lorebook.');
+
+    const expectedFailureDiagnosticIndex = fatalBrowserDiagnostics.length;
+    failNextSave = true;
+    await page.locator('#world_bulk_delete_apply').evaluate(button => button.click());
+    confirmation = page.locator('dialog.popup').filter({ hasText: 'This action is irreversible. Type YES to confirm.' });
+    await confirmation.locator('.popup-input').fill('YES');
+    await confirmation.locator('.popup-button-ok').click();
+    await confirmation.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.querySelector('#WorldInfo')?.getAttribute('aria-busy') === 'false');
+    assert.equal(editRequests.length, 1, 'A confirmed bulk deletion must make one save attempt.');
+    assert.equal(await page.locator('#world_popup_entries_list .world_entry').count(), 3, 'A failed save must preserve every entry.');
+    assert.equal(await page.locator('#world_popup_entries_list .wi-bulk-select-checkbox:checked').count(), 2, 'A failed save must preserve selection.');
+    const expectedFailureDiagnostics = fatalBrowserDiagnostics.splice(expectedFailureDiagnosticIndex);
+    assert.match(expectedFailureDiagnostics.join('\n'), /503|Expected bulk delete smoke failure/u);
+
+    await page.locator('#world_bulk_delete_apply').evaluate(button => button.click());
+    confirmation = page.locator('dialog.popup').filter({ hasText: 'This action is irreversible. Type YES to confirm.' });
+    await confirmation.locator('.popup-input').fill('YES');
+    await confirmation.locator('.popup-button-ok').click();
+    await confirmation.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.querySelectorAll('#world_popup_entries_list .world_entry').length === 1);
+
+    assert.equal(editRequests.length, 2, 'Retrying bulk deletion must make exactly one additional save.');
+    const savedLorebook = editRequests[1].data;
+    assert.deepEqual(Object.keys(savedLorebook.entries), ['2'], 'Bulk deletion must preserve only the unselected entry.');
+    assert.deepEqual(savedLorebook.originalData.entries.map(entry => entry.uid), [2], 'Bulk deletion must remove matching original-data entries.');
+    assert.deepEqual(savedLorebook.smokeMetadata, { preserved: true }, 'Bulk deletion must preserve unrelated lorebook metadata.');
+    assert.equal(await page.locator('#world_popup_entries_list .wi-bulk-select-checkbox:checked').count(), 0, 'Successful bulk deletion must clear selection.');
+}
+
+/** Verifies World Info preset changes redraw the global Select2 selection. */
+async function testWorldInfoPresetSelectionUi(page) {
+    const worldSelect = page.locator('#world_info');
+    await page.locator('#world_info option').filter({ hasText: 'Bulk Delete Smoke' }).waitFor({ state: 'attached' });
+    await worldSelect.evaluate(select => {
+        const option = Array.from(select.options).find(candidate => candidate.textContent === 'Bulk Delete Smoke');
+        select.value = option.value;
+        globalThis.jQuery(select).trigger('change');
+    });
+
+    await page.locator('#world_info_locks_create').evaluate(button => button.click());
+    const namePopup = page.locator('dialog.popup').filter({ hasText: 'Create World Info Preset' });
+    await namePopup.locator('.popup-input').fill('Global Selection Smoke');
+    await namePopup.locator('.popup-button-ok').click();
+    await namePopup.waitFor({ state: 'detached' });
+    const settingsPopup = page.locator('dialog.popup').filter({ hasText: 'World Info Settings Inclusion' });
+    assert.equal(await settingsPopup.locator('.popup-button-ok').textContent(), 'Save');
+    assert.equal(await settingsPopup.locator('.popup-button-cancel').textContent(), 'Cancel');
+    await settingsPopup.locator('.popup-button-ok').click();
+    await settingsPopup.waitFor({ state: 'detached' });
+
+    const presetSelect = page.locator('#world_info_locks_preset');
+    await page.locator('#world_info_locks_preset option[value="Global Selection Smoke"]').waitFor({ state: 'attached' });
+    await worldSelect.evaluate(select => globalThis.jQuery(select).val(null).trigger('change'));
+    await page.locator('#world_info option:checked:not([value=""])').waitFor({ state: 'detached' });
+    await presetSelect.evaluate(select => {
+        select.value = 'Global Selection Smoke';
+        globalThis.jQuery(select).trigger('change');
+    });
+    await page.locator('#world_info option:checked').filter({ hasText: 'Bulk Delete Smoke' }).waitFor({ state: 'attached' });
+    assert.match(
+        await page.locator('#world_info + .select2').textContent(),
+        /Bulk Delete Smoke/u,
+        'Activating a World Info preset must redraw the global lorebook selection.',
+    );
+
+    await presetSelect.evaluate(select => {
+        select.value = '';
+        globalThis.jQuery(select).trigger('change');
+    });
+    await page.locator('#world_info option:checked:not([value=""])').waitFor({ state: 'detached' });
+    assert.doesNotMatch(
+        await page.locator('#world_info + .select2').textContent(),
+        /Bulk Delete Smoke/u,
+        'Deactivating a World Info preset must remove stale global lorebook choices.',
+    );
+}
+
 const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'aikobots-frontend-smoke-'));
 const configPath = path.join(temporaryRoot, 'config.yaml');
 const dataRoot = path.join(temporaryRoot, 'data');
@@ -361,6 +500,21 @@ try {
     settings.firstRun = false;
     settings.extension_settings.disabledExtensions = ['tts'];
     await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 4)}\n`);
+    const worldsPath = path.join(dataRoot, 'default-user', 'worlds');
+    await fs.mkdir(worldsPath, { recursive: true });
+    await fs.writeFile(path.join(worldsPath, 'Bulk Delete Smoke.json'), JSON.stringify({
+        entries: Object.fromEntries([0, 1, 2].map(uid => [uid, {
+            uid,
+            key: [`ordinary-${uid}`],
+            keysecondary: [],
+            comment: `Smoke entry ${uid}`,
+            content: `Ordinary smoke content ${uid}`,
+        }])),
+        originalData: {
+            entries: [0, 1, 2].map(uid => ({ uid, keys: [`ordinary-${uid}`], content: `Ordinary smoke content ${uid}` })),
+        },
+        smokeMetadata: { preserved: true },
+    }, null, 4));
 
     browser = await browserType.launch({ ...(browserPath ? { executablePath: browserPath } : {}), headless: true });
     const page = await browser.newPage();
@@ -416,6 +570,9 @@ try {
     assert.equal(await page.locator('#aiko-layout-css[href="css/layouts/classic.css"]').count(), 1, 'Selected runtime layout link was not retained.');
     await testDataMaidMultiSelect(page, fatalBrowserDiagnostics);
     assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected Data Maid browser diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
+    await testWorldInfoPresetSelectionUi(page);
+    await testWorldInfoBulkDelete(page, fatalBrowserDiagnostics);
+    assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected World Info bulk-delete diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
     assert.equal(await page.evaluate(async () => (await (await globalThis.fetch('/version')).json()).pkgVersion), '5.0.0', 'Runtime version is not v5.');
     assert.deepEqual(await hashDirectory(defaultOutputDirectory), committedBundleHashes, 'Production startup modified committed frontend artifacts.');
     console.log(`Frontend ${browserName} smoke passed with ${requests.length} JS/CSS requests: ${requests.join(', ')}`);

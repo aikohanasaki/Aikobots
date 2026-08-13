@@ -542,7 +542,11 @@ async function choosePresetSettings() {
     include.input.addEventListener('change', () => settingsContainer.hidden = !include.input.checked);
     content.append(settingsContainer);
 
-    const popup = new Popup(content, POPUP_TYPE.CONFIRM, '', { allowVerticalScrolling: true });
+    const popup = new Popup(content, POPUP_TYPE.CONFIRM, '', {
+        okButton: t`Save`,
+        cancelButton: t`Cancel`,
+        allowVerticalScrolling: true,
+    });
     if (await popup.show() !== POPUP_RESULT.AFFIRMATIVE) {
         return undefined;
     }

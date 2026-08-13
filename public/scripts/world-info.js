@@ -118,6 +118,7 @@ const forcedActivationEntries = new Map();
 const worldInfoBulkMoveState = {
     lorebookName: '',
     bulkMoveMode: false,
+    bulkMutationPending: false,
     selectedEntryUids: new Set(),
 };
 
@@ -132,6 +133,7 @@ function getWorldInfoBulkMoveState(name = '') {
 function resetWorldInfoBulkMoveState(name = '') {
     worldInfoBulkMoveState.lorebookName = name;
     worldInfoBulkMoveState.bulkMoveMode = false;
+    worldInfoBulkMoveState.bulkMutationPending = false;
     worldInfoBulkMoveState.selectedEntryUids.clear();
 }
 
@@ -178,6 +180,9 @@ function getWorldInfoMutationButtonTitles(name = '') {
         ...WORLD_INFO_MUTATION_BUTTON_DEFAULT_TITLES,
         '#world_bulk_move_mode': state.bulkMoveMode ? `Cancel bulk move/copy selection${selectionSuffix}` : 'Select Entries to Move/Copy',
         '#world_bulk_move_apply': selectionCount > 0 ? `Move/Copy ${selectionCount} selected entr${selectionCount === 1 ? 'y' : 'ies'}` : 'Move/Copy Selected Entries',
+        '#world_bulk_delete_apply': selectionCount > 0
+            ? (selectionCount === 1 ? t`Delete ${selectionCount} selected lorebook entry` : t`Delete ${selectionCount} selected lorebook entries`)
+            : t`Delete Selected Entries`,
     };
 }
 
@@ -186,10 +191,11 @@ function updateWorldInfoMutationButtonState(name = '', data = null) {
     const isReadOnly = isSharedLorebookReadOnly(item);
     const title = getWorldInfoReadOnlyMessage(item);
     const titles = getWorldInfoMutationButtonTitles(name);
+    const isDisabled = isReadOnly || getWorldInfoBulkMoveState(name).bulkMutationPending;
 
     for (const [selector, buttonTitle] of Object.entries(titles)) {
         $(selector)
-            .toggleClass('disabled', isReadOnly)
+            .toggleClass('disabled', isDisabled)
             .attr('title', isReadOnly ? title : buttonTitle);
     }
 }
@@ -215,24 +221,63 @@ function syncWorldInfoBulkMoveUi(name = '') {
     const worldEntriesList = $('#world_popup_entries_list');
     const toggleButton = $('#world_bulk_move_mode');
     const applyButton = $('#world_bulk_move_apply');
+    const deleteButton = $('#world_bulk_delete_apply');
     const selectionSuffix = selectionCount > 0 ? ` (${selectionCount})` : '';
+    const showSelectedActions = state.bulkMoveMode && selectionCount > 0;
 
     worldEntriesList.toggleClass('wi-bulk-move-mode', state.bulkMoveMode);
     worldEntriesList.find('.world_entry').each(function () {
         const uid = String($(this).data('uid'));
         const isSelected = state.selectedEntryUids.has(uid);
         $(this).toggleClass('wi-bulk-move-selected', isSelected);
-        $(this).find('.wi-bulk-select-checkbox').prop('checked', isSelected);
+        $(this).find('.wi-bulk-select-checkbox')
+            .prop('checked', isSelected)
+            .prop('disabled', state.bulkMutationPending);
     });
 
     toggleButton
         .toggleClass('world_bulk_move_active', state.bulkMoveMode);
 
     applyButton
-        .css('display', state.bulkMoveMode && selectionCount > 0 ? 'flex' : 'none');
+        .css('display', showSelectedActions ? 'flex' : 'none');
+    deleteButton
+        .toggleClass('displayNone', !showSelectedActions)
+        .css('display', showSelectedActions ? 'flex' : 'none');
 
     applyButton.find('.world-bulk-move-count').text(selectionSuffix);
+    deleteButton.find('.world-bulk-delete-count').text(selectionSuffix);
+    toggleButton.add(applyButton).add(deleteButton)
+        .css('pointer-events', state.bulkMutationPending ? 'none' : '');
+    $('#WorldInfo')
+        .prop('inert', state.bulkMutationPending)
+        .attr('aria-busy', String(state.bulkMutationPending));
     updateWorldInfoMutationButtonState(name);
+}
+
+/** Requires the exact text YES before bulk-deleting lorebook entries. */
+async function confirmWorldInfoBulkDelete(entryCount) {
+    const title = entryCount === 1
+        ? t`Delete ${entryCount} selected lorebook entry?`
+        : t`Delete ${entryCount} selected lorebook entries?`;
+    const confirmation = await Popup.show.input(
+        title,
+        t`This action is irreversible. Type YES to confirm.`,
+        '',
+        {
+            okButton: t`Delete`,
+            cancelButton: t`Cancel`,
+            onClosing: popup => {
+                if (popup.result !== POPUP_RESULT.AFFIRMATIVE || popup.value === 'YES') {
+                    return true;
+                }
+
+                toastr.warning(t`Type YES exactly to confirm deletion.`, t`World Info`);
+                popup.mainInput.select();
+                return false;
+            },
+        },
+    );
+    return confirmation === 'YES';
 }
 
 function normalizeWorldInfoItems(data = {}) {
@@ -394,9 +439,11 @@ export function applyWorldInfoPresetSelection(names = []) {
     Object.assign(world_info, { globalSelect: selected_world_info });
 
     $('#world_info option').each(function () {
-        const worldName = world_names[Number($(this).val())];
+        const value = String($(this).val());
+        const worldName = value ? world_names[Number(value)] : '';
         $(this).prop('selected', Boolean(worldName && selected_world_info.includes(worldName)));
     });
+    $('#world_info').trigger('change.select2');
 
     saveSettingsDebounced();
     eventSource.emit(event_types.WORLDINFO_SETTINGS_UPDATED);
@@ -4263,6 +4310,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         $('#world_popup_new').off('click').on('click', nullWorldInfo);
         $('#world_bulk_move_mode').off('click').removeClass('world_bulk_move_active').on('click', nullWorldInfo);
         $('#world_bulk_move_apply').off('click').hide();
+        $('#world_bulk_delete_apply').off('click').hide();
         $('#world_popup_name_button').off('click').on('click', nullWorldInfo);
         $('#world_popup_export').off('click').on('click', nullWorldInfo);
         $('#world_popup_delete').off('click').on('click', nullWorldInfo);
@@ -4478,6 +4526,9 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             return;
         }
         const state = getWorldInfoBulkMoveState(name);
+        if (state.bulkMutationPending) {
+            return;
+        }
         setWorldInfoBulkMoveMode(name, !state.bulkMoveMode);
         syncWorldInfoBulkMoveUi(name);
     });
@@ -4485,6 +4536,9 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     $('#world_bulk_move_apply').off('click').on('click', async () => {
         if (isReadOnlySharedLorebook) {
             toastr.info(getWorldInfoReadOnlyMessage(lorebook), t`World Info`);
+            return;
+        }
+        if (getWorldInfoBulkMoveState(name).bulkMutationPending) {
             return;
         }
         const selectedEntries = getSelectedWorldInfoEntriesInDisplayOrder(name, data);
@@ -4508,6 +4562,58 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
 
         resetWorldInfoBulkMoveState(name);
         syncWorldInfoBulkMoveUi(name);
+    });
+
+    $('#world_bulk_delete_apply').off('click').on('click', async () => {
+        if (isReadOnlySharedLorebook) {
+            toastr.info(getWorldInfoReadOnlyMessage(lorebook), t`World Info`);
+            return;
+        }
+
+        const state = getWorldInfoBulkMoveState(name);
+        if (state.bulkMutationPending) {
+            return;
+        }
+
+        const selectedEntries = getSelectedWorldInfoEntriesInDisplayOrder(name, data);
+        if (!selectedEntries.length) {
+            syncWorldInfoBulkMoveUi(name);
+            return;
+        }
+
+        if (!await confirmWorldInfoBulkDelete(selectedEntries.length)) {
+            syncWorldInfoBulkMoveUi(name);
+            return;
+        }
+
+        state.bulkMutationPending = true;
+        syncWorldInfoBulkMoveUi(name);
+        try {
+            const updatedData = structuredClone(data);
+            for (const entry of selectedEntries) {
+                const deleted = await deleteWorldInfoEntry(updatedData, entry.uid, { silent: true });
+                if (!deleted) {
+                    throw new Error('Selected lorebook entry could not be deleted.');
+                }
+                deleteWIOriginalDataValue(updatedData, entry.uid);
+            }
+
+            await saveWorldInfo(name, updatedData, true);
+            data = updatedData;
+            const deletedCount = selectedEntries.length;
+            resetWorldInfoBulkMoveState(name);
+            syncWorldInfoBulkMoveUi(name);
+            toastr.success(deletedCount === 1
+                ? t`${deletedCount} lorebook entry deleted.`
+                : t`${deletedCount} lorebook entries deleted.`, t`World Info`);
+
+            if (loadToken === worldEditorLoadToken) {
+                await displayWorldEntries(name, data, navigation_option.previous, false, loadToken);
+            }
+        } catch {
+            state.bulkMutationPending = false;
+            syncWorldInfoBulkMoveUi(name);
+        }
     });
 
     $('#world_popup_name_button').off('click').on('click', async () => {
