@@ -6346,4 +6346,7 @@
   ,"${0} lorebook entry deleted.": "${0} entrée de livre de lore supprimée."
   ,"${0} lorebook entries deleted.": "${0} entrées de livre de lore supprimées."
   ,"Select lorebook entry for bulk actions": "Sélectionner l’entrée du livre de lore pour les actions groupées"
+  ,"Memory": "Mémoire"
+  ,"Consolidation": "Consolidation"
+  ,"Memory Assistance": "Aide à la mémoire"
 }

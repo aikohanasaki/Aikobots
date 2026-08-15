@@ -6289,4 +6289,7 @@
   ,"${0} lorebook entry deleted.": "ロアブックエントリ ${0} 件を削除しました。"
   ,"${0} lorebook entries deleted.": "ロアブックエントリ ${0} 件を削除しました。"
   ,"Select lorebook entry for bulk actions": "一括操作するロアブックエントリを選択"
+  ,"Memory": "メモリ"
+  ,"Consolidation": "統合"
+  ,"Memory Assistance": "記憶補助"
 }

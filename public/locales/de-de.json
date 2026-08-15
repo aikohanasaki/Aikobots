@@ -6286,4 +6286,7 @@
   ,"${0} lorebook entry deleted.": "${0} Lorebook-Eintrag wurde gelöscht."
   ,"${0} lorebook entries deleted.": "${0} Lorebook-Einträge wurden gelöscht."
   ,"Select lorebook entry for bulk actions": "Lorebook-Eintrag für Massenaktionen auswählen"
+  ,"Memory": "Erinnerung"
+  ,"Consolidation": "Konsolidierung"
+  ,"Memory Assistance": "Memory Assistance"
 }

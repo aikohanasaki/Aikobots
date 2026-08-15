@@ -16,7 +16,7 @@ const FIX_DYNAMIC = process.argv.includes('--fix-dynamic');
 const FIX_TEXT = process.argv.includes('--fix-text');
 const CHECK_LOCALES = process.argv.includes('--check-locales');
 const ALLOW_MISSING = process.argv.includes('--allow-missing');
-const PRIORITY_LOCALES = ['de-de', 'fr-fr', 'ja-jp'];
+const PRIORITY_LOCALES = ['de-de', 'fr-fr', 'ja-jp', 'ru-ru'];
 const REQUIRED_STMB_PROMPT_KEYS = [
     ...['summary', 'group', 'char', 'summarize', 'synopsis', 'sumup', 'minimal', 'northgate', 'aelemar', 'comprehensive']
         .map(key => `STMemoryBooks_Prompt_${key}`),
@@ -30,7 +30,7 @@ const REQUIRED_STMB_PROMPT_KEYS = [
     'STMemoryBooks_ClipSuggestions_DefaultPrompt',
 ];
 const PROTECTED_BRANDS = [
-    'Aikobots', 'STMB', 'Memory Books', 'Data Maid', 'SillyTavern', 'OpenAI', 'Anthropic',
+    'Aikobots', 'STMB', 'Data Maid', 'SillyTavern', 'OpenAI', 'Anthropic',
     'Claude', 'Cohere', 'CometAPI', 'DeepSeek', 'Electron Hub', 'Fireworks AI',
     'Google AI Studio', 'Google Vertex AI', 'Groq', 'MistralAI', 'Moonshot AI',
     'NanoGPT', 'NovelAI', 'OpenRouter', 'Perplexity', 'Pollinations', 'SiliconFlow',
@@ -898,7 +898,7 @@ function getProtectedTokens(text) {
         ['url', /https?:\/\/[^\s"'<>()[\]{}]+/g],
         ['html', /<\/?(?:a|b|br|code|div|em|i|kbd|li|ol|p|pre|small|span|strong|ul)\b[^>]*>/gi],
         ['shortcut', /\b(?:Ctrl|Alt|Shift|Cmd|Command|Meta)(?:\+[A-Za-z0-9]+)+\b/g],
-        ['sentinel', /\b(?:OVERWRITE|START)\b/g],
+        ['sentinel', /\b(?:OVERWRITE|START|YES)\b/g],
         ['file', /\b[\w.-]+\.(?:jsonl?|png|jpe?g|webp|ya?ml|txt|md|sqlite|html|js|css)\b/gi],
         ['format', /%[sdif]/g],
         ['replacement', /\$(?:\d+|&|<[\w-]+>)/g],
