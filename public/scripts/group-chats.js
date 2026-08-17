@@ -377,30 +377,51 @@ async function _save(group, reload = true) {
 
 // Group chats
 async function regenerateGroup() {
-    let generationId = getLastMessageGenerationId();
-
-    while (chat.length > 0) {
-        const lastMes = chat[chat.length - 1];
-        const this_generationId = lastMes.extra?.gen_id;
-
-        // for new generations after the update
-        if ((generationId && this_generationId) && generationId !== this_generationId) {
-            break;
-        }
-        // legacy for generations before the update
-        else if (lastMes.is_user || lastMes.is_system) {
-            break;
-        }
-
-        const deleteResult = await deleteLastMessage({ persist: true, regeneratePrepare: true });
-        if (deleteResult === CHAT_SAVE_RESULT.FAILED) {
+    setSendButtonState(true);
+    let generationStarted = false;
+    try {
+        const pendingSaveResult = await flushDebouncedChatSave();
+        if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+            toastr.error(
+                t`Pending chat changes could not be saved. Generation was not started.`,
+                t`Chat could not be saved`,
+                { preventDuplicates: true },
+            );
             return;
         }
-    }
 
-    const abortController = new AbortController();
-    setExternalAbortController(abortController);
-    generateGroupWrapper(false, 'normal', { signal: abortController.signal });
+        let generationId = getLastMessageGenerationId();
+
+        while (chat.length > 0) {
+            const lastMes = chat[chat.length - 1];
+            const this_generationId = lastMes.extra?.gen_id;
+
+            // for new generations after the update
+            if ((generationId && this_generationId) && generationId !== this_generationId) {
+                break;
+            }
+            // legacy for generations before the update
+            else if (lastMes.is_user || lastMes.is_system) {
+                break;
+            }
+
+            const deleteResult = await deleteLastMessage({ persist: true, regeneratePrepare: true });
+            if (deleteResult === CHAT_SAVE_RESULT.FAILED) {
+                return;
+            }
+        }
+
+        const abortController = new AbortController();
+        setExternalAbortController(abortController);
+        generationStarted = true;
+        void Generate('normal', { signal: abortController.signal });
+    } catch (error) {
+        console.error('Group regeneration failed', error);
+    } finally {
+        if (!generationStarted) {
+            activateSendButtons();
+        }
+    }
 }
 
 async function loadGroupChat(chatId, { withMetadata = false, chunked = false } = {}) {

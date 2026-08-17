@@ -1078,6 +1078,162 @@ export class ChatPage {
         await this.clickElementById('send_but');
     }
 
+    async installGenerationLifecycleProbe() {
+        const result = await this.driver.executeScript(`
+            const existing = window.__aikobotsGenerationLifecycleProbe;
+            if (existing?.originalFetch) {
+                window.fetch = existing.originalFetch;
+            }
+
+            const context = window.SillyTavern?.getContext?.();
+            if (typeof context?.saveChat !== 'function') {
+                return { error: 'SillyTavern saveChat context is unavailable' };
+            }
+
+            const state = {
+                originalFetch: window.fetch,
+                queuedAt: performance.now(),
+                saveStartedAt: null,
+                assistantAppendHeld: false,
+                releaseAssistantAppend: null,
+            };
+            window.__aikobotsGenerationLifecycleProbe = state;
+            window.fetch = async function(input, init) {
+                const url = typeof input === 'string' ? input : String(input?.url || '');
+                if (state.saveStartedAt === null && url.endsWith('/api/chats/save')) {
+                    state.saveStartedAt = performance.now();
+                }
+
+                if (!state.assistantAppendHeld && /\/api\/chats\/(?:group\/)?message\/append$/.test(url)) {
+                    try {
+                        const body = JSON.parse(String(init?.body || '{}'));
+                        if (body?.message?.is_user === false) {
+                            state.assistantAppendHeld = true;
+                            await new Promise(resolve => { state.releaseAssistantAppend = resolve; });
+                        }
+                    } catch {
+                        // The probe deliberately ignores request content it cannot classify safely.
+                    }
+                }
+
+                return state.originalFetch.call(this, input, init);
+            };
+
+            void context.saveChat();
+            return { installed: true };
+        `);
+
+        if (result?.error || result?.installed !== true) {
+            throw new Error(result?.error || 'Generation lifecycle probe was not installed.');
+        }
+    }
+
+    async installPendingSaveFailureProbe() {
+        const result = await this.driver.executeScript(`
+            const context = window.SillyTavern?.getContext?.();
+            if (typeof context?.saveChat !== 'function') {
+                return { error: 'SillyTavern saveChat context is unavailable' };
+            }
+
+            const state = { originalFetch: window.fetch, failedSaveRequests: 0 };
+            window.__aikobotsPendingSaveFailureProbe = state;
+            window.fetch = async function(input, init) {
+                const url = typeof input === 'string' ? input : String(input?.url || '');
+                if (url.endsWith('/api/chats/save')) {
+                    state.failedSaveRequests++;
+                    return new Response(JSON.stringify({ error: 'selenium_pending_save_failure' }), {
+                        status: 500,
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+                }
+                return state.originalFetch.call(this, input, init);
+            };
+
+            void context.saveChat();
+            return { installed: true };
+        `);
+
+        if (result?.error || result?.installed !== true) {
+            throw new Error(result?.error || 'Pending save failure probe was not installed.');
+        }
+    }
+
+    async getPendingSaveFailureState() {
+        return this.driver.executeScript(`
+            const state = window.__aikobotsPendingSaveFailureProbe;
+            const textarea = document.getElementById('send_textarea');
+            const toastVisible = Array.from(document.querySelectorAll('.toast-error'))
+                .some(toast => getComputedStyle(toast).display !== 'none');
+            return {
+                failedSaveRequests: state?.failedSaveRequests ?? 0,
+                draft: String(textarea?.value || ''),
+                toastVisible,
+            };
+        `);
+    }
+
+    async releasePendingSaveFailureProbe() {
+        await this.driver.executeScript(`
+            const state = window.__aikobotsPendingSaveFailureProbe;
+            if (state?.originalFetch) {
+                window.fetch = state.originalFetch;
+            }
+            delete window.__aikobotsPendingSaveFailureProbe;
+        `);
+    }
+
+    async sendMessageWithDuplicateTriggers(text) {
+        await this.waitForSendReady();
+        const textarea = await this.driver.findElement(By.id('send_textarea'));
+        await textarea.click();
+        await textarea.clear();
+        await textarea.sendKeys(text);
+        await this.clickElementById('send_but');
+        return this.driver.executeScript(`
+            const sendButton = document.getElementById('send_but');
+            const textarea = document.getElementById('send_textarea');
+            const immediateState = {
+                spinner: Boolean(sendButton?.classList.contains('fa-spinner')),
+                busy: sendButton?.getAttribute('aria-busy') === 'true',
+            };
+            sendButton?.click();
+            textarea?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+            return immediateState;
+        `);
+    }
+
+    async waitForHeldAssistantAppend() {
+        await this.driver.wait(async () => {
+            return this.driver.executeScript('return window.__aikobotsGenerationLifecycleProbe?.assistantAppendHeld === true;');
+        }, this.config.timeouts.responseMs);
+    }
+
+    async getGenerationLifecycleProbeState() {
+        return this.driver.executeScript(`
+            const state = window.__aikobotsGenerationLifecycleProbe;
+            const sendButton = document.getElementById('send_but');
+            const stopButton = document.getElementById('mes_stop');
+            return {
+                saveStartDelayMs: state?.saveStartedAt === null ? null : state.saveStartedAt - state.queuedAt,
+                assistantAppendHeld: state?.assistantAppendHeld === true,
+                bodyGenerating: document.body.dataset.generating === 'true',
+                sendVisible: sendButton ? getComputedStyle(sendButton).display !== 'none' : false,
+                stopVisible: stopButton ? getComputedStyle(stopButton).display !== 'none' : false,
+            };
+        `);
+    }
+
+    async releaseGenerationLifecycleProbe() {
+        await this.driver.executeScript(`
+            const state = window.__aikobotsGenerationLifecycleProbe;
+            state?.releaseAssistantAppend?.();
+            if (state?.originalFetch) {
+                window.fetch = state.originalFetch;
+            }
+            delete window.__aikobotsGenerationLifecycleProbe;
+        `);
+    }
+
     async waitForUserMessageSent(previousUserCount, timeoutMs = this.config.timeouts.stepMs) {
         await this.driver.wait(async () => {
             const currentCount = await this.countUserMessages();

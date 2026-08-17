@@ -2207,6 +2207,7 @@
     "[Character] ${0}\nFile: ${1}": "[キャラクター] ${0}\n ファイル: ${1}",
     "Set the crop position of the avatar image": "アバター画像の切り抜き位置を設定する",
     "Chat could not be saved": "チャットを保存できませんでした",
+    "Pending chat changes could not be saved. Generation was not started.": "保留中のチャット変更を保存できませんでした。生成は開始されませんでした。",
     "Force push chat failed": "チャットの強制プッシュに失敗しました",
     "Check the server connection and reload if the chat state looks stale.": "サーバー接続を確認し、チャットの状態が古いと思われる場合はリロードします。",
     "<p data-i18n=\"After you click OK, the page will be reloaded to prevent data corruption.\">After you click OK, the page will be reloaded to prevent data corruption.</p>\n              <p>To confirm an overwrite (and potentially <b data-i18n=\"LOSE YOUR DATA\">LOSE YOUR DATA</b>), enter <code>OVERWRITE</code> (in all caps) in the box below before clicking OK.</p>": "<p data-i18n=\"After you click OK, the page will be reloaded to prevent data corruption.\">「OK」をクリックすると、データの破損を防ぐためにページが再ロードされます。</p>\n <p>上書きを確認するには（<b data-i18n=\"LOSE YOUR DATA\">データが失われる可能性があります</b>）、下のボックスに<code>OVERWRITE</code>（すべて大文字で）と入力してから、OKをクリックします。</p>",

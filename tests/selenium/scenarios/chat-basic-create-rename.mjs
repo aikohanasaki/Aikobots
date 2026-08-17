@@ -125,15 +125,67 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
     await runLoggedStep({
         logger,
         testName,
-        stepName: 'send-user-message',
+        stepName: 'reject-send-when-pending-save-fails',
+        featureTags,
+        selector: '#send_textarea,#send_but,.toast-error',
+        expected: 'A failed persistence barrier keeps the draft and does not start generation',
+        action: async () => {
+            const failureDraft = 'Selenium pending-save failure draft.';
+            await page.installPendingSaveFailureProbe();
+            try {
+                await page.sendMessage(failureDraft);
+                await page.waitForStandardSendState();
+                const failureState = await page.getPendingSaveFailureState();
+                const userCount = await page.countUserMessages();
+                if (failureState.failedSaveRequests < 1 || failureState.draft !== failureDraft || !failureState.toastVisible) {
+                    throw new Error(`Pending save failure was not surfaced safely: ${JSON.stringify(failureState)}`);
+                }
+                if (userCount !== beforeUserCount.userCount) {
+                    throw new Error('Generation appended a user message after its persistence barrier failed.');
+                }
+                return { failedSaveRequests: failureState.failedSaveRequests, draftPreserved: true, userCount };
+            } finally {
+                await page.releasePendingSaveFailureProbe();
+            }
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'reject-send-when-pending-save-fails', error }),
+    });
+
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'send-user-message-with-lifecycle-guard',
         featureTags,
         selector: '#send_textarea,#send_but',
-        expected: 'A user message is sent to generate assistant response',
+        expected: 'Send preempts queued save delay, ignores duplicate triggers, and stays locked through final persistence',
         action: async () => {
-            const result = await page.sendMessageWithRetry(promptText, beforeUserCount.userCount);
-            return { promptText, ...result };
+            await page.installGenerationLifecycleProbe();
+            try {
+                const immediateState = await page.sendMessageWithDuplicateTriggers(promptText);
+                await page.waitForUserMessageSent(beforeUserCount.userCount, 8_000);
+                await page.waitForHeldAssistantAppend();
+
+                const lifecycleState = await page.getGenerationLifecycleProbeState();
+                const userCount = await page.countUserMessages();
+                if (!immediateState.spinner || !immediateState.busy) {
+                    throw new Error(`Send did not acknowledge preflight immediately: ${JSON.stringify(immediateState)}`);
+                }
+                if (lifecycleState.saveStartDelayMs === null || lifecycleState.saveStartDelayMs >= 1_500) {
+                    throw new Error(`Queued save was not promoted promptly: ${JSON.stringify(lifecycleState)}`);
+                }
+                if (!lifecycleState.assistantAppendHeld || !lifecycleState.bodyGenerating || lifecycleState.sendVisible || !lifecycleState.stopVisible) {
+                    throw new Error(`Generation controls unlocked before final persistence: ${JSON.stringify(lifecycleState)}`);
+                }
+                if (userCount !== beforeUserCount.userCount + 1) {
+                    throw new Error(`Duplicate Send triggers created ${userCount - beforeUserCount.userCount} user messages.`);
+                }
+
+                return { immediateState, lifecycleState, userCount };
+            } finally {
+                await page.releaseGenerationLifecycleProbe();
+            }
         },
-        onError: error => captureArtifacts({ testName, stepName: 'send-user-message', error }),
+        onError: error => captureArtifacts({ testName, stepName: 'send-user-message-with-lifecycle-guard', error }),
     });
 
     const response = await runLoggedStep({

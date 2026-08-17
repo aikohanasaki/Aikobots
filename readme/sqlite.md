@@ -771,6 +771,8 @@ Automatic last-write-wins behavior requires an explicit product decision and ded
 
 A successful no-op acknowledgement may retain the submitted base revision. A successful mutation acknowledgement advances it by exactly one. Any other successful revision response is invalid and must not release the next queued operation.
 
+Direct background chat saves may coalesce for up to two seconds. A user-visible generation is an explicit persistence barrier: the client cancels any remaining coalescing delay, starts the already queued shared save runner, and awaits its acknowledgement before changing the generation target or submitting a provider request. Generated swipes cross that barrier before entering swipe mutation state, and group regeneration crosses it before deleting the prior generated replies. This promotion changes only when the existing save starts; it does not create another dirty save, revision envelope, or transaction.
+
 ## Verification
 
 Use package scripts directly. Do not use `npx`, `bunx`, or equivalent wrappers.
@@ -956,7 +958,7 @@ A foreground streaming generation stores a strictly validated, content-free reco
 
 Healthy queued or running jobs remain live while their owner heartbeat advances. Completed recoverable jobs that have not yet been saved to chat are retained for seven days. Resolved completions, cancellations, failures, non-recoverable completions, and stale nonterminal jobs are retained for 24 hours; deletion is opportunistic after those minimum windows.
 
-The browser message shown while generation is streaming remains ephemeral display state. When a stream finishes, the client sends one explicit SQLite append or update mutation, waits for its acknowledged revision, reads that message back from the server by logical position, validates its stable message UUID, and replaces the ephemeral browser object and DOM with the canonical SQLite row. Completion events run only after that replacement.
+The browser message shown while generation is streaming remains ephemeral display state. When a stream finishes, the client sends one explicit SQLite append or update mutation, waits for its acknowledged revision, reads that message back from the server by logical position, validates its stable message UUID, and replaces the ephemeral browser object and DOM with the canonical SQLite row. Completion events run only after that replacement. Foreground generation controls remain unavailable through this final mutation, authoritative read-back, recovery acknowledgement, and completion events; an auto-swipe or auto-continue transfers that busy state directly instead of exposing an idle send control between chained generations.
 
 Generic range saves are deferred until both the final streaming mutation and authoritative read-back settle. An explicit chat flush waits for the same boundary, while an explicit server refresh discards deferred browser-save state. This prevents a courtesy streaming display or a delayed save timer from becoming authoritative or leaking into another chat.
 

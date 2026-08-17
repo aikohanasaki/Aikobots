@@ -1,7 +1,7 @@
 {
   "formatVersion": 1,
   "initialRequestCount": 10,
-  "initialGzipBytes": 1670849,
+  "initialGzipBytes": 1671356,
   "builtinExtensionCount": 13,
   "stmbModuleCount": 28,
   "assets": [
@@ -13,9 +13,9 @@
     },
     {
       "name": "app.js",
-      "bytes": 1864503,
-      "gzipBytes": 500374,
-      "sha256": "ce4e2fecd22ec00ba411b0ec642d2daf80de45f75a5252d049597ec9abf0ccb7"
+      "bytes": 1866041,
+      "gzipBytes": 500881,
+      "sha256": "3aab82eed53dd05f17ac2491c1d4ef523ee4eeb361c089830327ffbb58fe2e88"
     },
     {
       "name": "chunks/builtins.js",

@@ -2718,6 +2718,7 @@
     "[Character] ${0}\nFile: ${1}": "[Caractère] ${0} \nFichier : ${1}",
     "Set the crop position of the avatar image": "Définir la position de recadrage de l'image de l'avatar",
     "Chat could not be saved": "Le chat n'a pas pu être enregistré",
+    "Pending chat changes could not be saved. Generation was not started.": "Les modifications de chat en attente n’ont pas pu être enregistrées. La génération n’a pas démarré.",
     "Force push chat failed": "Échec du chat push forcé",
     "Check the server connection and reload if the chat state looks stale.": "Vérifiez la connexion au serveur et rechargez si l'état du chat semble obsolète.",
     "<p data-i18n=\"After you click OK, the page will be reloaded to prevent data corruption.\">After you click OK, the page will be reloaded to prevent data corruption.</p>\n              <p>To confirm an overwrite (and potentially <b data-i18n=\"LOSE YOUR DATA\">LOSE YOUR DATA</b>), enter <code>OVERWRITE</code> (in all caps) in the box below before clicking OK.</p>": "<p data-i18n=\"After you click OK, the page will be reloaded to prevent data corruption.\">Après avoir cliqué sur OK, la page sera rechargée pour éviter la corruption des données.</p> \n<p>Pour confirmer un écrasement (et potentiellement <b data-i18n=\"LOSE YOUR DATA\">PERDRE VOS DONNÉES</b>), saisissez <code>OVERWRITE</code> (en majuscules) dans la case ci-dessous avant de cliquer sur OK.</p>",

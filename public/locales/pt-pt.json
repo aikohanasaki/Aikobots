@@ -264,6 +264,8 @@
     "Most tokens have a leading space.": "A maioria dos tokens tem um espaço à esquerda.",
     "API Connections": "Conexões da API",
     "Text Completion": "Conclusão de texto",
+    "Chat could not be saved": "Não foi possível guardar o chat",
+    "Pending chat changes could not be saved. Generation was not started.": "Não foi possível guardar as alterações pendentes do chat. A geração não foi iniciada.",
     "Chat Completion": "Conclusão do bate-papo",
     "NovelAI": "NovelAI",
     "AI Horde": "AI Horde",

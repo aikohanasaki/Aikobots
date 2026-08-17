@@ -6564,22 +6564,39 @@ function hasPendingDebouncedChatSave() {
     return Boolean(chatSaveTimeout);
 }
 
+/** Starts the already queued direct chat save now and returns its shared result. */
+async function flushPendingChatSaveQueue() {
+    const pendingSave = chatSaveQueuePromise;
+    if (!pendingSave) {
+        return CHAT_SAVE_RESULT.SAVED;
+    }
+
+    cancelChatSaveQueueTimer();
+    const runPendingSave = chatSaveQueueRun;
+    void runPendingSave?.();
+    return await pendingSave;
+}
+
 export async function flushDebouncedChatSave() {
-    await flushPendingSqliteMessageUpdateSave();
+    const pendingMessageUpdateResult = await flushPendingSqliteMessageUpdateSave();
+    if (pendingMessageUpdateResult === CHAT_SAVE_RESULT.FAILED) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
     const streamingMutationResult = await waitForPendingStreamingSqliteMutation();
     if (streamingMutationResult === CHAT_SAVE_RESULT.FAILED) {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
     if (!hasPendingDebouncedChatSave()) {
-        let result = chatSaveQueuePromise
-            ? await chatSaveQueuePromise
-            : CHAT_SAVE_RESULT.SAVED;
+        let result = await flushPendingChatSaveQueue();
         if (chatSaveDirty && !chatSaveQueuePromise) {
             result = await saveChatConditional({ immediate: true });
         }
         await chatRevisionOperationQueue;
-        await flushPendingSqliteMessageUpdateSave();
+        const finalMessageUpdateResult = await flushPendingSqliteMessageUpdateSave();
+        if (finalMessageUpdateResult === CHAT_SAVE_RESULT.FAILED) {
+            return CHAT_SAVE_RESULT.FAILED;
+        }
         return result;
     }
 
@@ -6587,13 +6604,15 @@ export async function flushDebouncedChatSave() {
     toastr.info(t`Saving queued chat changes before continuing.`, t`Saving pending chat changes...`);
     const result = await saveChatConditional({ immediate: true });
     await chatRevisionOperationQueue;
-    await flushPendingSqliteMessageUpdateSave();
+    const finalMessageUpdateResult = await flushPendingSqliteMessageUpdateSave();
 
     if (result !== CHAT_SAVE_RESULT.SAVED) {
         saveChatDebounced();
     }
 
-    return result;
+    return finalMessageUpdateResult === CHAT_SAVE_RESULT.FAILED
+        ? CHAT_SAVE_RESULT.FAILED
+        : result;
 }
 
 export async function clearChat({ flushPendingSave = true } = {}) {
@@ -6885,29 +6904,32 @@ export async function sendTextareaMessage() {
     if (is_send_press) return;
     if (isExecutingCommandsFromChatInput) return;
 
-    let generateType = 'normal';
-    // "Continue on send" is activated when the user hits "send" (or presses enter) on an empty chat box, and the last
-    // message was sent from a character (not the user or the system).
-    const textareaText = String($('#send_textarea').val());
-    if (power_user.continue_on_send &&
-        !hasPendingFileAttachment() &&
-        !textareaText &&
-        !selected_group &&
-        chat.length &&
-        !chat[chat.length - 1]['is_user'] &&
-        !chat[chat.length - 1]['is_system']
-    ) {
-        generateType = 'continue';
-    }
-
-    if (textareaText && !selected_group && this_chid === undefined && name2 !== neutralCharacterName) {
-        await newAssistantChat({ temporary: false });
-    }
+    is_send_press = true;
+    setGenerationPreflightIndicator(true);
 
     try {
+        let generateType = 'normal';
+        // "Continue on send" is activated when the user hits "send" (or presses enter) on an empty chat box, and the last
+        // message was sent from a character (not the user or the system).
+        const textareaText = String($('#send_textarea').val());
+        if (power_user.continue_on_send &&
+            !hasPendingFileAttachment() &&
+            !textareaText &&
+            !selected_group &&
+            chat.length &&
+            !chat[chat.length - 1]['is_user'] &&
+            !chat[chat.length - 1]['is_system']
+        ) {
+            generateType = 'continue';
+        }
+
+        if (textareaText && !selected_group && this_chid === undefined && name2 !== neutralCharacterName) {
+            await newAssistantChat({ temporary: false });
+        }
+
         return await Generate(generateType);
     } catch (error) {
-        unblockGeneration(generateType);
+        unblockGeneration();
 
         if (abortController?.signal?.aborted || error?.name === 'AbortError') {
             return;
@@ -6922,6 +6944,8 @@ export async function sendTextareaMessage() {
         }
 
         return;
+    } finally {
+        setGenerationPreflightIndicator(false);
     }
 }
 
@@ -9100,7 +9124,6 @@ class StreamingProcessor {
     }
 
     async onFinishStreaming(messageId, text) {
-        this.markUIGenStopped();
         await this.onProgressStreaming(messageId, text, true);
         const finishSwipeValidation = this.type === 'swipe' ? validateSwipeTarget(this.swipeTarget) : null;
         if (finishSwipeValidation && !finishSwipeValidation.ok) {
@@ -9192,16 +9215,21 @@ class StreamingProcessor {
         } else {
             await eventSource.emit(event_types.IMPERSONATE_READY, text);
         }
-        unblockGeneration();
-
         const isAborted = this.abortController.signal.aborted;
         if (!isAborted && power_user.auto_swipe && generatedTextFiltered(text)) {
-            await swipe(null, SWIPE_DIRECTION.RIGHT, {
-                source: SWIPE_SOURCE.AUTO_SWIPE,
-                repeated: true,
-                forceMesId: chat.length - 1,
-            });
-            return true;
+            is_send_press = false;
+            try {
+                await swipe(null, SWIPE_DIRECTION.RIGHT, {
+                    source: SWIPE_SOURCE.AUTO_SWIPE,
+                    repeated: true,
+                    forceMesId: chat.length - 1,
+                });
+            } finally {
+                if (!is_send_press) {
+                    unblockGeneration();
+                }
+            }
+            return 'auto-swipe';
         }
 
         playMessageSound();
@@ -9754,7 +9782,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     console.log('Generate entered');
 
     if (!dryRun && type !== 'quiet' && blockIfEditing('generating')) {
-        is_send_press = false;
+        unblockGeneration(type);
         return Promise.resolve();
     }
 
@@ -9767,7 +9795,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         const validation = validateSwipeTarget(swipeTarget);
         if (!validation.ok) {
             await resetStaleSwipeTarget(swipeTarget);
-            is_send_press = false;
+            unblockGeneration(type);
             throw new Error(`Invalid swipe generation target: ${validation.reason}`);
         }
     }
@@ -9779,14 +9807,21 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
     const pendingSaveResult = await flushDebouncedChatSave();
     if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
-        is_send_press = false;
+        unblockGeneration(type);
+        if (type !== 'quiet') {
+            toastr.error(
+                t`Pending chat changes could not be saved. Generation was not started.`,
+                t`Chat could not be saved`,
+                { preventDuplicates: true },
+            );
+        }
         return Promise.resolve();
     }
     if (type === 'swipe') {
         const validation = validateSwipeTarget(swipeTarget);
         if (!validation.ok) {
             await resetStaleSwipeTarget(swipeTarget);
-            is_send_press = false;
+            unblockGeneration(type);
             throw new Error(`Invalid swipe generation target after pending save: ${validation.reason}`);
         }
     }
@@ -9874,7 +9909,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     // We can't do anything because we're not in a chat right now. (Unless it's a dry run, in which case we need to
     // assemble the prompt so we can count its tokens regardless of whether a chat is active.)
     if (!dryRun && !hasBackendConnection) {
-        is_send_press = false;
+        unblockGeneration(type);
         return Promise.resolve();
     }
 
@@ -10820,13 +10855,22 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
             }
 
             if (isStreamFinished) {
-                const finishSaved = await streamingProcessor.onFinishStreaming(streamingProcessor.messageId, getMessage);
-                if (finishSaved === false) {
-                    streamingProcessor = null;
+                const finishedStreamingProcessor = streamingProcessor;
+                const finishResult = await finishedStreamingProcessor.onFinishStreaming(finishedStreamingProcessor.messageId, getMessage);
+                if (finishResult === false) {
+                    if (streamingProcessor === finishedStreamingProcessor) {
+                        streamingProcessor = null;
+                    }
                     return;
                 }
-                streamingProcessor = null;
-                triggerAutoContinue(messageChunk, isImpersonate);
+                if (finishResult !== 'auto-swipe') {
+                    if (streamingProcessor === finishedStreamingProcessor) {
+                        streamingProcessor = null;
+                    }
+                    if (!transferGenerationToAutoContinue(messageChunk, isImpersonate)) {
+                        unblockGeneration(type);
+                    }
+                }
                 return Object.defineProperties(new String(getMessage), {
                     'messageChunk': { value: messageChunk },
                     'fromStream': { value: true },
@@ -10974,18 +11018,23 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         const isAborted = abortController && abortController.signal.aborted;
         if (!isAborted && power_user.auto_swipe && generatedTextFiltered(getMessage)) {
             is_send_press = false;
-            return swipe(null, SWIPE_DIRECTION.RIGHT, {
-                source: SWIPE_SOURCE.AUTO_SWIPE,
-                repeated: true,
-                forceMesId: chat.length - 1,
-            });
+            try {
+                return await swipe(null, SWIPE_DIRECTION.RIGHT, {
+                    source: SWIPE_SOURCE.AUTO_SWIPE,
+                    repeated: true,
+                    forceMesId: chat.length - 1,
+                });
+            } finally {
+                if (!is_send_press) {
+                    unblockGeneration(type);
+                }
+            }
         }
 
-        unblockGeneration(type);
         streamingProcessor = null;
 
-        if (type !== 'quiet') {
-            triggerAutoContinue(messageChunk, isImpersonate);
+        if (type === 'quiet' || !transferGenerationToAutoContinue(messageChunk, isImpersonate)) {
+            unblockGeneration(type);
         }
 
         // Don't break the API chain that expects a single string in return
@@ -11198,10 +11247,19 @@ export async function Generate(type, options = {}, dryRun = false) {
         return generateInternal(type, options, dryRun);
     }
 
+    const isForegroundGeneration = type !== 'quiet';
+    if (isForegroundGeneration) {
+        is_send_press = true;
+        setGenerationPreflightIndicator(true);
+    }
+
     const stopBackgroundAudio = beginMobileBackgroundAudioGeneration();
     try {
         return await generateInternal(type, options, dryRun);
     } finally {
+        if (isForegroundGeneration) {
+            setGenerationPreflightIndicator(false);
+        }
         stopBackgroundAudio();
     }
 }
@@ -11389,6 +11447,20 @@ export function triggerAutoContinue(messageChunk, isImpersonate) {
     if (shouldAutoContinue(messageChunk, isImpersonate)) {
         $('#option_continue').trigger('click');
     }
+}
+
+/** Transfers the current foreground busy state directly into an accepted auto-continue. */
+function transferGenerationToAutoContinue(messageChunk, isImpersonate) {
+    is_send_press = false;
+    if (selected_group) {
+        return false;
+    }
+    if (!shouldAutoContinue(messageChunk, isImpersonate)) {
+        return false;
+    }
+
+    $('#option_continue').trigger('click');
+    return is_send_press;
 }
 
 export function getBiasStrings(textareaText, type) {
@@ -12711,6 +12783,7 @@ export function getGeneratingModel(mes) {
  */
 export function activateSendButtons() {
     is_send_press = false;
+    setGenerationPreflightIndicator(false);
     hideStopButton();
     delete document.body.dataset.generating;
 }
@@ -12719,8 +12792,28 @@ export function activateSendButtons() {
  * A function mainly used to switch 'generating' state - setting it to true and deactivating the buttons
  */
 export function deactivateSendButtons() {
+    setGenerationPreflightIndicator(false);
     showStopButton();
     document.body.dataset.generating = 'true';
+}
+
+/** Shows immediate, non-cancelable feedback while generation prerequisites are settling. */
+function setGenerationPreflightIndicator(active) {
+    const sendButton = document.getElementById('send_but');
+    if (!sendButton) {
+        return;
+    }
+
+    sendButton.classList.toggle('fa-paper-plane', !active);
+    sendButton.classList.toggle('fa-spinner', active);
+    sendButton.classList.toggle('fa-spin', active);
+    if (active) {
+        sendButton.setAttribute('aria-busy', 'true');
+        sendButton.setAttribute('aria-disabled', 'true');
+    } else {
+        sendButton.removeAttribute('aria-busy');
+        sendButton.removeAttribute('aria-disabled');
+    }
 }
 
 export function resetChatState() {
@@ -19257,6 +19350,24 @@ export async function swipe(event, direction, { source, repeated, message = chat
         }
     }
 
+    const willGenerateSwipe = direction === SWIPE_DIRECTION.RIGHT
+        && requestedSwipeId >= existingSwipeCount
+        && getOverswipeBehavior(mesId) === OVERSWIPE_BEHAVIOR.REGENERATE;
+    if (willGenerateSwipe) {
+        is_send_press = true;
+        setGenerationPreflightIndicator(true);
+        const pendingSaveResult = await flushDebouncedChatSave();
+        if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+            unblockGeneration('swipe');
+            toastr.error(
+                t`Pending chat changes could not be saved. Generation was not started.`,
+                t`Chat could not be saved`,
+                { preventDuplicates: true },
+            );
+            return;
+        }
+    }
+
     cancelDebouncedChatSave();
     swipeState = SWIPE_STATE.SWIPING;
 
@@ -19365,6 +19476,9 @@ export async function swipe(event, direction, { source, repeated, message = chat
         delete document.body.dataset.swiping;
         showSwipeButtons();
         resumeChatSaveAfterSwipeGeneration();
+        if (willGenerateSwipe && !generation) {
+            unblockGeneration('swipe');
+        }
     }
 
     async function standardSwipe(targetSwipeId) {
@@ -19507,7 +19621,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
 
         await eventSource.emit(event_types.MESSAGE_SWIPED, mesId);
 
-        if (runGenerate && !is_send_press) {
+        if (runGenerate) {
             is_send_press = true;
             generation = Generate('swipe', { swipeTarget });
         }
@@ -19609,6 +19723,9 @@ export async function swipe(event, direction, { source, repeated, message = chat
         delete document.body.dataset.swiping;
         showSwipeButtons();
         resumeChatSaveAfterSwipeGeneration();
+        if (willGenerateSwipe && !generation) {
+            unblockGeneration('swipe');
+        }
     }
 }
 
@@ -20474,10 +20591,7 @@ jQuery(async function () {
         $('#option_regenerate').trigger('click');
     });
 
-    const userInputGenerateMutex = new SimpleMutex(sendTextareaMessage);
-    $('#send_but').on('click', async function () {
-        await userInputGenerateMutex.update();
-    });
+    $('#send_but').on('click', sendTextareaMessage);
 
     //menu buttons setup
 

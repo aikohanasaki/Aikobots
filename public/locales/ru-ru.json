@@ -1749,6 +1749,7 @@
     "Trying to save group chat with regular saveChat function. Aborting to prevent corruption.": "Произошла попытка сохранения группового чата функцией saveChat. Откатываем изменения, чтобы предотвратить потерю данных.",
     "Check the server connection and reload the page to prevent data loss.": "Проверьте связь с сервером и перезагрузите страницу, чтобы избежать потери данных.",
     "Chat could not be saved": "Не удалось сохранить чат",
+    "Pending chat changes could not be saved. Generation was not started.": "Не удалось сохранить ожидающие изменения чата. Генерация не была запущена.",
     "Settings could not be loaded after multiple attempts. Please try again later.": "Не удалось загрузить настройки за несколько попыток. Попробуйте позднее.",
     "Settings could not be saved": "Не удалось сохранить настройки",
     "Could not load chat data. Try reloading the page.": "Не удалось загрузить чат. Попробуйте обновить страницу.",
