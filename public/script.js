@@ -103,6 +103,7 @@ import {
     assignChunkMessagesByAbsoluteId,
     validateChunkedChatPayload,
 } from './scripts/chat-chunking.js';
+import { fetchChatSearchResults } from './scripts/chat-search.js';
 
 import {
     setOpenAIMessageExamples,
@@ -2109,6 +2110,28 @@ function isTopChatSidebarVisible() {
     return Boolean(sidebar?.classList.contains('visible') && (!sidebar.dataset.sidebarMode || sidebar.dataset.sidebarMode === 'chat'));
 }
 
+function getTopChatOwnerKey() {
+    if (selected_group) {
+        return `group:${selected_group}`;
+    }
+
+    if (this_chid !== undefined) {
+        return `character:${characters[this_chid]?.avatar ?? this_chid}`;
+    }
+
+    return '';
+}
+
+function syncTopChatSidebarSelection() {
+    const sidebar = getTopChatSidebarElement();
+    const currentChatId = normalizeTopChatFileName(getCurrentChatId());
+    sidebar?.querySelectorAll('.top_chat_sidebar_item').forEach(item => {
+        const isSelected = item.dataset.chatId === currentChatId;
+        item.classList.toggle('selected', isSelected);
+        item.setAttribute('aria-current', isSelected ? 'true' : 'false');
+    });
+}
+
 function setTopChatAvailabilityState(hasChat) {
     const isChatBusy = isTopChatInteractionBusy();
     const canOpenManageChats = (selected_group && !is_group_generating) || (!selected_group && !is_send_press);
@@ -2129,7 +2152,22 @@ async function getTopChatChatFiles() {
     }
 
     if (this_chid !== undefined) {
-        return await getPastCharacterChats();
+        const avatarUrl = characters[this_chid]?.avatar;
+        if (!avatarUrl) {
+            return [];
+        }
+
+        const chats = await fetchChatSearchResults({
+            avatarUrl,
+            requestHeaders: getRequestHeaders(),
+        });
+        return chats.map(chat => ({
+            file_name: chat.file_name,
+            mes: chat.preview_message ?? '',
+            last_mes: chat.last_mes ?? Date.now(),
+            file_size: chat.file_size ?? '0kb',
+            chat_items: chat.message_count ?? 0,
+        }));
     }
 
     return [];
@@ -2298,6 +2336,7 @@ async function populateTopChatSidebar() {
     sidebar.dataset.sidebarMode = 'chat';
 
     const processToken = uuidv4();
+    const ownerKey = getTopChatOwnerKey();
     topChatSidebarPopulateToken = processToken;
     const currentChatId = normalizeTopChatFileName(getCurrentChatId());
     const previousScrollTop = container.scrollTop;
@@ -2305,12 +2344,24 @@ async function populateTopChatSidebar() {
     loader.classList.remove('displayNone');
     container.innerHTML = '';
 
-    const chats = (await getTopChatChatFiles()).map(chat => ({
-        ...chat,
-        file_name: normalizeTopChatFileName(chat.file_name),
-        mes: String(chat.mes ?? '').replace(/\s+/g, ' ').trim() || '[The chat is empty]',
-        last_mes: timestampToMoment(chat.last_mes || Date.now()),
-    })).sort((a, b) => sortMoments(a.last_mes, b.last_mes));
+    let chats;
+    try {
+        chats = (await getTopChatChatFiles()).map(chat => ({
+            ...chat,
+            file_name: normalizeTopChatFileName(chat.file_name),
+            mes: String(chat.mes ?? '').replace(/\s+/g, ' ').trim() || '[The chat is empty]',
+            last_mes: timestampToMoment(chat.last_mes || Date.now()),
+        })).sort((a, b) => sortMoments(a.last_mes, b.last_mes));
+    } catch (error) {
+        console.error('Error loading chat sidebar:', error);
+        if (topChatSidebarPopulateToken === processToken) {
+            loader.classList.add('displayNone');
+            if (getTopChatOwnerKey() === ownerKey && isTopChatSidebarVisible()) {
+                toastr.error(translate('Could not load chat data. Try reloading the page.'));
+            }
+        }
+        return;
+    }
 
     if (!sidebar.classList.contains('visible') || sidebar.dataset.sidebarMode !== 'chat') {
         loader.classList.add('displayNone');
@@ -2320,6 +2371,13 @@ async function populateTopChatSidebar() {
     if (topChatSidebarPopulateToken !== processToken) {
         return;
     }
+
+    if (getTopChatOwnerKey() !== ownerKey) {
+        loader.classList.add('displayNone');
+        return;
+    }
+
+    sidebar.dataset.chatOwnerKey = ownerKey;
 
     if (!chats.length) {
         const emptyState = document.createElement('div');
@@ -2333,9 +2391,11 @@ async function populateTopChatSidebar() {
     for (const chat of chats) {
         const item = document.createElement('div');
         item.className = 'top_chat_sidebar_item';
+        item.dataset.chatId = chat.file_name;
         item.classList.toggle('selected', chat.file_name === currentChatId);
+        item.setAttribute('aria-current', chat.file_name === currentChatId ? 'true' : 'false');
         item.addEventListener('click', async () => {
-            if (chat.file_name === currentChatId || item.classList.contains('selected')) {
+            if (chat.file_name === normalizeTopChatFileName(getCurrentChatId()) || item.classList.contains('selected')) {
                 return;
             }
 
@@ -2395,6 +2455,20 @@ async function populateTopChatSidebar() {
     }
 
     loader.classList.add('displayNone');
+}
+
+async function refreshTopChatSidebarState({ force = false } = {}) {
+    const sidebar = getTopChatSidebarElement();
+    if (!isTopChatSidebarVisible()) {
+        return;
+    }
+
+    if (force || sidebar?.dataset.chatOwnerKey !== getTopChatOwnerKey()) {
+        await populateTopChatSidebar();
+        return;
+    }
+
+    syncTopChatSidebarSelection();
 }
 
 export async function toggleTopChatSidebar(forceVisible = undefined, { animate = true, save = true } = {}) {
@@ -2610,7 +2684,7 @@ async function toggleTopChatConnectionProfiles(forceVisible = undefined, { save 
 }
 
 let lastTopChatSelectorEntries = null;
-async function refreshTopChatBarState() {
+async function refreshTopChatBarState({ refreshSidebar = true } = {}) {
     const currentChatId = normalizeTopChatFileName(getCurrentChatId());
     const hasChat = Boolean(currentChatId);
     const isChatBusy = isTopChatInteractionBusy();
@@ -2626,7 +2700,7 @@ async function refreshTopChatBarState() {
         topChatBarChatNameSelect.innerHTML = '<option selected data-i18n="No chat selected">No chat selected</option>';
         topChatBarChatNameSelect.disabled = true;
         lastTopChatSelectorEntries = null;
-        await populateTopChatSidebar();
+        await refreshTopChatSidebarState({ force: refreshSidebar });
         return;
     }
 
@@ -2656,7 +2730,7 @@ async function refreshTopChatBarState() {
     topChatBarChatNameSelect.value = currentChatId || '';
     topChatBarChatNameSelect.disabled = isChatBusy || (!entries.length && hasChat);
 
-    await populateTopChatSidebar();
+    await refreshTopChatSidebarState({ force: refreshSidebar });
 }
 
 function bindTopChatButton(element, handler) {
@@ -2834,9 +2908,16 @@ function initTopChatUi() {
     eventSource.on(event_types.BRANCH_CREATED, clearPastCharacterChatsCache);
     eventSource.on(event_types.CHECKPOINT_CREATED, clearPastCharacterChatsCache);
 
+    let shouldRefreshTopChatSidebar = false;
     const refreshTopChatUiDebounced = debounce(() => {
-        void refreshTopChatBarState();
+        const refreshSidebar = shouldRefreshTopChatSidebar;
+        shouldRefreshTopChatSidebar = false;
+        void refreshTopChatBarState({ refreshSidebar });
     }, debounce_timeout.short);
+    const requestTopChatUiRefresh = (refreshSidebar = false) => {
+        shouldRefreshTopChatSidebar ||= refreshSidebar;
+        refreshTopChatUiDebounced();
+    };
     const refreshTopChatAvailabilityDebounced = debounce(() => {
         setTopChatAvailabilityState(Boolean(normalizeTopChatFileName(getCurrentChatId())));
     }, debounce_timeout.short);
@@ -2844,21 +2925,21 @@ function initTopChatUi() {
         void refreshTopChatConnectionProfiles();
     }, debounce_timeout.short);
 
-    eventSource.on(event_types.CHAT_CHANGED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.CHAT_RENAMED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.BRANCH_CREATED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.CHECKPOINT_CREATED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.CHAT_CHANGED, () => requestTopChatUiRefresh(false));
+    eventSource.on(event_types.CHAT_RENAMED, () => requestTopChatUiRefresh(true));
+    eventSource.on(event_types.BRANCH_CREATED, () => requestTopChatUiRefresh(true));
+    eventSource.on(event_types.CHECKPOINT_CREATED, () => requestTopChatUiRefresh(true));
     eventSource.on(event_types.CHAT_CHANGED, handleMessageEditChatChanged);
-    eventSource.on(event_types.CHAT_CREATED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.CHAT_DELETED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.GROUP_CHAT_CREATED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.GROUP_CHAT_DELETED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.MESSAGE_SENT, refreshTopChatUiDebounced);
+    eventSource.on(event_types.CHAT_CREATED, () => requestTopChatUiRefresh(true));
+    eventSource.on(event_types.CHAT_DELETED, () => requestTopChatUiRefresh(true));
+    eventSource.on(event_types.GROUP_CHAT_CREATED, () => requestTopChatUiRefresh(true));
+    eventSource.on(event_types.GROUP_CHAT_DELETED, () => requestTopChatUiRefresh(true));
+    eventSource.on(event_types.MESSAGE_SENT, () => requestTopChatUiRefresh(false));
     eventSource.on(event_types.GENERATION_STARTED, refreshTopChatAvailabilityDebounced);
-    eventSource.on(event_types.GENERATION_STOPPED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.GENERATION_ENDED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.GENERATION_STOPPED, () => requestTopChatUiRefresh(false));
+    eventSource.on(event_types.GENERATION_ENDED, () => requestTopChatUiRefresh(false));
     eventSource.on(event_types.GROUP_WRAPPER_STARTED, refreshTopChatAvailabilityDebounced);
-    eventSource.on(event_types.GROUP_WRAPPER_FINISHED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.GROUP_WRAPPER_FINISHED, () => requestTopChatUiRefresh(false));
     eventSource.on(event_types.ONLINE_STATUS_CHANGED, refreshTopChatConnectionProfilesDebounced);
     eventSource.on(event_types.CONNECTION_PROFILE_LOADED, refreshTopChatConnectionProfilesDebounced);
     eventSource.on(event_types.CHATCOMPLETION_SOURCE_CHANGED, refreshTopChatConnectionProfilesDebounced);
@@ -16836,21 +16917,12 @@ async function displayChats(searchQuery, chatDetails, highlightNames) {
         }
 
         const trimExtension = (fileName) => String(fileName).replace(/\.(jsonl|sqlite)$/i, '');
-        const response = await fetch('/api/chats/search', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                query: searchQuery,
-                avatar_url: chatDetails.isGroup ? null : chatDetails.avatarUrl,
-                group_id: chatDetails.isGroup ? chatDetails.groupId : null,
-            }),
+        const filteredData = await fetchChatSearchResults({
+            query: searchQuery,
+            avatarUrl: chatDetails.isGroup ? null : chatDetails.avatarUrl,
+            groupId: chatDetails.isGroup ? chatDetails.groupId : null,
+            requestHeaders: getRequestHeaders(),
         });
-
-        if (!response.ok) {
-            throw new Error('Search failed');
-        }
-
-        const filteredData = await response.json();
         $('#select_chat_div').empty();
 
         filteredData.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));

@@ -24,6 +24,7 @@ import { RA_CountCharTokens, humanizedDateTime, dragElement, favsToHotswap, getM
 import { LONG_CHAT_DISPLAY_MIN, power_user, loadMovingUIState, sortEntitiesList } from './power-user.js';
 import { debounce_timeout } from './constants.js';
 import { deferLoader, ensureDeferredLoaderShown, waitForLoaderPaint } from './loader.js';
+import { fetchChatSearchResults } from './chat-search.js';
 
 import {
     chat,
@@ -2452,29 +2453,17 @@ export async function getGroupPastChats(groupId) {
     }
 
     try {
-        const response = await fetch('/api/chats/search', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                query: '',
-                group_id: groupId,
-            }),
+        const chats = await fetchChatSearchResults({
+            groupId,
+            requestHeaders: getRequestHeaders(),
         });
-
-        if (!response.ok) {
-            throw new Error('Failed to fetch group chat summaries.');
-        }
-
-        const chats = await response.json();
-        return Array.isArray(chats)
-            ? chats.map(chat => ({
-                file_name: chat.file_name,
-                mes: chat.preview_message ?? '',
-                last_mes: chat.last_mes ?? Date.now(),
-                file_size: chat.file_size ?? '0kb',
-                chat_items: chat.message_count ?? 0,
-            }))
-            : [];
+        return chats.map(chat => ({
+            file_name: chat.file_name,
+            mes: chat.preview_message ?? '',
+            last_mes: chat.last_mes ?? Date.now(),
+            file_size: chat.file_size ?? '0kb',
+            chat_items: chat.message_count ?? 0,
+        }));
     } catch (err) {
         console.error(err);
         return [];

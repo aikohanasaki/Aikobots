@@ -1714,4 +1714,5 @@
   ,"${0} lorebook entry deleted.": "Foi eliminada ${0} entrada de livro de lore."
   ,"${0} lorebook entries deleted.": "Foram eliminadas ${0} entradas de livro de lore."
   ,"Select lorebook entry for bulk actions": "Selecionar entrada do livro de lore para ações em massa"
+  ,"Could not load chat data. Try reloading the page.": "Não foi possível carregar os dados do chat. Tente recarregar a página."
 }
