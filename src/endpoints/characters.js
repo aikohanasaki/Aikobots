@@ -1633,7 +1633,7 @@ async function assertSharedCharacterCheckoutForMutation(request, avatarName) {
         return;
     }
 
-    if (Boolean(request.user?.profile?.admin)) {
+    if (request.user?.profile?.admin) {
         return;
     }
 

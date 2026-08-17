@@ -16,8 +16,6 @@ import {
     scrollChatElementIntoView,
     scrollChatToBottom,
     saveSettingsDebounced,
-    substituteParams,
-    substituteParamsExtended,
     toggleTopChatSidebar,
 } from '../script.js';
 import { DOMPurify } from '../lib.js';
@@ -35,7 +33,7 @@ import {
     saveStmbGroupMemoryEntries,
     syncStmbGroupStloMetadata,
 } from './stmb-api.js';
-import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showConsolidationPreviewPopup, showFailedAIResponsePopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showRegenerationReviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
+import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showConsolidationPreviewPopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showRegenerationReviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { applyLocale, t, translate } from './i18n.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
@@ -44,7 +42,7 @@ import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '
 import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { hideChatMessageRange } from './chats.js';
 import { groups, selected_group } from './group-chats.js';
-import { getRegexScripts, runRegexScript, substitute_find_regex } from './extensions/regex/engine.js';
+import { getRegexScripts, runRegexScript } from './extensions/regex/engine.js';
 import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, METADATA_KEY, openLorebookOrderingDialog, registerStmbRegenerationHandler, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
 import { SECRET_KEYS, secret_state } from './secrets.js';
@@ -124,7 +122,6 @@ import {
     buildQueuedAfterMemorySidePromptJobs,
     evaluateTrackers,
     firstRunInitSidePrompts,
-    enqueueAfterMemorySidePromptJobs,
     generateSidePromptFromSnapshot,
     runSidePrompt,
     runSidePromptSet,
@@ -252,7 +249,6 @@ let activeRootTask = null;
 let stmbInitialized = false;
 let sceneButtonsBound = false;
 let slashCommandsRegistered = false;
-let lastFailedSummaryError = null;
 let lastFailedSummaryContext = null;
 let sidePromptNameCache = [];
 let sidePromptSetNameCache = [];
@@ -273,7 +269,6 @@ const PLANNER_UI_MAX_ROWS = 12;
 const DEFAULT_ARC_PROMPT_KEY = 'arc_default';
 let latestPlannerJobs = [];
 let plannerStatusUiInitialized = false;
-let plannerStatusButton = null;
 let plannerStatusBadge = null;
 const dismissedPlannerNotificationIds = new Set();
 let memoryBoundaryButton = null;
@@ -418,9 +413,6 @@ async function acknowledgeStmbPlannerJobs() {
     return { ok: true };
 }
 
-async function enqueueStmbPlannerWave() {
-    return { ok: false, unsupported: true };
-}
 
 function applyServerPlannerStateToLocal(state = {}, chatScope = null) {
     const localState = getStmbState(chatScope);
@@ -754,7 +746,6 @@ function syncPlannerToggleButton() {
         chatButton.classList.toggle('active', chatVisible);
     }
 
-    plannerStatusButton = plannerButton;
     plannerStatusBadge = ensurePlannerStatusBadge(plannerButton);
     plannerStatusBadge.hidden = badgeCount <= 0;
     plannerStatusBadge.textContent = badgeCount > 0 ? String(badgeCount) : '';
@@ -996,14 +987,6 @@ async function openPlannerSidebar() {
     renderPlannerStatusUi();
 }
 
-async function openChatSidebar() {
-    const { sidebar } = getSharedSidebarElements();
-    if (sidebar instanceof HTMLElement) {
-        sidebar.dataset.sidebarMode = 'chat';
-    }
-    await toggleTopChatSidebar(true);
-    renderPlannerStatusUi();
-}
 
 function handlePlannerSidebarButtonInteraction(event) {
     if (isPlannerSidebarVisible()) {
@@ -1811,21 +1794,6 @@ async function refreshPlannerEffectsFromJobs(jobs = []) {
     }
 }
 
-async function enqueueDurableWave(sceneContext, jobs, source, successMessage = 'STMB job queued.') {
-    const result = await enqueueStmbPlannerWave({
-        sceneContext,
-        source,
-        jobs,
-    });
-    ensurePlannerStatusPolling();
-    pollCurrentChatPlannerState().catch(error => {
-        console.warn('STMB planner poll failed after enqueue', error);
-    });
-    if (getModuleSettings().showNotifications) {
-        toastr.info(successMessage, 'STMB');
-    }
-    return result;
-}
 let stmbJobExecutorsRegistered = false;
 const STMB_VOLATILE_STATE_KEYS = new Set([
     'autoSummaryNextPromptAt',
@@ -1991,91 +1959,6 @@ function cloneRegexScriptEnabled(script) {
     } catch {
         return script;
     }
-}
-
-function escapeRegexMacroValue(value) {
-    return (value && typeof value === 'string')
-        ? value.replaceAll(/[\n\r\t\v\f\0.^$*+?{}[\]\\/|()]/gs, char => {
-            switch (char) {
-                case '\n': return '\\n';
-                case '\r': return '\\r';
-                case '\t': return '\\t';
-                case '\v': return '\\v';
-                case '\f': return '\\f';
-                case '\0': return '\\0';
-                default: return '\\' + char;
-            }
-        })
-        : value;
-}
-
-function resolvePlannerRegexFind(regexScript) {
-    switch (Number(regexScript?.substituteRegex)) {
-        case substitute_find_regex.RAW:
-            return substituteParamsExtended(regexScript?.findRegex, {}, value => value);
-        case substitute_find_regex.ESCAPED:
-            return substituteParamsExtended(regexScript?.findRegex, {}, escapeRegexMacroValue);
-        case substitute_find_regex.NONE:
-        default:
-            return String(regexScript?.findRegex || '');
-    }
-}
-
-function createPlannerRegexSnapshot(regexScript) {
-    const script = cloneRegexScriptEnabled(regexScript);
-    return {
-        ...script,
-        disabled: false,
-        substituteRegex: substitute_find_regex.NONE,
-        findRegex: resolvePlannerRegexFind(script),
-        replaceString: substituteParams(String(script?.replaceString || '').replace(/{{match}}/gi, '$0')),
-        trimStrings: Array.isArray(script?.trimStrings)
-            ? script.trimStrings.map(item => substituteParams(String(item || '')))
-            : [],
-    };
-}
-
-function getPlannerRegexSnapshots(selectedKeys) {
-    if (!Array.isArray(selectedKeys) || selectedKeys.length === 0) {
-        return [];
-    }
-
-    try {
-        const allScripts = getRegexScripts({ allowedOnly: false }) || [];
-        return selectedKeys
-            .map(key => Number(String(key).replace(/^idx:/, '')))
-            .filter(index => Number.isInteger(index) && index >= 0 && index < allScripts.length)
-            .map(index => createPlannerRegexSnapshot(allScripts[index]));
-    } catch (error) {
-        console.warn('STMB planner regex snapshot failed', error);
-        return [];
-    }
-}
-
-function applyRegexScriptSnapshots(text, regexScripts = []) {
-    if (typeof text !== 'string') return text;
-    if (!Array.isArray(regexScripts) || regexScripts.length === 0) return text;
-
-    try {
-        let output = text;
-        for (const script of regexScripts) {
-            output = runRegexScript(cloneRegexScriptEnabled(script), output);
-        }
-        return output;
-    } catch (error) {
-        console.warn('STMB planner regex application failed', error);
-        return text;
-    }
-}
-
-function buildPlannerRegexConfig() {
-    const moduleSettings = getModuleSettings();
-    const enabled = Boolean(moduleSettings.useRegex);
-    return {
-        enabled,
-        outgoingScripts: enabled ? getPlannerRegexSnapshots(moduleSettings.selectedRegexOutgoing) : [],
-        incomingScripts: enabled ? getPlannerRegexSnapshots(moduleSettings.selectedRegexIncoming) : [],
-    };
 }
 
 function applySelectedRegex(text, selectedKeys) {
@@ -3018,16 +2901,6 @@ async function showRegexSelectionPopup() {
     }
 }
 
-const STMB_SUMMARY_PROMPT_DISPLAY_NAMES = Object.freeze({
-    summary: 'Summary - Detailed beat-by-beat summaries in narrative prose',
-    summarize: 'Summarize - Bullet-point format',
-    synopsis: 'Synopsis - Long and comprehensive (beats, interactions, details) with headings',
-    sumup: 'Sum Up - Concise story beats in narrative prose',
-    minimal: 'Minimal - Brief 1-2 sentence summary',
-    northgate: 'Northgate - Intended for creative writing. By Northgate on ST Discord',
-    aelemar: 'Aelemar - Focuses on plot points and character memories. By Aelemar on ST Discord',
-    comprehensive: 'Comprehensive - Synopsis plus improved keywords extraction',
-});
 
 const STMB_PROFILE_SECRET_KEYS = Object.freeze({
     ai21: SECRET_KEYS.AI21,
@@ -3056,17 +2929,7 @@ const STMB_PROFILE_SECRET_KEYS = Object.freeze({
 });
 const STMB_PROFILE_KEYLESS_SOURCES = new Set(['custom', 'pollinations']);
 
-function toTitleCase(text) {
-    return String(text || '').replace(/\w\S*/g, token => token.charAt(0).toUpperCase() + token.slice(1).toLowerCase());
-}
 
-function safeSlug(text) {
-    return String(text || '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 50) || 'custom-prompt';
-}
 
 function getProfilePresetKeys(settings = stmbSettings) {
     return listCachedSummaryPromptPresets(settings).map(preset => preset.key);
@@ -3915,9 +3778,6 @@ function validateSidePromptRuntimeMacroTriggerConfig({ name, prompt, responseFor
     return { runtimeMacros, strippedAutoTriggers };
 }
 
-function isBuiltinSidePromptKey(key) {
-    return ['plotpoints', 'status', 'cast-of-characters', 'cast', 'assess', CLIP_REVIEW_TEMPLATE_KEY].includes(String(key || '').trim());
-}
 
 function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
     if (!Array.isArray(templates) || templates.length === 0) {
@@ -3962,8 +3822,8 @@ function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
                                     <option value="update_and_suggest" ${getModuleSettings().memoryAssistanceMode === 'update_and_suggest' ? 'selected' : ''}>${escapeHtml(translate('Update and Suggest', 'STMemoryBooks_ClipReview_ModeUpdateAndSuggest'))}</option>
                                     <option value="automatic" ${getModuleSettings().memoryAssistanceMode === 'automatic' ? 'selected' : ''}>${escapeHtml(translate('Automatic', 'STMemoryBooks_ClipReview_ModeAutomatic'))}</option>
                                 </select>` : getSidePromptTriggerBadges(template).length > 0
-            ? getSidePromptTriggerBadges(template).map(badge => `<span class="badge" style="margin-right:6px;">${escapeHtml(badge)}</span>`).join('')
-            : '<span class="opacity50p" data-i18n="None">None</span>'}
+        ? getSidePromptTriggerBadges(template).map(badge => `<span class="badge" style="margin-right:6px;">${escapeHtml(badge)}</span>`).join('')
+        : '<span class="opacity50p" data-i18n="None">None</span>'}
                         </td>
                         <td style="padding: 8px; text-align:right;">
                             <span class="stmb-sp-inline-actions whitespacenowrap" style="display: inline-flex; gap: 10px;">
@@ -5305,15 +5165,15 @@ function buildProfileEditorHtml(profile, options = {}) {
                 <label for="stmb-profile-editor-model" data-i18n="Model">Model</label>
                 <input id="stmb-profile-editor-model" class="text_pole" value="${escapeHtml(String(profile?.modelOverride || connection.model || ''))}" placeholder="Optional model override" data-i18n="[placeholder]Optional model override">
                 ${usesCurrentSt
-                    ? '<small data-i18n="Leave blank to use the current SillyTavern model.">Leave blank to use the current SillyTavern model.</small>'
-                    : '<small data-i18n="Leave blank to use the connection profile model.">Leave blank to use the connection profile model.</small>'}
+        ? '<small data-i18n="Leave blank to use the current SillyTavern model.">Leave blank to use the current SillyTavern model.</small>'
+        : '<small data-i18n="Leave blank to use the connection profile model.">Leave blank to use the connection profile model.</small>'}
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-profile-editor-temperature" data-i18n="Temperature">Temperature</label>
                 <input id="stmb-profile-editor-temperature" type="number" min="0" max="2" step="0.1" class="text_pole" value="${profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined ? escapeHtml(String(profile.temperatureOverride)) : (connection.temperature !== undefined ? escapeHtml(String(connection.temperature)) : '')}" placeholder="Optional temperature override" data-i18n="[placeholder]Optional temperature override">
                 ${usesCurrentSt
-                    ? '<small data-i18n="Leave blank to use the current SillyTavern temperature.">Leave blank to use the current SillyTavern temperature.</small>'
-                    : '<small data-i18n="Leave blank to use the connection profile preset or provider default.">Leave blank to use the connection profile preset or provider default.</small>'}
+        ? '<small data-i18n="Leave blank to use the current SillyTavern temperature.">Leave blank to use the current SillyTavern temperature.</small>'
+        : '<small data-i18n="Leave blank to use the connection profile preset or provider default.">Leave blank to use the connection profile preset or provider default.</small>'}
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-profile-editor-preset" data-i18n="Memory Creation Method">Memory Creation Method</label>
@@ -8014,13 +7874,6 @@ function handleLorebookReferencesUpdated(payloadOrOperation = {}, oldNameArg = '
     }
 }
 
-function renderLorebookNameFromTemplate() {
-    const chatId = getCurrentChatId() || 'Chat';
-    return String(getModuleSettings().lorebookNameTemplate || 'LTM - {{char}} - {{chat}}')
-        .replace(/\{\{char\}\}/g, String(name2 || 'Character'))
-        .replace(/\{\{user\}\}/g, String(name1 || 'User'))
-        .replace(/\{\{chat\}\}/g, String(chatId));
-}
 
 async function ensureLorebookName(createContext = 'chat') {
     const manualResolution = getCurrentManualLorebookResolution();
@@ -8586,20 +8439,6 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
     };
 }
 
-function installAbortHook() {
-    const task = createStmbTask('STMB:root');
-    activeRootTask = task;
-    return {
-        controller: task.controller,
-        signal: task.signal,
-        cleanup: () => {
-            task.cleanup();
-            if (activeRootTask === task) {
-                activeRootTask = null;
-            }
-        },
-    };
-}
 
 function buildMemorySceneData(compiledScene, range, settings = stmbSettings) {
     return {
@@ -8616,16 +8455,6 @@ function buildMemorySceneData(compiledScene, range, settings = stmbSettings) {
     };
 }
 
-function shouldQueueAutoConsolidationCheck(settings, targetTier = 1) {
-    if (settings?.moduleSettings?.autoConsolidationPromptEnabled !== true) {
-        return false;
-    }
-
-    const configuredTargetTiers = normalizeAutoConsolidationTargetTiers(
-        settings?.moduleSettings?.autoConsolidationTargetTiers,
-    );
-    return configuredTargetTiers.includes(Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1))));
-}
 
 function buildPostSaveHideRanges(range) {
     const autoHideMode = String(getModuleSettings().autoHideMode || 'none').toLowerCase();
@@ -8726,41 +8555,6 @@ function normalizePreviewMemory(memoryObject) {
     };
 }
 
-async function maybePreviewMemory(memoryObject, compiledScene, range, profile) {
-    if (!getModuleSettings().showMemoryPreviews) {
-        return memoryObject;
-    }
-
-    const previewResult = await showMemoryPreviewPopup(
-        normalizePreviewMemory(memoryObject),
-        {
-            sceneStart: range.sceneStart,
-            sceneEnd: range.sceneEnd,
-            messageCount: compiledScene?.metadata?.messageCount ?? 0,
-        },
-        profile,
-    );
-
-    if (previewResult?.action === 'cancel') {
-        return null;
-    }
-    if (previewResult?.action === 'retry') {
-        return 'retry';
-    }
-    if (previewResult?.action === 'edit' && previewResult.memoryData) {
-        return {
-            title: String(previewResult.memoryData.extractedTitle || previewResult.memoryData.title || '').trim(),
-            content: String(previewResult.memoryData.content || '').trim(),
-            keywords: Array.isArray(previewResult.memoryData.suggestedKeys)
-                ? previewResult.memoryData.suggestedKeys.slice()
-                : Array.isArray(previewResult.memoryData.keywords)
-                    ? previewResult.memoryData.keywords.slice()
-                    : [],
-        };
-    }
-
-    return memoryObject;
-}
 
 function getSummarySourceUid(entry) {
     const uid = entry?.uid;
@@ -9320,89 +9114,6 @@ async function maybePromptAutoConsolidation(targetTier, options = {}) {
     }
 }
 
-async function applyManualFixedMemoryJson(correctedRaw, context) {
-    const task = createStmbTask('STMB:manual-repair');
-    try {
-        let memoryCandidate = parseStructuredMemoryResponse(correctedRaw);
-
-        for (;;) {
-            const maybeEdited = await maybePreviewMemory(memoryCandidate, context.compiledScene, context.range, context.profile);
-            if (maybeEdited === null) {
-                return null;
-            }
-            if (maybeEdited === 'retry') {
-                memoryCandidate = await requestStructuredMemory(
-                    context.compiledScene,
-                    context.profile,
-                    context.lorebookName,
-                    context.summaryCount,
-                    task.signal,
-                    null,
-                    Object.fromEntries(Object.entries({
-                        additionalContextEntries: Array.isArray(context.additionalContextEntries)
-                            ? context.additionalContextEntries
-                            : undefined,
-                        contextSettingKey: context.contextSettingKey ?? undefined,
-                    }).filter(([, value]) => value !== undefined)),
-                );
-                continue;
-            }
-
-            const saved = await saveMemoryObjectToLorebook(maybeEdited, {
-                lorebookName: context.lorebookName,
-                range: context.range,
-                compiledScene: context.compiledScene,
-                profile: context.profile,
-                keepSceneMarkers: context.keepSceneMarkers,
-                sceneContext: context.sceneContext || null,
-                signal: task.signal,
-            });
-
-            try {
-                await enqueueAfterMemorySidePromptJobs(context.compiledScene, stmbSettings, context.profile, {
-                    lorebookName: context.lorebookName,
-                    range: context.range,
-                    sceneContext: context.sceneContext || null,
-                    signal: task.signal,
-                });
-            } catch (error) {
-                if (!isStmbAbortError(error)) {
-                    console.warn('STMB side prompts after manual repair failed', error);
-                }
-            }
-
-            try {
-                const queuedProfile = await snapshotStmbProfileConnection(context.profile);
-                for (const job of buildQueuedMemoryAssistanceJobs({
-                    lorebookNames: [
-                        context.lorebookName,
-                        ...(saved?.entries || []).map(entry => entry?.lorebookName),
-                    ],
-                    compiledScene: context.compiledScene,
-                    range: context.range,
-                    settings: stmbSettings,
-                    profile: queuedProfile,
-                    sceneContext: context.sceneContext || null,
-                })) {
-                    enqueueStmbJob(job);
-                }
-            } catch (error) {
-                if (isStmbAbortError(error)) throw error;
-                console.warn('STMB Memory Assistance planning after manual repair failed');
-                toastr.error(translate('Memory was saved, but Memory Assistance could not be queued.', 'STMemoryBooks_ClipReview_PostSaveQueueFailed'), 'STMB');
-            }
-
-            await maybePromptAutoConsolidation(1, {
-                sceneContext: context.sceneContext || null,
-                lorebookName: context.lorebookName,
-            });
-
-            return saved;
-        }
-    } finally {
-        task.cleanup();
-    }
-}
 
 async function commitSummaryCandidates(summaryCandidates, {
     normalizedTargetTier,
@@ -9443,7 +9154,6 @@ async function commitSummaryCandidates(summaryCandidates, {
         );
     }
 
-    lastFailedSummaryError = null;
     lastFailedSummaryContext = null;
 
     return createdEntries;
@@ -10270,7 +9980,6 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
         };
     } catch (error) {
         if (!isStmbAbortError(error) && error?.rawResponse) {
-            lastFailedSummaryError = error;
             lastFailedSummaryContext = {
                 lorebookName,
                 normalizedTargetTier,
@@ -10365,17 +10074,6 @@ function queuePassiveStmbChecks(chatLike = buildCurrentChatSavePayload(), option
     pendingPassiveChecksByChat.set(chatKey, pending);
 }
 
-function clearPendingPassiveStmbChecks(chatLike = null) {
-    if (!chatLike) {
-        pendingPassiveChecksByChat.clear();
-        return;
-    }
-
-    const chatKey = getStmbChatKey(chatLike);
-    if (chatKey) {
-        pendingPassiveChecksByChat.delete(chatKey);
-    }
-}
 
 function flushPassiveStmbChecks(savedChat = {}) {
     const chatKey = getStmbChatKey(savedChat);

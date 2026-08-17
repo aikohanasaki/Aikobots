@@ -17,7 +17,6 @@ import {
     chat,
     getFirstDisplayedMessageId,
     jumpToMessageWindow,
-    showMoreMessages,
     saveSettings,
     saveChatConditional,
     setAnimationDuration,
@@ -3982,7 +3981,7 @@ jQuery(() => {
             await loadGoogleFont(fontName);
             document.documentElement.style.setProperty('--mainFontFamily', `"${fontName}", "Noto Sans", sans-serif`);
         } else {
-            document.documentElement.style.setProperty('--mainFontFamily', `"Noto Sans", sans-serif`);
+            document.documentElement.style.setProperty('--mainFontFamily', '"Noto Sans", sans-serif');
         }
         saveSettingsDebounced();
     });
@@ -3995,7 +3994,7 @@ jQuery(() => {
             await loadGoogleFont(fontName);
             document.documentElement.style.setProperty('--monoFontFamily', `"${fontName}", 'Noto Sans Mono', 'Courier New', Consolas, monospace`);
         } else {
-            document.documentElement.style.setProperty('--monoFontFamily', `'Noto Sans Mono', 'Courier New', Consolas, monospace`);
+            document.documentElement.style.setProperty('--monoFontFamily', '\'Noto Sans Mono\', \'Courier New\', Consolas, monospace');
         }
         saveSettingsDebounced();
     });

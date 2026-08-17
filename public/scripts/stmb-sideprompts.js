@@ -1,9 +1,6 @@
 import { t, translate } from './i18n.js';
 import {
     chat_metadata,
-    getCurrentChatId,
-    name1,
-    name2,
 } from '../script.js';
 import { getContext } from './extensions.js';
 import { generateStmbText, upsertStmbEntriesBatch, upsertStmbEntryByTitle } from './stmb-api.js';
@@ -11,7 +8,6 @@ import { saveMetadataDebounced } from './extensions.js';
 import { removeReasoningFromString } from './reasoning.js';
 import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
-import { showMemoryPreviewPopup } from './stmb-popups.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
 import { createStmbTask, isStmbAbortError, throwIfStmbAborted } from './stmb-tasks.js';
 import {
@@ -62,7 +58,6 @@ import {
 } from './stmb-regeneration.js';
 
 let trackerEvaluationPromise = null;
-let previewQueue = Promise.resolve();
 let hasShownSidePromptRangeTip = false;
 let sidePromptJobExecutorRegistered = false;
 
@@ -80,12 +75,6 @@ export function isSidePromptEntryTitle(title) {
         || value.endsWith(' (STMB Tracker)');
 }
 
-function enqueuePreview(task) {
-    previewQueue = previewQueue.then(task).catch(error => {
-        console.warn('STMB side prompt preview task failed', error);
-    });
-    return previewQueue;
-}
 
 function getStmbChatState() {
     const context = getContext();
@@ -298,14 +287,6 @@ function resolveSidePromptMaxConcurrent(settings) {
     return Math.max(1, Math.min(5, Math.trunc(parsed)));
 }
 
-function renderLorebookNameFromTemplate(settings) {
-    const template = String(settings?.moduleSettings?.lorebookNameTemplate || 'LTM - {{char}} - {{chat}}');
-    const chatId = getCurrentChatId() || 'Chat';
-    return template
-        .replace(/\{\{char\}\}/g, String(name2 || 'Character'))
-        .replace(/\{\{user\}\}/g, String(name1 || 'User'))
-        .replace(/\{\{chat\}\}/g, String(chatId));
-}
 
 async function ensureLorebookName(settings) {
     const sceneContext = buildStmbSceneContext();
@@ -1003,159 +984,7 @@ function buildSidePromptApprovalRequest({
     };
 }
 
-async function resolveSidePromptPreview({
-    template,
-    unifiedTitle,
-    initialText,
-    finalPrompt,
-    settings = null,
-    profile,
-    compiledScene,
-    signal = null,
-    queuePreview = false,
-    allowRetry = true,
-    retryTaskLabel = null,
-}) {
-    let textToSave = initialText;
 
-    while (true) {
-        throwIfStmbAborted(signal);
-        const openPreview = () => showMemoryPreviewPopup({
-            extractedTitle: unifiedTitle,
-            content: textToSave,
-            suggestedKeys: [],
-        }, buildSidePromptPreviewSceneData(compiledScene), profile, { lockTitle: true });
-        const previewResult = queuePreview
-            ? await enqueuePreview(openPreview)
-            : await openPreview();
-
-        if (previewResult?.action === 'cancel') {
-            return { approved: false, text: textToSave };
-        }
-
-        if (previewResult?.action === 'retry') {
-            if (!allowRetry) {
-                return { approved: false, retry: true, text: textToSave };
-            }
-
-            textToSave = await runSidePromptAttempt({
-                template,
-                taskLabel: retryTaskLabel || `SidePrompt:retry:${getSidePromptTaskKey(template)}`,
-                finalPrompt,
-                settings,
-                profile,
-                signal,
-            });
-            if (!ensureSidePromptTextNotBlank(textToSave, template, 'retry')) {
-                return { approved: false, blank: true, text: textToSave };
-            }
-            continue;
-        }
-
-        if (previewResult?.action === 'edit' && previewResult.memoryData) {
-            textToSave = String(previewResult.memoryData.content ?? textToSave);
-        }
-
-        return { approved: true, text: textToSave };
-    }
-}
-
-async function runTemplateForCompiledScene({
-    template,
-    lorebookName,
-    lorebookData,
-    compiledScene,
-    settings,
-    profile = null,
-    runtimeMacros = {},
-    fallbackKinds = [],
-    metadataUpdates = {},
-    trigger = 'manual',
-    previewAllowRetry = true,
-    contextSettingKey,
-    signal = null,
-}) {
-    for (;;) {
-        throwIfStmbAborted(signal);
-        const prepared = await prepareSidePromptRun({
-            template,
-            lorebookName,
-            lorebookData,
-            compiledScene,
-            settings,
-            profile,
-            runtimeMacros,
-            fallbackKinds,
-            contextSettingKey,
-            signal,
-        });
-        let resultText = await runSidePromptAttempt({
-            template,
-            taskLabel: `SidePrompt:${trigger}:${getSidePromptTaskKey(template)}`,
-            finalPrompt: prepared.finalPrompt,
-            settings,
-            profile: prepared.profile,
-            signal,
-        });
-        throwIfStmbAborted(signal);
-        if (!ensureSidePromptTextNotBlank(resultText, template, fallbackKinds[0] || 'manual')) {
-            return { status: 'blank' };
-        }
-
-        if (settings?.moduleSettings?.showMemoryPreviews) {
-            try {
-                const previewResult = await resolveSidePromptPreview({
-                    template,
-                    unifiedTitle: prepared.unifiedTitle,
-                    initialText: resultText,
-                    finalPrompt: prepared.finalPrompt,
-                    settings,
-                    profile: prepared.profile,
-                    compiledScene,
-                    signal,
-                    queuePreview: true,
-                    allowRetry: previewAllowRetry,
-                    retryTaskLabel: `SidePrompt:${trigger}:retry:${getSidePromptTaskKey(template)}`,
-                });
-                if (previewResult?.blank) {
-                    return { status: 'blank' };
-                }
-                if (!previewResult?.approved) {
-                    return { status: 'cancel' };
-                }
-                resultText = String(previewResult.text ?? resultText);
-            } catch (error) {
-                if (isStmbAbortError(error)) {
-                    throw error;
-                }
-                console.warn('STMB side prompt preview failed; proceeding without preview', {
-                    trigger,
-                    template: getSidePromptTaskKey(template),
-                    error,
-                });
-            }
-        }
-
-        const lorebookSettings = getEffectiveLorebookSettingsForTemplate(template);
-        const { defaults, entryOverrides } = makeUpsertParamsFromLorebook(lorebookSettings, runtimeMacros);
-        return await upsertLorebookEntryByTitle(
-            lorebookName,
-            lorebookData,
-            prepared.unifiedTitle,
-            resultText,
-            {
-                defaults,
-                entryOverrides,
-                metadataUpdates: {
-                    ...metadataUpdates,
-                    ...getSidePromptRegenerationMetadata(template, prepared.priorContent, compiledScene, runtimeMacros),
-                },
-                refreshEditor: settings?.moduleSettings?.refreshEditor !== false,
-                signal,
-            },
-        );
-    }
-}
 
 export async function evaluateTrackers(settings, options = {}) {
     if (trackerEvaluationPromise) {

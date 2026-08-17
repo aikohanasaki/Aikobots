@@ -204,7 +204,7 @@ function applyDynamicFocusStyles(styleSheet, { fromExtension = false } = {}) {
      */
     function isObviouslyFocusable(compoundBeforeHover) {
         const trimmed = compoundBeforeHover.trim();
-        const typeMatch = trimmed.match(/^([a-zA-Z][\w-]*)(?=[#.\[:]|$)/);
+        const typeMatch = trimmed.match(/^([a-zA-Z][\w-]*)(?=[#.[:]|$)/);
 
         if (typeMatch && NATIVE_FOCUSABLE_TAGS.has(typeMatch[1].toLowerCase())) {
             return true;

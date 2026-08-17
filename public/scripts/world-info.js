@@ -113,7 +113,6 @@ export const DEFAULT_DEPTH = 4;
 export const DEFAULT_WEIGHT = 100;
 export const MAX_SCAN_DEPTH = 1000;
 const MAX_COMMENT_LENGTH = 100;
-const KNOWN_DECORATORS = ['@@activate', '@@dont_activate'];
 const forcedActivationEntries = new Map();
 const worldInfoBulkMoveState = {
     lorebookName: '',
@@ -287,26 +286,26 @@ function normalizeWorldInfoItems(data = {}) {
             .map(item => {
                 const hasOwn = (key) => Object.prototype.hasOwnProperty.call(item, key);
                 return {
-                name: item.name,
-                storage: item.storage === 'secure' ? 'secure' : 'user',
-                ownerHandle: String(item.ownerHandle || ''),
-                ownerHandles: Array.isArray(item.ownerHandles)
-                    ? item.ownerHandles.map(handle => String(handle || '').trim()).filter(Boolean)
-                    : [String(item.ownerHandle || '').trim()].filter(Boolean),
-                sharingMode: item.sharingMode === 'shared' ? 'shared' : 'single',
-                checkedOutBy: String(item.checkedOutBy || '').trim() || null,
-                checkedOutAt: item.checkedOutAt || null,
-                checkoutState: ['self', 'other'].includes(String(item.checkoutState || '')) ? String(item.checkoutState) : 'available',
-                canEdit: hasOwn('canEdit') ? Boolean(item.canEdit) : undefined,
-                canDelete: hasOwn('canDelete') ? Boolean(item.canDelete) : undefined,
-                canPromote: hasOwn('canPromote') ? Boolean(item.canPromote) : undefined,
-                canDemote: hasOwn('canDemote') ? Boolean(item.canDemote) : undefined,
-                canCheckOut: hasOwn('canCheckOut') ? Boolean(item.canCheckOut) : undefined,
-                canCheckIn: hasOwn('canCheckIn') ? Boolean(item.canCheckIn) : undefined,
-                canForceCheckout: hasOwn('canForceCheckout') ? Boolean(item.canForceCheckout) : undefined,
-                canManageOwners: hasOwn('canManageOwners') ? Boolean(item.canManageOwners) : undefined,
-                reservedTemplate: Boolean(item.reservedTemplate),
-            };
+                    name: item.name,
+                    storage: item.storage === 'secure' ? 'secure' : 'user',
+                    ownerHandle: String(item.ownerHandle || ''),
+                    ownerHandles: Array.isArray(item.ownerHandles)
+                        ? item.ownerHandles.map(handle => String(handle || '').trim()).filter(Boolean)
+                        : [String(item.ownerHandle || '').trim()].filter(Boolean),
+                    sharingMode: item.sharingMode === 'shared' ? 'shared' : 'single',
+                    checkedOutBy: String(item.checkedOutBy || '').trim() || null,
+                    checkedOutAt: item.checkedOutAt || null,
+                    checkoutState: ['self', 'other'].includes(String(item.checkoutState || '')) ? String(item.checkoutState) : 'available',
+                    canEdit: hasOwn('canEdit') ? Boolean(item.canEdit) : undefined,
+                    canDelete: hasOwn('canDelete') ? Boolean(item.canDelete) : undefined,
+                    canPromote: hasOwn('canPromote') ? Boolean(item.canPromote) : undefined,
+                    canDemote: hasOwn('canDemote') ? Boolean(item.canDemote) : undefined,
+                    canCheckOut: hasOwn('canCheckOut') ? Boolean(item.canCheckOut) : undefined,
+                    canCheckIn: hasOwn('canCheckIn') ? Boolean(item.canCheckIn) : undefined,
+                    canForceCheckout: hasOwn('canForceCheckout') ? Boolean(item.canForceCheckout) : undefined,
+                    canManageOwners: hasOwn('canManageOwners') ? Boolean(item.canManageOwners) : undefined,
+                    reservedTemplate: Boolean(item.reservedTemplate),
+                };
             });
     }
 
@@ -7351,56 +7350,6 @@ export async function openLorebookOrderingDialog(name, data, options = {}) {
  * @param {string} content The content to parse
  * @returns {[string[],string]} The decorators found in the content and the content without decorators
 */
-function parseDecorators(content) {
-    /**
-     * Check if the decorator is known
-     * @param {string} data string to check
-     * @returns {boolean} true if the decorator is known
-    */
-    const isKnownDecorator = (data) => {
-        if (data.startsWith('@@@')) {
-            data = data.substring(1);
-        }
-
-        for (let i = 0; i < KNOWN_DECORATORS.length; i++) {
-            if (data.startsWith(KNOWN_DECORATORS[i])) {
-                return true;
-            }
-        }
-        return false;
-    };
-
-    if (content.startsWith('@@')) {
-        let newContent = content;
-        const splited = content.split('\n');
-        let decorators = [];
-        let fallbacked = false;
-
-        for (let i = 0; i < splited.length; i++) {
-            if (splited[i].startsWith('@@')) {
-                if (splited[i].startsWith('@@@') && !fallbacked) {
-                    newContent = [splited[i].substring(1), ...splited.slice(i + 1)].join('\n');
-                    break;
-                }
-
-                if (isKnownDecorator(splited[i])) {
-                    decorators.push(splited[i].startsWith('@@@') ? splited[i].substring(1) : splited[i]);
-                    fallbacked = false;
-                }
-                else {
-                    fallbacked = true;
-                }
-            } else {
-                newContent = splited.slice(i).join('\n');
-                break;
-            }
-        }
-        return [decorators, newContent];
-    }
-
-    return [[], content];
-
-}
 
 /**
  * Performs a scan on the chat and returns the world info activated.

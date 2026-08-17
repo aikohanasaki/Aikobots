@@ -13,15 +13,15 @@ class PCMProcessor extends AudioWorkletProcessor {
                 const combined = new Uint8Array(this.pendingBytes.length + newData.length);
                 combined.set(this.pendingBytes);
                 combined.set(newData, this.pendingBytes.length);
-                
+
                 // Calculate how many complete 16-bit samples we have
                 const completeSamples = Math.floor(combined.length / 2);
                 const bytesToProcess = completeSamples * 2;
-                
+
                 if (completeSamples > 0) {
                     // Process complete samples
                     const int16Array = new Int16Array(combined.buffer.slice(0, bytesToProcess));
-                    
+
                     // Write directly to circular buffer
                     for (let i = 0; i < int16Array.length; i++) {
                         // Expand buffer if needed
@@ -38,12 +38,12 @@ class PCMProcessor extends AudioWorkletProcessor {
                             this.readIndex = 0;
                             this.writeIndex = targetIndex;
                         }
-                        
+
                         this.buffer[this.writeIndex] = int16Array[i] / 32768.0; // Convert 16-bit to float
                         this.writeIndex = (this.writeIndex + 1) % this.buffer.length;
                     }
                 }
-                
+
                 // Store any remaining incomplete bytes
                 if (combined.length > bytesToProcess) {
                     this.pendingBytes = combined.slice(bytesToProcess);
@@ -56,7 +56,7 @@ class PCMProcessor extends AudioWorkletProcessor {
             }
         };
     }
-    
+
     process(inputs, outputs, parameters) {
         const output = outputs[0];
         if (output.length > 0 && this.readIndex !== this.writeIndex) {

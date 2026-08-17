@@ -101,7 +101,14 @@
         "yauzl": "^3.2.0"
     },
     "engines": {
-        "node": ">= 20"
+        "node": "24.18.x",
+        "npm": "12.0.1"
+    },
+    "packageManager": "npm@12.0.1",
+    "allowScripts": {
+        "better-sqlite3@12.11.1": true,
+        "protobufjs@6.11.6": false,
+        "unrs-resolver@1.12.2": false
     },
     "overrides": {
         "vectra": {
@@ -126,6 +133,7 @@
         "check:frontend-build": "node scripts/check-frontend-build.mjs",
         "postinstall": "node post-install.js",
         "lint": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js",
+        "lint:files": "eslint",
         "lint:fix": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js --fix",
         "lint:localization": "node tests/localization-audit.mjs",
         "lint:localization:coverage": "node tests/localization-audit.mjs --check-locales",
@@ -135,6 +143,13 @@
         "lint:localization:fix-text": "node tests/localization-audit.mjs --fix-text",
         "migrate:sqlite": "node migrate-sqlite.js",
         "smoke:worldinfo": "node tests/world-info-smoke.mjs",
+        "test:doctor": "node scripts/test-doctor.mjs",
+        "test:node": "node --test \"tests/**/*.node.test.js\"",
+        "test:jest": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.mjs --runInBand",
+        "test:unit": "npm run test:node && npm run test:jest",
+        "test": "npm run test:doctor && npm run test:unit && npm run check:frontend-build && npm run test:frontend:smoke",
+        "verify": "npm run lint && npm run lint:localization:coverage && npm test",
+        "test:selenium:doctor": "node tests/selenium/doctor.mjs",
         "test:selenium:mvp": "node tests/selenium/run.mjs",
         "test:selenium:mvp:smoke": "node tests/selenium/run.mjs --smoke",
         "test:frontend:smoke": "node tests/frontend-bundle-smoke.mjs",
@@ -150,6 +165,7 @@
     },
     "main": "server.js",
     "devDependencies": {
+        "@jest/globals": "30.2.0",
         "@types/archiver": "^6.0.3",
         "@types/bytes": "^3.1.5",
         "@types/command-exists": "^1.2.3",
@@ -176,10 +192,11 @@
         "@types/write-file-atomic": "^4.0.3",
         "@types/yargs": "^17.0.33",
         "@types/yauzl": "^2.10.3",
+        "dotenv": "^8.6.0",
         "eslint": "^8.57.0",
         "eslint-plugin-jest": "^29.15.1",
-        "dotenv": "^8.6.0",
         "eslint-plugin-jsdoc": "^62.8.1",
+        "jest": "30.2.0",
         "playwright": "^1.58.2",
         "selenium-webdriver": "^4.34.0",
         "webpack": "^5.98.0"

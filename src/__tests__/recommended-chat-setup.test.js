@@ -3,6 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { setConfigFilePath } from '../util.js';
+
+setConfigFilePath(fs.existsSync(path.resolve(process.cwd(), 'config.yaml'))
+    ? path.resolve(process.cwd(), 'config.yaml')
+    : path.resolve(process.cwd(), '..', 'config.yaml'));
 
 const createUserLorebookForManagement = jest.fn();
 const getLorebookForManagement = jest.fn();

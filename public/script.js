@@ -64,7 +64,6 @@ import {
     renameGroupMember,
     createNewGroupChat,
     getGroupAvatar,
-    editGroup,
     deleteGroupChat,
     deleteGroupChatByName,
     renameGroupChat,
@@ -154,7 +153,6 @@ import {
     ensureImageFormatSupported,
     flashHighlight,
     toggleDrawer,
-    isElementInViewport,
     copyText,
     escapeHtml,
     uuidv4,
@@ -163,7 +161,6 @@ import {
     renderPaginationDropdown,
     paginationDropdownChangeHandler,
     importFromExternalUrl,
-    shiftUpByOne,
     shiftDownByOne,
     canUseNegativeLookbehind,
     trimSpaces,
@@ -351,9 +348,6 @@ function refreshPromptInspectorButton() {
     }
 }
 
-function showPromptInspectorButtonForMessage(_messageId) {
-    refreshPromptInspectorButton();
-}
 
 function stagePromptInspectorRecord(record) {
     pendingPromptInspectorRecord = record && typeof record === 'object'
@@ -730,26 +724,6 @@ function getPromptSnapshotKeysFromMessage(message) {
     return [...keys];
 }
 
-function clearPromptSnapshotKeysFromMessage(message) {
-    if (!message || typeof message !== 'object') {
-        return;
-    }
-
-    if (message.extra && typeof message.extra === 'object' && !Array.isArray(message.extra)) {
-        delete message.extra.promptSnapshotKey;
-    }
-
-    if (!Array.isArray(message.swipe_info)) {
-        return;
-    }
-
-    for (const swipeInfo of message.swipe_info) {
-        const swipeExtra = swipeInfo?.extra;
-        if (swipeExtra && typeof swipeExtra === 'object' && !Array.isArray(swipeExtra)) {
-            delete swipeExtra.promptSnapshotKey;
-        }
-    }
-}
 
 function addPromptSnapshotRekeyOperation(rekeys, fromKey, toKey) {
     if (!fromKey || !toKey || fromKey === toKey) {
@@ -1051,7 +1025,6 @@ const BOTTOM_HISTORY_CONTROL_ID = 'show_newer_messages';
 const RETURN_TO_TAIL_CONTROL_ID = 'return_to_live_tail';
 const HYDRATE_CHAT_CONTROL_ID = 'load_full_chat_for_editing';
 const CHAT_GAP_INDICATOR_CLASS = 'chat_gap_indicator';
-const FALLBACK_CHAT_WINDOW_SIZE = 200;
 const LONG_CHAT_PREFETCH_MULTIPLIER = 2;
 const LONG_CHAT_PREFETCH_MAX = 500;
 
@@ -5864,38 +5837,6 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
     return header;
 }
 
-function shouldApplyLatestTailPayload(response, localTotalMessages = getTotalChatMessages()) {
-    const responseTotalMessages = Number(response?.totalMessages);
-    const responseLoadedRangeEnd = Number(response?.loadedRangeEnd);
-
-    if (!Number.isInteger(responseTotalMessages) || responseTotalMessages < 0) {
-        console.warn('Skipping chat payload replacement because totalMessages is invalid.', {
-            totalMessages: response?.totalMessages,
-        });
-        return false;
-    }
-
-    if (responseTotalMessages < localTotalMessages) {
-        console.warn('Skipping chat payload replacement because the payload regresses the local chat length.', {
-            localTotalMessages,
-            responseTotalMessages,
-        });
-        return false;
-    }
-
-    const expectedTailEndId = responseTotalMessages - 1;
-    if (expectedTailEndId >= 0 && responseLoadedRangeEnd !== expectedTailEndId) {
-        console.warn('Skipping chat payload replacement because the payload does not include the latest tail message.', {
-            localTotalMessages,
-            responseTotalMessages,
-            responseLoadedRangeEnd,
-            expectedTailEndId,
-        });
-        return false;
-    }
-
-    return true;
-}
 
 function chunkedPayloadIncludesLatestTail(response) {
     const totalMessages = Number(response?.totalMessages);
@@ -5991,64 +5932,7 @@ export async function prefetchCurrentChatTailBuffer(chatId) {
     }
 }
 
-async function replaceChunkedChatPayloadPreservingWindow(response, { scrollToTail = false } = {}) {
-    const previousChatLength = chat.length;
-    const previousStartId = getFirstDisplayedMessageId();
-    const previousCount = Math.max(
-        1,
-        chatElement.find('.mes').length || getConfiguredChatWindowSize(),
-    );
 
-    if (!shouldApplyLatestTailPayload(response, previousChatLength)) {
-        return;
-    }
-
-    const wasShowingLatest = Number.isFinite(previousStartId)
-        ? previousStartId + previousCount >= previousChatLength
-        : chatLoadState.currentView !== 'history';
-    const nextView = wasShowingLatest
-        ? 'tail'
-        : (Number.isInteger(response?.loadedRangeStart) && Number(previousStartId) < response.loadedRangeStart ? 'history' : 'tail');
-
-    applyChunkedChatPayload(response, { replace: true, currentView: nextView });
-
-    if (!chat.length) {
-        await renderMessageWindow(0, previousCount);
-        return;
-    }
-
-    const renderStart = wasShowingLatest
-        ? Math.max(0, chat.length - previousCount)
-        : clamp(
-            Number.isFinite(previousStartId) ? previousStartId : 0,
-            0,
-            Math.max(0, chat.length - 1),
-        );
-
-    await renderMessageWindow(renderStart, previousCount);
-    if (nextView === 'tail' && scrollToTail) {
-        scrollChatToBottom({ waitForFrame: true });
-    }
-}
-
-async function replaceChunkedChatPayloadWithLatestTail(response) {
-    if (!shouldApplyLatestTailPayload(response)) {
-        return;
-    }
-
-    applyChunkedChatPayload(response, { replace: true, currentView: 'tail' });
-
-    if (!chat.length) {
-        await renderMessageWindow(0, getConfiguredLongChatDisplayCount());
-        return;
-    }
-
-    const count = getConfiguredLongChatDisplayCount();
-    const startId = Math.max(0, chat.length - getConfiguredChatWindowSize(count));
-
-    await renderMessageWindow(startId, count);
-    scrollChatToBottom({ waitForFrame: true });
-}
 
 async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull = false } = {}) {
     const revisionChatKey = getActiveChatRevisionKey();
@@ -6137,15 +6021,6 @@ async function ensureChatRangeLoaded(startId, count = null, navigationToken = nu
     return Boolean(applyChunkedChatPayload(response, { replace: false, currentView: normalizedStartId < chatLoadState.tailStartId ? 'history' : 'tail' }));
 }
 
-async function ensureChatSuffixLoaded(startId) {
-    if (isChatFullyHydrated()) {
-        return true;
-    }
-
-    const normalizedStartId = clamp(Number(startId) || 0, 0, Math.max(0, getTotalChatMessages() - 1));
-    const count = Math.max(1, getTotalChatMessages() - normalizedStartId);
-    return ensureChatRangeLoaded(normalizedStartId, count);
-}
 
 export async function returnToLiveTailView(navigationToken = null) {
     if (blockIfEditing('returning to the live chat')) {
@@ -6447,7 +6322,6 @@ export async function showMoreMessages(messagesToLoad = null, navigationToken = 
 
         console.debug('Inserting messages before', messageId, 'count', count, 'chat length', chat.length);
         const prevHeight = chatElement.prop('scrollHeight');
-        const isButtonInView = isElementInViewport($(`#${TOP_HISTORY_CONTROL_ID}`)[0]);
         let anchorId = Number.isFinite(firstDisplayedMessageId) && firstDisplayedMessageId < chat.length
             ? firstDisplayedMessageId
             : null;
@@ -6461,7 +6335,6 @@ export async function showMoreMessages(messagesToLoad = null, navigationToken = 
         removeHistoryControls();
 
         const chunkContainer = $('<div></div>');
-        const startCount = count;
         while (messageId > 0 && count > 0) {
             const newMessageId = messageId - 1;
             if (!chat[newMessageId]) {
@@ -8373,9 +8246,9 @@ export function getStoppingStrings(isImpersonate, isContinue) {
 
         if (group && Array.isArray(group.members)) {
             const names = group.members
-                    .map(x => characters.find(y => y.avatar == x))
-                    .filter(x => x && x.name && x.name !== name2)
-                    .map(x => `\n${x.name}:`);
+                .map(x => characters.find(y => y.avatar == x))
+                .filter(x => x && x.name && x.name !== name2)
+                .map(x => `\n${x.name}:`);
             result.push(...names);
         }
     }
@@ -9427,12 +9300,7 @@ export function createRawPrompt(prompt, api, quietToLoud, systemPrompt, prefill)
 
     // Format each message in the prompt, accounting for the provided roles
     for (const message of prompt) {
-        let name = '';
-        if (message.role === 'user') name = message.name ?? name1;
-        if (message.role === 'assistant') name = message.name ?? name2;
-        if (message.role === 'system') name = message.name ?? '';
-        const prefix = '';
-        message.content = prefix + substituteParams(message.content ?? '');
+        message.content = substituteParams(message.content ?? '');
     }
 
     // prepend system prompt, if provided
@@ -9955,7 +9823,6 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     // This function gives special care to quiet prompts.
     if (quiet_prompt) {
         quiet_prompt = substituteParams(quiet_prompt);
-        quiet_prompt = quiet_prompt;
     }
 
     const hasBackendConnection = online_status !== 'no_connection';
@@ -10254,8 +10121,6 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     let worldInfoAfter = '';
 
     // At this point, the raw message examples can be created
-    const mesExamplesRawArray = [...mesExamplesArray];
-
     // Add persona description to prompt
     addPersonaDescriptionExtensionPrompt();
 
@@ -10267,24 +10132,6 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     // Collect before / after story string injections
     const beforeScenarioAnchor = await getExtensionPrompt(extension_prompt_types.BEFORE_PROMPT);
     const afterScenarioAnchor = await getExtensionPrompt(extension_prompt_types.IN_PROMPT);
-
-    const storyStringParams = {
-        description: description,
-        personality: personality,
-        persona: power_user.persona_description_position == persona_description_positions.IN_PROMPT ? persona : '',
-        scenario: scenario,
-        system: system,
-        char: name2,
-        user: name1,
-        wiBefore: worldInfoBefore,
-        wiAfter: worldInfoAfter,
-        loreBefore: worldInfoBefore,
-        loreAfter: worldInfoAfter,
-        anchorBefore: beforeScenarioAnchor.trim(),
-        anchorAfter: afterScenarioAnchor.trim(),
-        mesExamples: mesExamplesArray.join(''),
-        mesExamplesRaw: mesExamplesRawArray.join(''),
-    };
 
     let combinedStoryString = '';
     setExtensionPrompt(inject_ids.STORY_STRING, '', extension_prompt_types.IN_CHAT, 0);
@@ -10306,8 +10153,6 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     let chat2 = [];
     let continue_mag = '';
     let userMessageIndices = [];
-    const lastUserMessageIndex = coreChat.findLastIndex(x => x.is_user);
-
     for (let i = coreChat.length - 1, j = 0; i >= 0; i--, j++) {
         if (main_api == 'openai') {
             chat2[i] = coreChat[j].mes;
@@ -10706,7 +10551,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
             worldInfoAfter,
             beforeScenarioAnchor,
             afterScenarioAnchor,
-            storyString,
+            storyString: combinedStoryString,
             mesExmString,
             mesSendString,
             finalMesSend,
@@ -10728,7 +10573,6 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     await eventSource.emit(event_types.GENERATE_AFTER_COMBINE_PROMPTS, eventData);
     finalPrompt = eventData.prompt;
 
-    const maxLength = Number(amount_gen); // how many tokens the AI will be requested to generate
     let thisPromptBits = [];
 
     let generate_data;
@@ -10846,7 +10690,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
             chatVectorsString: canPersistPromptInspectorContent ? (extension_prompts['3_vectors']?.value || '') : '',
             dataBankVectorsString: canPersistPromptInspectorContent ? (extension_prompts['4_vectors_data_bank']?.value || '') : '',
             worldInfoString: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : worldInfoString,
-            storyString: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : storyString,
+            storyString: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : combinedStoryString,
             beforeScenarioAnchor: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : beforeScenarioAnchor,
             afterScenarioAnchor: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : afterScenarioAnchor,
             examplesString: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : examplesString,
@@ -14659,7 +14503,7 @@ async function cloneEditedMessage() {
     await maintainPromptSnapshotKeys({ rekeys });
     await recomputeTimedWorldInfo();
 
-   
+
     const endpoint = selected_group ? '/api/chats/group/message/clone' : '/api/chats/message/clone';
     const currentChatDetails = selected_group ? null : getCurrentChatDetails();
     const body = selected_group
@@ -16724,22 +16568,6 @@ function appendManageChatsRow(target, chat, options = {}) {
     }
 }
 
-function filterManageChatsChats(chats, searchQuery, extraTexts = []) {
-    const fragments = String(searchQuery || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (!fragments.length) {
-        return chats;
-    }
-
-    return chats.filter((chat) => {
-        const haystack = [
-            chat?.file_name,
-            chat?.preview_message,
-            ...extraTexts,
-        ].join('\n').toLowerCase();
-
-        return fragments.every(fragment => haystack.includes(fragment));
-    });
-}
 
 async function displayDeletedCharacterChats(orphanKey = manageChatsSelectedOrphanKey, highlightNames = []) {
     manageChatsMode = 'deleted';
@@ -18059,7 +17887,7 @@ export function isMessageSwipeable(messageId, message = undefined) {
         message &&
         !message?.extra?.isSmallSys &&
         !(message?.extra?.swipeable === false) &&
-        !message.is_user
+        !message.is_user,
     );
 }
 

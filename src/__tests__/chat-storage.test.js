@@ -308,7 +308,7 @@ describe('SQLite chat length handling', () => {
             const columns = verifyDb.pragma('table_info(messages)');
             const storedUuid = verifyDb.prepare('SELECT message_uuid FROM messages WHERE order_index = 1').pluck().get();
             const storageVersion = verifyDb.prepare('SELECT value FROM metadata WHERE key = \'storage_version\'').pluck().get();
-            const hasOperationReceipts = Boolean(verifyDb.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'operation_receipts'").pluck().get());
+            const hasOperationReceipts = Boolean(verifyDb.prepare('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = \'operation_receipts\'').pluck().get());
             const queryPlan = verifyDb.prepare('EXPLAIN QUERY PLAN SELECT id FROM messages WHERE message_uuid = ?')
                 .get(message.aikobots_message_uuid);
             verifyDb.close();
@@ -1267,14 +1267,14 @@ describe('SQLite chat length handling', () => {
 
         try {
             const message = makeMultiSwipeAssistant();
-            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 7 }), [message]);
-            mutateSqliteMessage(chatPath, 0, storedMessage => {
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 7 }), [...makeMessages(1), message]);
+            mutateSqliteMessage(chatPath, 1, storedMessage => {
                 storedMessage.swipe_id = storedMessage.swipes.length;
                 storedMessage.mes = 'contradictory text';
             });
 
             const payload = await buildChunkedChatPayload(chatPath, { displayCount: 10 });
-            const storedMessage = getSqliteRows(chatPath)[1];
+            const storedMessage = getSqliteRows(chatPath)[2];
             expect(payload.chat_repaired).toBe(false);
             expect(storedMessage.swipe_id).toBe(2);
             expect(getSqliteMetadata(chatPath, 'swipe_state_scan_version')).toBe('1');

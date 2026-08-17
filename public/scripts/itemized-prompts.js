@@ -276,9 +276,9 @@ function getPromptWorldInfoEntries(itemizedPrompt, incomingMesId, snapshot = nul
         ? snapshot.worldInfoReport.activatedEntries
         : Array.isArray(snapshot?.worldInfo?.activatedEntries)
             ? snapshot.worldInfo.activatedEntries
-                : Array.isArray(snapshot?.assembly?.worldInfo?.activatedEntries)
-                    ? snapshot.assembly.worldInfo.activatedEntries
-                    : null;
+            : Array.isArray(snapshot?.assembly?.worldInfo?.activatedEntries)
+                ? snapshot.assembly.worldInfo.activatedEntries
+                : null;
     if (Array.isArray(snapshotEntries)) {
         return snapshotEntries.filter(entry => entry?.status === 'admitted');
     }
@@ -700,26 +700,26 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
     if (hasCurrentPromptText) {
         showRawPrompt.addEventListener('click', async function () {
         //console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
-        console.log(PromptArrayItemForRawPromptDisplay);
-        console.log(itemizedPrompts);
-        console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
-        const rawPrompt = currentPromptText;
+            console.log(PromptArrayItemForRawPromptDisplay);
+            console.log(itemizedPrompts);
+            console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
+            const rawPrompt = currentPromptText;
 
-        // Mobile needs special handholding. The side-view on the popup wouldn't work,
-        // so we just show an additional popup for this.
-        if (isMobile()) {
-            const content = document.createElement('div');
-            content.classList.add('tokenItemizingMaintext');
-            content.innerText = rawPrompt;
-            const popup = new Popup(content, POPUP_TYPE.TEXT, null, { allowVerticalScrolling: true, leftAlign: true });
-            await popup.show();
-            return;
-        }
+            // Mobile needs special handholding. The side-view on the popup wouldn't work,
+            // so we just show an additional popup for this.
+            if (isMobile()) {
+                const content = document.createElement('div');
+                content.classList.add('tokenItemizingMaintext');
+                content.innerText = rawPrompt;
+                const popup = new Popup(content, POPUP_TYPE.TEXT, null, { allowVerticalScrolling: true, leftAlign: true });
+                await popup.show();
+                return;
+            }
 
-        //let DisplayStringifiedPrompt = JSON.stringify(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt).replace(/\n+/g, '<br>');
-        const rawPromptWrapper = document.getElementById('rawPromptWrapper');
-        rawPromptWrapper.innerText = rawPrompt;
-        $('#rawPromptPopup').slideToggle();
+            //let DisplayStringifiedPrompt = JSON.stringify(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt).replace(/\n+/g, '<br>');
+            const rawPromptWrapper = document.getElementById('rawPromptWrapper');
+            rawPromptWrapper.innerText = rawPrompt;
+            $('#rawPromptPopup').slideToggle();
         });
     } else {
         setPromptActionUnavailable(showRawPrompt);

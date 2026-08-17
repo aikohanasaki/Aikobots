@@ -169,11 +169,6 @@ function redirectToHome() {
 /**
  * Hides the password entry block and shows the password recovery block.
  */
-function showRecoveryBlock() {
-    $('#passwordEntryBlock').hide();
-    $('#passwordRecoveryBlock').show();
-    displayError('');
-}
 
 /**
  * Hides the password recovery block and shows the password entry block.

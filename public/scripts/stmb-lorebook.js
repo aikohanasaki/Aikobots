@@ -41,7 +41,7 @@ function renderLorebookNameTemplate(template) {
 
 async function generateAutoLorebookName(template) {
     const renderedName = renderLorebookNameTemplate(template)
-        .replace(/[\/\\:*?"<>|]/g, '_')
+        .replace(/[/\\:*?"<>|]/g, '_')
         .replace(/_{2,}/g, '_')
         .substring(0, 60);
     const sanitizedName = String(await getSanitizedFilename(renderedName)).trim();

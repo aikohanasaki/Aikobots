@@ -164,40 +164,6 @@ async function* readJsonlRecordsAfterHeader(filePath, counter) {
  * @param {string} filePath JSONL segment path.
  * @returns {Promise<number>}
  */
-async function countJsonlRecordsAfterHeader(filePath) {
-    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
-    const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    let foundHeader = false;
-    let lineNumber = 0;
-    let count = 0;
-
-    try {
-        for await (const line of lines) {
-            lineNumber++;
-            if (!line.trim()) {
-                continue;
-            }
-
-            try {
-                JSON.parse(line);
-            } catch (error) {
-                throw new Error(`Invalid JSONL at ${filePath}:${lineNumber}: ${error.message}`);
-            }
-
-            if (!foundHeader) {
-                foundHeader = true;
-                continue;
-            }
-
-            count++;
-        }
-    } finally {
-        lines.close();
-        stream.destroy();
-    }
-
-    return count;
-}
 
 /**
  * Rejects split chats whose declared head or tail message counts cannot be satisfied.

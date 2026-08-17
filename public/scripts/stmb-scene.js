@@ -150,13 +150,6 @@ function isCurrentSceneContext(sceneContext = null) {
     return Boolean(targetChatKey) && targetChatKey === currentChatKey;
 }
 
-function canUseLocalSceneShortcut(sceneContext = null) {
-    if (!isCurrentSceneContext(sceneContext)) {
-        return false;
-    }
-
-    return isChatFullyHydrated();
-}
 
 function canUseLocalRangeShortcut(rangeStart = null, rangeEnd = null, sceneContext = null) {
     if (!isCurrentSceneContext(sceneContext)) {

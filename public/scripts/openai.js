@@ -2722,7 +2722,6 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
     const isAzureOpenAI = oai_settings.chat_completion_source == chat_completion_sources.AZURE_OPENAI;
     const isZai = oai_settings.chat_completion_source == chat_completion_sources.ZAI;
     const isNanoGPT = oai_settings.chat_completion_source == chat_completion_sources.NANOGPT;
-    const isTextCompletion = false;
     const isQuiet = type === 'quiet';
     const isImpersonate = type === 'impersonate';
     const isContinue = type === 'continue';

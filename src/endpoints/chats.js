@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
-import readline from 'node:readline';
 import process from 'node:process';
 
 import express from 'express';
@@ -4560,32 +4559,6 @@ function importRisuChat(userName, characterName, jsonData) {
  * @param {string} filePath Path to the file
  * @returns {Promise<string>} The first line of the file
  */
-function readFirstLine(filePath) {
-    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
-    const rl = readline.createInterface({ input: stream });
-    return new Promise((resolve, reject) => {
-        let resolved = false;
-        rl.on('line', line => {
-            resolved = true;
-            rl.close();
-            stream.close();
-            resolve(line);
-        });
-
-        rl.on('error', error => {
-            resolved = true;
-            reject(error);
-        });
-
-        // Handle empty files
-        stream.on('end', () => {
-            if (!resolved) {
-                resolved = true;
-                resolve('');
-            }
-        });
-    });
-}
 
 /**
  * Checks if the chat being saved has the same integrity as the one being loaded.
@@ -7552,60 +7525,60 @@ router.post('/recent', async function (request, response) {
                                 continue;
                             }
                             allChatFiles.push({ groupId: groupData.id, filePath });
-                            }
-                            }
-                            } catch (error) {
-                            // Skip group files that can't be read or parsed
-                            continue;
-                            }
-                            }
-                            };
+                        }
+                    }
+                } catch (error) {
+                    // Skip group files that can't be read or parsed
+                    continue;
+                }
+            }
+        };
 
-                            const getRootChatFiles = async () => {
-                            const dirents = await fs.promises.readdir(request.user.directories.chats, { withFileTypes: true });
-                            const chatFiles = getDeduplicatedChatHistoryFileNames(dirents, { includeLegacyJsonl: false });
+        const getRootChatFiles = async () => {
+            const dirents = await fs.promises.readdir(request.user.directories.chats, { withFileTypes: true });
+            const chatFiles = getDeduplicatedChatHistoryFileNames(dirents, { includeLegacyJsonl: false });
 
-                            for (const file of chatFiles) {
-                            const filePath = path.join(request.user.directories.chats, file);
-                            allChatFiles.push({ filePath });
-                            }
-                            };
+            for (const file of chatFiles) {
+                const filePath = path.join(request.user.directories.chats, file);
+                allChatFiles.push({ filePath });
+            }
+        };
 
-                            await Promise.allSettled([getCharacterChatFiles(), getGroupChatFiles(), getRootChatFiles()]);
+        await Promise.allSettled([getCharacterChatFiles(), getGroupChatFiles(), getRootChatFiles()]);
 
-                            for (const chatFile of allChatFiles) {
-                            try {
-                            chatFile.activity = getChatLastActivity(chatFile.filePath);
-                            } catch {
-                            chatFile.activity = 0;
-                            }
-                            }
+        for (const chatFile of allChatFiles) {
+            try {
+                chatFile.activity = getChatLastActivity(chatFile.filePath);
+            } catch {
+                chatFile.activity = 0;
+            }
+        }
 
-                            const max = parseInt(request.body.max ?? Number.MAX_SAFE_INTEGER) + pinnedChats.length;
-                            const isPinned = (/** @type {ChatFile} */ chatFile) => pinnedChats.some(p => path.parse(String(p.file_name || '')).name === path.parse(path.basename(chatFile.filePath)).name && (p.avatar === chatFile.pngFile || p.group === chatFile.groupId));
-                            const recentChats = allChatFiles.filter(chatFile => (chatFile.activity ?? 0) > 0).sort((a, b) => {
-                            const isAPinned = isPinned(a);
-                            const isBPinned = isPinned(b);
+        const max = parseInt(request.body.max ?? Number.MAX_SAFE_INTEGER) + pinnedChats.length;
+        const isPinned = (/** @type {ChatFile} */ chatFile) => pinnedChats.some(p => path.parse(String(p.file_name || '')).name === path.parse(path.basename(chatFile.filePath)).name && (p.avatar === chatFile.pngFile || p.group === chatFile.groupId));
+        const recentChats = allChatFiles.filter(chatFile => (chatFile.activity ?? 0) > 0).sort((a, b) => {
+            const isAPinned = isPinned(a);
+            const isBPinned = isPinned(b);
 
-                            if (isAPinned && !isBPinned) return -1;
-                            if (!isAPinned && isBPinned) return 1;
+            if (isAPinned && !isBPinned) return -1;
+            if (!isAPinned && isBPinned) return 1;
 
-                            return (b.activity ?? 0) - (a.activity ?? 0);
-                            }).slice(0, max);
-                            const jsonFilesPromise = recentChats.map((file) => {
-                                const withMetadata = Boolean(request.body.metadata);
-                                return file.groupId
-                                    ? getChatInfo(file.filePath, { group: file.groupId, last_activity: file.activity ?? 0 }, true, withMetadata)
-                                    : getChatInfo(file.filePath, { avatar: file.pngFile, last_activity: file.activity ?? 0 }, false, withMetadata);
-                            });
+            return (b.activity ?? 0) - (a.activity ?? 0);
+        }).slice(0, max);
+        const jsonFilesPromise = recentChats.map((file) => {
+            const withMetadata = Boolean(request.body.metadata);
+            return file.groupId
+                ? getChatInfo(file.filePath, { group: file.groupId, last_activity: file.activity ?? 0 }, true, withMetadata)
+                : getChatInfo(file.filePath, { avatar: file.pngFile, last_activity: file.activity ?? 0 }, false, withMetadata);
+        });
 
-                            const chatDataResults = await Promise.allSettled(jsonFilesPromise);
-                            const chatData = chatDataResults.filter(x => x.status === 'fulfilled').map(x => x.value);
-                            const validFiles = chatData.filter(i => i.file_name);
+        const chatDataResults = await Promise.allSettled(jsonFilesPromise);
+        const chatData = chatDataResults.filter(x => x.status === 'fulfilled').map(x => x.value);
+        const validFiles = chatData.filter(i => i.file_name);
 
-                            return response.send(validFiles);
-                            } catch (error) {
-                            console.error(error);
-                            return response.sendStatus(500);
-                            }
-                            });
+        return response.send(validFiles);
+    } catch (error) {
+        console.error(error);
+        return response.sendStatus(500);
+    }
+});

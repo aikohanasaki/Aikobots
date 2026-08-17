@@ -2,13 +2,11 @@ import { Fuse, lodash } from '../lib.js';
 
 import {
     CHAT_COMPLETIONS_ONLY,
-    amount_gen,
     characters,
     eventSource,
     event_types,
     getRequestHeaders,
     main_api,
-    max_context,
     online_status,
     saveSettings,
     saveSettingsDebounced,

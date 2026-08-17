@@ -1748,7 +1748,7 @@ function extractGeminiText(aiResponse) {
 
 function extractBalancedJson(text) {
     const source = String(text || '');
-    const start = source.search(/[{\[]/);
+    const start = source.search(/[{[]/);
     if (start < 0) return null;
 
     const stack = [];
@@ -1944,7 +1944,7 @@ export function parseStructuredMemoryResponse(responseText) {
         }
     }
 
-    if (!/[{\[]/.test(normalized)) {
+    if (!/[{[]/.test(normalized)) {
         throw makeParseError('NO_JSON_BLOCK', 'AI response did not contain a JSON block. The model may have returned prose or declined the request.', normalized, true);
     }
     if (likelyUnbalanced(normalized)) {
@@ -2393,6 +2393,7 @@ function extractSequenceUsingTitleFormat(title, titleFormat) {
             }
         }
     } catch {
+        // The configured title format is not a valid regular expression; use the fallback parser.
     }
 
     return parseSequenceFromTitle(normalizedTitle);

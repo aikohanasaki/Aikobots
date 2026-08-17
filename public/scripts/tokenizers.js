@@ -1,6 +1,6 @@
 import { t, translate } from './i18n.js';
 import { localforage } from '../lib.js';
-import { characters, main_api, online_status, this_chid } from '../script.js';
+import { characters, main_api, this_chid } from '../script.js';
 import { power_user, registerDebugFunction } from './power-user.js';
 import { chat_completion_sources, model_list, oai_settings } from './openai.js';
 import { groups, selected_group } from './group-chats.js';

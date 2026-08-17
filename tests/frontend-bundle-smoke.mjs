@@ -9,6 +9,7 @@ import { finished } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
 import { chromium, firefox, webkit } from 'playwright';
+import { resolveSystemChromiumPath } from '../scripts/browser-path.mjs';
 import { defaultOutputDirectory, hashDirectory } from '../scripts/frontend-build-lib.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -19,9 +20,7 @@ const browserType = { chromium, firefox, webkit }[browserName];
 if (!browserType) {
     throw new Error(`Unsupported FRONTEND_SMOKE_BROWSER: ${browserName}`);
 }
-const browserPath = process.env.BROWSER_PATH
-    || process.env.CHROME_PATH
-    || (browserName === 'chromium' && process.platform === 'win32' ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' : '');
+const browserPath = browserName === 'chromium' ? resolveSystemChromiumPath() : '';
 
 function getAvailablePort() {
     return new Promise((resolve, reject) => {

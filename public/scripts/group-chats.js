@@ -1053,10 +1053,10 @@ export async function saveCurrentGroupMessageIncremental(messageId, message) {
         return CHAT_SAVE_RESULT.FAILED;
     }
     const operation = {
-            id: chatId,
-            message_id: targetMessageId,
-            message_uuid: messageUuid,
-            message: structuredClone(message),
+        id: chatId,
+        message_id: targetMessageId,
+        message_uuid: messageUuid,
+        message: structuredClone(message),
     };
     const { response, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId, saveSessionId }) => ({
         url: '/api/chats/group/message/update',

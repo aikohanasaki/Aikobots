@@ -406,14 +406,14 @@ export async function showLorebookPickerPopup(lorebookNames = [], options = {}) 
             <h4>${escapeHtml(String(options?.title || 'Select Lorebook'))}</h4>
             <div class="world_entry_form_control">
                 ${items.length > 0
-                    ? `
+        ? `
                         <label for="stmb-lorebook-picker" data-i18n="Lorebook">Lorebook</label>
                         <select id="stmb-lorebook-picker" class="text_pole" style="width:100%">
                             ${items.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}
                         </select>
                     `
-                    : `<div class="opacity70p">${escapeHtml(String(options?.emptyMessage || 'No existing lorebooks are available.'))}</div>`
-                }
+        : `<div class="opacity70p">${escapeHtml(String(options?.emptyMessage || 'No existing lorebooks are available.'))}</div>`
+}
             </div>
         </div>
     `;
@@ -1541,7 +1541,7 @@ function extractSummaryFieldsFromText(raw) {
     let summary = '';
     let keywords = [];
 
-    const titleLine = text.match(/(?:^|\n)\s*(?:title|arc\s*title|summary\s*title)\s*[:\-]\s*(.+)\s*$/im)
+    const titleLine = text.match(/(?:^|\n)\s*(?:title|arc\s*title|summary\s*title)\s*[:-]\s*(.+)\s*$/im)
         || text.match(/(?:^|\n)\s*#{1,6}\s*(.+)\s*$/m);
     if (titleLine) {
         title = String(titleLine[1] || '')
@@ -1550,7 +1550,7 @@ function extractSummaryFieldsFromText(raw) {
     }
 
     const summaryMatch = text.match(
-        /(?:^|\n)\s*(?:summary|arc\s*summary|content)\s*[:\-]\s*([\s\S]*?)(?=\n\s*(?:keywords?|tags?)\s*[:\-]|\n\s*$)/im,
+        /(?:^|\n)\s*(?:summary|arc\s*summary|content)\s*[:-]\s*([\s\S]*?)(?=\n\s*(?:keywords?|tags?)\s*[:-]|\n\s*$)/im,
     );
     if (summaryMatch) {
         summary = String(summaryMatch[1] || '').trim();
@@ -1566,14 +1566,14 @@ function extractSummaryFieldsFromText(raw) {
     }
 
     const keywordSection = text.match(
-        /(?:^|\n)\s*(?:keywords?|tags?)\s*[:\-]\s*([\s\S]*)$/im,
+        /(?:^|\n)\s*(?:keywords?|tags?)\s*[:-]\s*([\s\S]*)$/im,
     );
     if (keywordSection) {
         keywords = splitKeywords(keywordSection[1]);
     } else {
         const bulletish = text
             .split(/\r?\n/)
-            .filter(line => /^\s*(?:[\-*•]|\d+\.)\s+/.test(line))
+            .filter(line => /^\s*(?:[-*•]|\d+\.)\s+/.test(line))
             .slice(0, 60)
             .join('\n');
         if (bulletish) {

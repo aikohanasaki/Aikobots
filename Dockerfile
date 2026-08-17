@@ -1,4 +1,4 @@
-FROM node:lts-alpine3.22
+FROM node:24.18.0-alpine3.23@sha256:595398b0081eacda8e1c4c5b97b76cd1020e4d58a8ebcb4843b9bca1e79e7436
 
 # Arguments
 ARG APP_HOME=/home/node/app
@@ -18,7 +18,8 @@ COPY . ./
 RUN \
   echo "*** Install npm packages ***" && \
   apk add --no-cache --virtual .native-build-deps python3 make g++ && \
-  npm i --no-audit --no-fund --loglevel=error --no-progress --omit=dev && \
+  npm install --global npm@12.0.1 --no-audit --no-fund --loglevel=error --no-progress && \
+  npm ci --omit=dev --no-audit --no-fund --loglevel=error --no-progress && \
   npm cache clean --force && \
   apk del .native-build-deps
 

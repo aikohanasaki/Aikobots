@@ -36,7 +36,6 @@ const OVERRIDE_LABELS = Object.freeze({
 
 let isInitialized = false;
 let isApplyingGenerationLock = false;
-let lastAppliedSignature = '';
 
 function createDefaultGenerationLocksSettings() {
     return {
@@ -187,18 +186,6 @@ export function resolveGenerationLock(options = {}) {
         : firstCandidate([characterCandidate, chatCandidate]);
 }
 
-function getGenerationLockSignature(resolved) {
-    if (!resolved) {
-        return '';
-    }
-
-    return JSON.stringify({
-        source: resolved.source,
-        lock: resolved.lock,
-        group: selected_group || '',
-        character: this_chid ?? '',
-    });
-}
 
 async function askToApplyGenerationLock(resolved) {
     return await Popup.show.confirm(
@@ -445,14 +432,12 @@ export async function applyResolvedGenerationLock(resolved, options = {}) {
         }
     }
 
-    const signature = getGenerationLockSignature(resolved);
     const shouldApplyProfile = !isConnectionProfileActive(resolved.lock.connectionProfileId);
     const shouldApplyPreset = !isPresetActive(resolved.lock.presetName);
     const shouldApplyModel = Boolean(resolved.lock.modelId)
         && (shouldApplyProfile || shouldApplyPreset || !await isModelActive(resolved.lock.modelId));
     const shouldApplyOverrides = !areOverridesActive(resolved.lock.overrides);
     if (!options.force && !shouldApplyProfile && !shouldApplyPreset && !shouldApplyModel && !shouldApplyOverrides) {
-        lastAppliedSignature = signature;
         updateGenerationLocksStatus(resolved);
         return false;
     }
@@ -477,7 +462,6 @@ export async function applyResolvedGenerationLock(resolved, options = {}) {
                 await checkOpenAIStatus();
             }
         }
-        lastAppliedSignature = signature;
         updateGenerationLocksStatus(resolved);
         return true;
     } finally {
@@ -674,7 +658,6 @@ export function initGenerationLocks() {
     updateGenerationLocksStatus();
 
     eventSource.on(event_types.CHAT_CHANGED, async () => {
-        lastAppliedSignature = '';
         await applyGenerationLockForCurrentContext();
     });
     eventSource.on(event_types.GENERATION_STARTED, async () => {

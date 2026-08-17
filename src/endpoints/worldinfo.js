@@ -321,7 +321,7 @@ function substituteParams(content, env = {}) {
 }
 
 function isSortedEntryHiddenForUser(user, entry) {
-    if (Boolean(user?.profile?.admin)) {
+    if (user?.profile?.admin) {
         return false;
     }
 

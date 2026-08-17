@@ -60,7 +60,6 @@ var WIDrawerIcon = document.getElementById('WIDrawerIcon');
 
 var SelectedCharacterTab = document.getElementById('rm_button_selected_ch');
 
-var connection_made = false;
 let counterNonce = Date.now();
 
 const observerConfig = { childList: true, subtree: true };
@@ -539,7 +538,6 @@ function RA_checkOnlineStatus() {
             $('#API-status-top').addClass('fa-plug-circle-exclamation');
         }
         $('#API-status-top').addClass('redOverlayGlow');
-        connection_made = false;
     } else {
         if (online_status !== undefined && online_status !== 'no_connection') {
             const send_textarea = $('#send_textarea');
@@ -550,7 +548,6 @@ function RA_checkOnlineStatus() {
                 $('#API-status-top').removeClass('fa-plug-circle-exclamation');
                 $('#API-status-top').addClass('fa-plug');
             }
-            connection_made = true;
 
             // Generation visibility is handled by body[data-generating]; clear stale connection-only hiding now.
             $('#send_but').removeClass('displayNone'); //on connect, send button shows

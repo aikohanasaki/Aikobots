@@ -10,6 +10,10 @@ function sanitizeSegment(value) {
 }
 
 export async function createDriver({ headless, timeouts, downloadsDir, chromeBinaryPath, chromedriverPath }) {
+    if (!chromeBinaryPath || !chromedriverPath) {
+        throw new Error('Explicit Chrome and ChromeDriver paths are required; Selenium Manager is disabled.');
+    }
+
     const options = new chrome.Options();
     options.addArguments('--window-size=1600,1200');
     options.addArguments('--no-sandbox');
@@ -23,9 +27,7 @@ export async function createDriver({ headless, timeouts, downloadsDir, chromeBin
         'safebrowsing.enabled': true,
     });
 
-    if (chromeBinaryPath) {
-        options.setChromeBinaryPath(chromeBinaryPath);
-    }
+    options.setChromeBinaryPath(chromeBinaryPath);
 
     if (headless) {
         options.addArguments('--headless=new');
@@ -39,10 +41,8 @@ export async function createDriver({ headless, timeouts, downloadsDir, chromeBin
     loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
     builder.setLoggingPrefs(loggingPrefs);
 
-    if (chromedriverPath) {
-        const service = new ServiceBuilder(chromedriverPath);
-        builder.setChromeService(service);
-    }
+    const service = new ServiceBuilder(chromedriverPath);
+    builder.setChromeService(service);
 
     const driver = await builder.build();
 

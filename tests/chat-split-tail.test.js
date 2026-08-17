@@ -30,6 +30,7 @@ function makeHeader(overrides = {}) {
 
 function makeMessages(count) {
     return Array.from({ length: count }, (_, index) => ({
+        aikobots_message_uuid: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
         name: index % 2 === 0 ? 'User' : 'Character',
         is_user: index % 2 === 0,
         mes: `message ${index}`,
@@ -103,7 +104,7 @@ describe('SQLite chat length handling', () => {
 
     it('preserves existing suffix data when applying a loaded range', () => {
         const existing = [makeHeader(), ...makeMessages(1000)];
-        const rangeMessages = makeMessages(50).map((message, index) => ({
+        const rangeMessages = existing.slice(101, 151).map((message, index) => ({
             ...message,
             mes: `updated ${100 + index}`,
         }));

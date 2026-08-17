@@ -2663,7 +2663,7 @@ function getWorldInfoEntryOwnerHandles(entry) {
 }
 
 function isWorldInfoEntryHiddenForUser(user, entry) {
-    if (Boolean(user?.profile?.admin)) {
+    if (user?.profile?.admin) {
         return false;
     }
 
@@ -3091,7 +3091,7 @@ function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOver
 
     response.write(`data: ${JSON.stringify({ x_sillytavern: xSillyTavern })}\n\n`);
     response.flush?.();
-    }
+}
 
 /**
  * @param {import('express').Response} response
@@ -3109,7 +3109,7 @@ function startStreamHeartbeat(response) {
 
         response.write(': heartbeat\n\n');
         response.flush?.();
-        }, STREAM_HEARTBEAT_INTERVAL_MS);
+    }, STREAM_HEARTBEAT_INTERVAL_MS);
 }
 
 /**
@@ -3840,495 +3840,495 @@ export async function handleChatCompletionsGenerate(request, response) {
         }
 
         let apiUrl;
-    let apiKey;
-    let headers;
-    let bodyParams;
+        let apiKey;
+        let headers;
+        let bodyParams;
 
-    if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENAI) {
-        apiUrl = new URL(request.body.reverse_proxy || API_OPENAI).toString();
-        apiKey = request.body.reverse_proxy ? request.body.proxy_password : readRequestSecret(request, SECRET_KEYS.OPENAI);
-        headers = {};
-        bodyParams = {
-            logprobs: request.body.logprobs,
-            top_logprobs: undefined,
-        };
-
-        // Adjust logprobs params for Chat Completions API, which expects { top_logprobs: number; logprobs: boolean; }
-        if (bodyParams.logprobs > 0) {
-            bodyParams.top_logprobs = bodyParams.logprobs;
-            bodyParams.logprobs = true;
-        }
-
-        if (getConfigValue('openai.randomizeUserId', false, 'boolean')) {
-            bodyParams['user'] = uuidv4();
-        }
-    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENROUTER) {
-        apiUrl = 'https://openrouter.ai/api/v1';
-        apiKey = readRequestSecret(request, SECRET_KEYS.OPENROUTER);
-        // OpenRouter needs to pass the Referer and X-Title: https://openrouter.ai/docs#requests
-        headers = { ...OPENROUTER_HEADERS };
-        bodyParams = {
-            'transforms': getOpenRouterTransforms(request),
-            'plugins': getOpenRouterPlugins(request),
-            'include_reasoning': Boolean(request.body.include_reasoning),
-        };
-
-        if (request.body.min_p !== undefined) {
-            bodyParams['min_p'] = request.body.min_p;
-        }
-
-        if (request.body.top_a !== undefined) {
-            bodyParams['top_a'] = request.body.top_a;
-        }
-
-        if (request.body.repetition_penalty !== undefined) {
-            bodyParams['repetition_penalty'] = request.body.repetition_penalty;
-        }
-
-        if (Array.isArray(request.body.provider) && request.body.provider.length > 0) {
-            bodyParams['provider'] = {
-                allow_fallbacks: request.body.allow_fallbacks ?? true,
-                order: request.body.provider ?? [],
+        if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENAI) {
+            apiUrl = new URL(request.body.reverse_proxy || API_OPENAI).toString();
+            apiKey = request.body.reverse_proxy ? request.body.proxy_password : readRequestSecret(request, SECRET_KEYS.OPENAI);
+            headers = {};
+            bodyParams = {
+                logprobs: request.body.logprobs,
+                top_logprobs: undefined,
             };
-        }
 
-        if (request.body.use_fallback) {
-            bodyParams['route'] = 'fallback';
-        }
+            // Adjust logprobs params for Chat Completions API, which expects { top_logprobs: number; logprobs: boolean; }
+            if (bodyParams.logprobs > 0) {
+                bodyParams.top_logprobs = bodyParams.logprobs;
+                bodyParams.logprobs = true;
+            }
 
-        if (request.body.reasoning_effort) {
-            bodyParams['reasoning'] = { effort: request.body.reasoning_effort };
-        }
+            if (getConfigValue('openai.randomizeUserId', false, 'boolean')) {
+                bodyParams['user'] = uuidv4();
+            }
+        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENROUTER) {
+            apiUrl = 'https://openrouter.ai/api/v1';
+            apiKey = readRequestSecret(request, SECRET_KEYS.OPENROUTER);
+            // OpenRouter needs to pass the Referer and X-Title: https://openrouter.ai/docs#requests
+            headers = { ...OPENROUTER_HEADERS };
+            bodyParams = {
+                'transforms': getOpenRouterTransforms(request),
+                'plugins': getOpenRouterPlugins(request),
+                'include_reasoning': Boolean(request.body.include_reasoning),
+            };
 
-        if (request.body.verbosity) {
-            bodyParams['verbosity'] = request.body.verbosity;
-        }
+            if (request.body.min_p !== undefined) {
+                bodyParams['min_p'] = request.body.min_p;
+            }
 
-        if (request.body.json_schema) {
-            bodyParams['response_format'] = {
-                type: 'json_schema',
-                json_schema: {
-                    name: request.body.json_schema.name,
-                    strict: request.body.json_schema.strict ?? true,
-                    schema: request.body.json_schema.value,
+            if (request.body.top_a !== undefined) {
+                bodyParams['top_a'] = request.body.top_a;
+            }
+
+            if (request.body.repetition_penalty !== undefined) {
+                bodyParams['repetition_penalty'] = request.body.repetition_penalty;
+            }
+
+            if (Array.isArray(request.body.provider) && request.body.provider.length > 0) {
+                bodyParams['provider'] = {
+                    allow_fallbacks: request.body.allow_fallbacks ?? true,
+                    order: request.body.provider ?? [],
+                };
+            }
+
+            if (request.body.use_fallback) {
+                bodyParams['route'] = 'fallback';
+            }
+
+            if (request.body.reasoning_effort) {
+                bodyParams['reasoning'] = { effort: request.body.reasoning_effort };
+            }
+
+            if (request.body.verbosity) {
+                bodyParams['verbosity'] = request.body.verbosity;
+            }
+
+            if (request.body.json_schema) {
+                bodyParams['response_format'] = {
+                    type: 'json_schema',
+                    json_schema: {
+                        name: request.body.json_schema.name,
+                        strict: request.body.json_schema.strict ?? true,
+                        schema: request.body.json_schema.value,
+                    },
+                };
+            }
+
+            const cachingAtDepth = getConfigValue('claude.cachingAtDepth', -1, 'number');
+            const isClaude3or4 = /anthropic\/claude-(3|opus-4|sonnet-4|haiku-4)/.test(request.body.model);
+            const cacheTTL = getConfigValue('claude.extendedTTL', false, 'boolean') ? '1h' : '5m';
+            if (Array.isArray(request.body.messages)) {
+                embedOpenRouterMedia(request.body.messages);
+                addOpenRouterSignatures(request.body.messages, request.body.model);
+                if (Number.isInteger(cachingAtDepth) && cachingAtDepth >= 0 && isClaude3or4) {
+                    cachingAtDepthForOpenRouterClaude(request.body.messages, cachingAtDepth, cacheTTL);
+                }
+            }
+
+            const isGemini = /google\/gemini/.test(request.body.model);
+            if (isGemini) {
+                bodyParams['safety_settings'] = GEMINI_SAFETY;
+            }
+        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM) {
+            apiUrl = request.body.custom_url;
+            apiKey = typeof request.body.custom_api_key === 'string'
+                ? request.body.custom_api_key
+                : readRequestSecret(request, SECRET_KEYS.CUSTOM);
+            headers = {};
+            bodyParams = {
+                logprobs: request.body.logprobs,
+                top_logprobs: undefined,
+            };
+
+            // Adjust logprobs params for Chat Completions API, which expects { top_logprobs: number; logprobs: boolean; }
+            if (bodyParams.logprobs > 0) {
+                bodyParams.top_logprobs = bodyParams.logprobs;
+                bodyParams.logprobs = true;
+            }
+
+            mergeObjectWithYaml(bodyParams, request.body.custom_include_body);
+            mergeObjectWithYaml(headers, request.body.custom_include_headers);
+        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.PERPLEXITY) {
+            apiUrl = API_PERPLEXITY;
+            apiKey = readRequestSecret(request, SECRET_KEYS.PERPLEXITY);
+            headers = {};
+            bodyParams = {
+                reasoning_effort: request.body.reasoning_effort,
+            };
+            request.body.messages = postProcessPrompt(request.body.messages, PROMPT_PROCESSING_TYPE.STRICT, getPromptNames(request));
+            if (request.body.json_schema) {
+                bodyParams['response_format'] = {
+                    type: 'json_schema',
+                    json_schema: {
+                        schema: request.body.json_schema.value,
+                    },
+                };
+            }
+        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.GROQ) {
+            apiUrl = API_GROQ;
+            apiKey = readRequestSecret(request, SECRET_KEYS.GROQ);
+            headers = {};
+            bodyParams = {};
+            if (request.body.json_schema) {
+                bodyParams['response_format'] = {
+                    type: 'json_schema',
+                    json_schema: {
+                        name: request.body.json_schema.name,
+                        description: request.body.json_schema.description,
+                        schema: request.body.json_schema.value,
+                        strict: request.body.json_schema.strict ?? true,
+                    },
+                };
+            }
+        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.FIREWORKS) {
+            apiUrl = API_FIREWORKS;
+            apiKey = readRequestSecret(request, SECRET_KEYS.FIREWORKS);
+            headers = {};
+            bodyParams = {};
+            if (request.body.json_schema) {
+                bodyParams['response_format'] = {
+                    type: 'json_schema',
+                    json_schema: {
+                        name: request.body.json_schema.name,
+                        description: request.body.json_schema.description,
+                        schema: request.body.json_schema.value,
+                        strict: request.body.json_schema.strict ?? true,
+                    },
+                };
+            }
+        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NANOGPT) {
+            apiUrl = API_NANOGPT;
+            apiKey = readRequestSecret(request, SECRET_KEYS.NANOGPT);
+            headers = {};
+            bodyParams = {};
+            if (request.body.enable_web_search && !/:online$/.test(request.body.model)) {
+                request.body.model = `${request.body.model}:online`;
+            }
+            if (request.body.min_p !== undefined) {
+                bodyParams['min_p'] = request.body.min_p;
+            }
+            if (request.body.top_a !== undefined) {
+                bodyParams['top_a'] = request.body.top_a;
+            }
+            if (request.body.repetition_penalty !== undefined) {
+                bodyParams['repetition_penalty'] = request.body.repetition_penalty;
+            }
+            const enableSystemPromptCache = getConfigValue('claude.enableSystemPromptCache', false, 'boolean');
+            const isClaude3or4 = /claude-(3|opus-4|sonnet-4|haiku-4)/.test(request.body.model);
+            const cacheTTL = getConfigValue('claude.extendedTTL', false, 'boolean') ? '1h' : '5m';
+            if (enableSystemPromptCache && isClaude3or4) {
+                bodyParams['cache_control'] = {
+                    'enabled': true,
+                    'ttl': cacheTTL,
+                };
+            }
+        }
+        else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.POLLINATIONS) {
+            apiUrl = API_POLLINATIONS;
+            apiKey = 'NONE';
+            headers = {
+                'Authorization': '',
+            };
+            bodyParams = {
+                reasoning_effort: request.body.reasoning_effort,
+                private: true,
+                referrer: 'sillytavern',
+                seed: request.body.seed ?? Math.floor(Math.random() * 99999999),
+            };
+            if (request.body.json_schema) {
+                setJsonObjectFormat(bodyParams, request.body.messages, request.body.json_schema);
+            }
+        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.MOONSHOT) {
+            apiUrl = API_MOONSHOT;
+            apiKey = readRequestSecret(request, SECRET_KEYS.MOONSHOT);
+            headers = {};
+            bodyParams = {};
+            request.body.json_schema
+                ? setJsonObjectFormat(bodyParams, request.body.messages, request.body.json_schema)
+                : addAssistantPrefix(request.body.messages, [], 'partial');
+        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.COMETAPI) {
+            apiUrl = API_COMETAPI;
+            apiKey = readRequestSecret(request, SECRET_KEYS.COMETAPI);
+            headers = {};
+            bodyParams = {
+                reasoning_effort: request.body.reasoning_effort,
+            };
+            throw createChatCompletionStageError('This provider is temporarily disabled.', 503, {
+                stage: 'provider_request',
+                provider: request.body.chat_completion_source,
+                retryable: false,
+            });
+        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZANITY) {
+            apiUrl = request.body.custom_url || getZanityApiUrl(request.body.zanity_endpoint);
+            apiKey = readRequestSecret(request, SECRET_KEYS.ZANITY);
+            headers = {};
+            bodyParams = {
+                logprobs: request.body.logprobs,
+                top_logprobs: undefined,
+            };
+
+            if (bodyParams.logprobs > 0) {
+                bodyParams.top_logprobs = bodyParams.logprobs;
+                bodyParams.logprobs = true;
+            }
+
+            mergeObjectWithYaml(bodyParams, request.body.custom_include_body);
+            mergeObjectWithYaml(headers, request.body.custom_include_headers);
+        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZAI) {
+            apiUrl = request.body.zai_endpoint === ZAI_ENDPOINT.CODING ? API_ZAI_CODING : API_ZAI_COMMON;
+            apiKey = readRequestSecret(request, SECRET_KEYS.ZAI);
+            headers = {
+                'Accept-Language': 'en-US,en',
+            };
+            bodyParams = {
+                thinking: {
+                    type: request.body.include_reasoning ? 'enabled' : 'disabled',
                 },
             };
+            if (request.body.json_schema) {
+                setJsonObjectFormat(bodyParams, request.body.messages, request.body.json_schema);
+            }
+        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.SILICONFLOW) {
+            apiUrl = API_SILICONFLOW;
+            apiKey = readRequestSecret(request, SECRET_KEYS.SILICONFLOW);
+            headers = {};
+            bodyParams = {};
+            if (request.body.json_schema) {
+                setJsonObjectFormat(bodyParams, request.body.messages, request.body.json_schema);
+            }
+        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY) {
+            apiUrl = API_NAVY;
+            apiKey = readRequestSecret(request, SECRET_KEYS.NAVY);
+            headers = {};
+            bodyParams = {};
+            const reasoningEffort = normalizeNavyReasoningEffort(request.body.reasoning_effort);
+            if (reasoningEffort) {
+                bodyParams.reasoning_effort = reasoningEffort;
+            }
+        } else {
+            console.warn('This chat completion source is not supported yet.');
+            return sendGenerateError(400, { error: true });
         }
 
-        const cachingAtDepth = getConfigValue('claude.cachingAtDepth', -1, 'number');
-        const isClaude3or4 = /anthropic\/claude-(3|opus-4|sonnet-4|haiku-4)/.test(request.body.model);
-        const cacheTTL = getConfigValue('claude.extendedTTL', false, 'boolean') ? '1h' : '5m';
-        if (Array.isArray(request.body.messages)) {
-            embedOpenRouterMedia(request.body.messages);
-            addOpenRouterSignatures(request.body.messages, request.body.model);
-            if (Number.isInteger(cachingAtDepth) && cachingAtDepth >= 0 && isClaude3or4) {
-                cachingAtDepthForOpenRouterClaude(request.body.messages, cachingAtDepth, cacheTTL);
+        // A few of OpenAIs reasoning models support reasoning effort
+        if (request.body.reasoning_effort && [CHAT_COMPLETION_SOURCES.CUSTOM, CHAT_COMPLETION_SOURCES.OPENAI].includes(request.body.chat_completion_source)) {
+            if (OPENAI_REASONING_EFFORT_MODELS.includes(request.body.model)) {
+                bodyParams['reasoning_effort'] = OPENAI_FIXED_REASONING_EFFORT[request.body.model] ?? OPENAI_REASONING_EFFORT_MAP[request.body.reasoning_effort] ?? request.body.reasoning_effort;
             }
         }
 
-        const isGemini = /google\/gemini/.test(request.body.model);
-        if (isGemini) {
-            bodyParams['safety_settings'] = GEMINI_SAFETY;
-        }
-    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM) {
-        apiUrl = request.body.custom_url;
-        apiKey = typeof request.body.custom_api_key === 'string'
-            ? request.body.custom_api_key
-            : readRequestSecret(request, SECRET_KEYS.CUSTOM);
-        headers = {};
-        bodyParams = {
-            logprobs: request.body.logprobs,
-            top_logprobs: undefined,
-        };
-
-        // Adjust logprobs params for Chat Completions API, which expects { top_logprobs: number; logprobs: boolean; }
-        if (bodyParams.logprobs > 0) {
-            bodyParams.top_logprobs = bodyParams.logprobs;
-            bodyParams.logprobs = true;
+        if (request.body.verbosity && [CHAT_COMPLETION_SOURCES.CUSTOM, CHAT_COMPLETION_SOURCES.OPENAI].includes(request.body.chat_completion_source)) {
+            if (OPENAI_VERBOSITY_MODELS.test(request.body.model)) {
+                bodyParams['verbosity'] = request.body.verbosity;
+            }
         }
 
-        mergeObjectWithYaml(bodyParams, request.body.custom_include_body);
-        mergeObjectWithYaml(headers, request.body.custom_include_headers);
-    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.PERPLEXITY) {
-        apiUrl = API_PERPLEXITY;
-        apiKey = readRequestSecret(request, SECRET_KEYS.PERPLEXITY);
-        headers = {};
-        bodyParams = {
-            reasoning_effort: request.body.reasoning_effort,
-        };
-        request.body.messages = postProcessPrompt(request.body.messages, PROMPT_PROCESSING_TYPE.STRICT, getPromptNames(request));
-        if (request.body.json_schema) {
-            bodyParams['response_format'] = {
-                type: 'json_schema',
-                json_schema: {
-                    schema: request.body.json_schema.value,
+        if (!apiKey && !request.body.reverse_proxy && request.body.chat_completion_source !== CHAT_COMPLETION_SOURCES.CUSTOM) {
+            const providerName = request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY ? 'Navy' : 'OpenAI';
+            console.warn(`${providerName} API key is missing.`);
+            return sendGenerateError(400, { error: { message: `${providerName} API key is missing.` } });
+        }
+
+        // Add custom stop sequences
+        if (Array.isArray(request.body.stop) && request.body.stop.length > 0) {
+            bodyParams['stop'] = request.body.stop;
+        }
+
+        let endpointUrl;
+        try {
+            endpointUrl = buildChatCompletionsEndpointUrl(apiUrl);
+        } catch {
+            return sendGenerateError(400, {
+                error: {
+                    message: 'Invalid chat completion endpoint URL. Use a full absolute URL such as https://api.openai.com/v1 or http://127.0.0.1:1/v1.',
                 },
-            };
+            });
         }
-    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.GROQ) {
-        apiUrl = API_GROQ;
-        apiKey = readRequestSecret(request, SECRET_KEYS.GROQ);
-        headers = {};
-        bodyParams = {};
-        if (request.body.json_schema) {
+
+        const controller = new AbortController();
+        bindAbortControllerToRequestSocket(request, controller);
+
+        if (Array.isArray(request.body.tools) && request.body.tools.length > 0) {
+            bodyParams['tools'] = request.body.tools;
+            bodyParams['tool_choice'] = request.body.tool_choice;
+        }
+
+        if (request.body.json_schema && !bodyParams['response_format']) {
             bodyParams['response_format'] = {
                 type: 'json_schema',
                 json_schema: {
                     name: request.body.json_schema.name,
-                    description: request.body.json_schema.description,
-                    schema: request.body.json_schema.value,
                     strict: request.body.json_schema.strict ?? true,
+                    schema: request.body.json_schema.value,
                 },
             };
         }
-    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.FIREWORKS) {
-        apiUrl = API_FIREWORKS;
-        apiKey = readRequestSecret(request, SECRET_KEYS.FIREWORKS);
-        headers = {};
-        bodyParams = {};
-        if (request.body.json_schema) {
-            bodyParams['response_format'] = {
-                type: 'json_schema',
-                json_schema: {
-                    name: request.body.json_schema.name,
-                    description: request.body.json_schema.description,
-                    schema: request.body.json_schema.value,
-                    strict: request.body.json_schema.strict ?? true,
-                },
-            };
-        }
-    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NANOGPT) {
-        apiUrl = API_NANOGPT;
-        apiKey = readRequestSecret(request, SECRET_KEYS.NANOGPT);
-        headers = {};
-        bodyParams = {};
-        if (request.body.enable_web_search && !/:online$/.test(request.body.model)) {
-            request.body.model = `${request.body.model}:online`;
-        }
-        if (request.body.min_p !== undefined) {
-            bodyParams['min_p'] = request.body.min_p;
-        }
-        if (request.body.top_a !== undefined) {
-            bodyParams['top_a'] = request.body.top_a;
-        }
-        if (request.body.repetition_penalty !== undefined) {
-            bodyParams['repetition_penalty'] = request.body.repetition_penalty;
-        }
-        const enableSystemPromptCache = getConfigValue('claude.enableSystemPromptCache', false, 'boolean');
-        const isClaude3or4 = /claude-(3|opus-4|sonnet-4|haiku-4)/.test(request.body.model);
-        const cacheTTL = getConfigValue('claude.extendedTTL', false, 'boolean') ? '1h' : '5m';
-        if (enableSystemPromptCache && isClaude3or4) {
-            bodyParams['cache_control'] = {
-                'enabled': true,
-                'ttl': cacheTTL,
-            };
-        }
-    }
-    else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.POLLINATIONS) {
-        apiUrl = API_POLLINATIONS;
-        apiKey = 'NONE';
-        headers = {
-            'Authorization': '',
+
+        applyNavyRequestCompatibility(bodyParams, request.body);
+
+        const requestBody = {
+            'messages': request.body.messages,
+            'model': request.body.model,
+            'temperature': request.body.temperature,
+            'max_tokens': request.body.max_tokens,
+            'max_completion_tokens': request.body.max_completion_tokens,
+            'stream': request.body.stream,
+            'presence_penalty': request.body.presence_penalty,
+            'frequency_penalty': request.body.frequency_penalty,
+            'top_p': request.body.top_p,
+            'top_k': request.body.top_k,
+            'stop': request.body.stop,
+            'logit_bias': request.body.logit_bias,
+            'seed': request.body.seed,
+            'n': request.body.n,
+            ...bodyParams,
         };
-        bodyParams = {
-            reasoning_effort: request.body.reasoning_effort,
-            private: true,
-            referrer: 'sillytavern',
-            seed: request.body.seed ?? Math.floor(Math.random() * 99999999),
-        };
-        if (request.body.json_schema) {
-            setJsonObjectFormat(bodyParams, request.body.messages, request.body.json_schema);
+
+        if (request.body.stream && request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENAI && !request.body.reverse_proxy) {
+            requestBody.stream_options = { include_usage: true };
         }
-    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.MOONSHOT) {
-        apiUrl = API_MOONSHOT;
-        apiKey = readRequestSecret(request, SECRET_KEYS.MOONSHOT);
-        headers = {};
-        bodyParams = {};
-        request.body.json_schema
-            ? setJsonObjectFormat(bodyParams, request.body.messages, request.body.json_schema)
-            : addAssistantPrefix(request.body.messages, [], 'partial');
-    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.COMETAPI) {
-        apiUrl = API_COMETAPI;
-        apiKey = readRequestSecret(request, SECRET_KEYS.COMETAPI);
-        headers = {};
-        bodyParams = {
-            reasoning_effort: request.body.reasoning_effort,
+
+        if ([CHAT_COMPLETION_SOURCES.CUSTOM, CHAT_COMPLETION_SOURCES.ZANITY].includes(request.body.chat_completion_source)) {
+            excludeKeysByYaml(requestBody, request.body.custom_exclude_body);
+        }
+
+        /** @type {import('node-fetch').RequestInit} */
+        const config = {
+            method: 'post',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + apiKey,
+                ...headers,
+            },
+            body: JSON.stringify(requestBody),
+            signal: controller.signal,
         };
-        throw createChatCompletionStageError('This provider is temporarily disabled.', 503, {
-            stage: 'provider_request',
-            provider: request.body.chat_completion_source,
-            retryable: false,
+
+        await assertActiveSessionOperation(request);
+        providerResult = await makeRequest(config, request);
+        await assertActiveSessionOperation(request);
+        const result = await sendProviderDispatchResult(providerResult, request, response, {
+            timedWorldInfo: assembledTimedWorldInfo,
+            worldInfoOverflowed: assembledWorldInfoOverflowed,
+            worldInfo: assembledPromptSnapshot?.worldInfo || null,
+            promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
+            messagesCount: assembledMessagesCount,
+            firstIncludedMessageId: assembledFirstIncludedMessageId,
+            promptTokenCount: assembledPromptSnapshot?.itemization?.finalPromptTokens ?? null,
         });
-    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZANITY) {
-        apiUrl = request.body.custom_url || getZanityApiUrl(request.body.zanity_endpoint);
-        apiKey = readRequestSecret(request, SECRET_KEYS.ZANITY);
-        headers = {};
-        bodyParams = {
-            logprobs: request.body.logprobs,
-            top_logprobs: undefined,
-        };
+        cleanup();
+        return result;
 
-        if (bodyParams.logprobs > 0) {
-            bodyParams.top_logprobs = bodyParams.logprobs;
-            bodyParams.logprobs = true;
-        }
-
-        mergeObjectWithYaml(bodyParams, request.body.custom_include_body);
-        mergeObjectWithYaml(headers, request.body.custom_include_headers);
-    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZAI) {
-        apiUrl = request.body.zai_endpoint === ZAI_ENDPOINT.CODING ? API_ZAI_CODING : API_ZAI_COMMON;
-        apiKey = readRequestSecret(request, SECRET_KEYS.ZAI);
-        headers = {
-            'Accept-Language': 'en-US,en',
-        };
-        bodyParams = {
-            thinking: {
-                type: request.body.include_reasoning ? 'enabled' : 'disabled',
-            },
-        };
-        if (request.body.json_schema) {
-            setJsonObjectFormat(bodyParams, request.body.messages, request.body.json_schema);
-        }
-    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.SILICONFLOW) {
-        apiUrl = API_SILICONFLOW;
-        apiKey = readRequestSecret(request, SECRET_KEYS.SILICONFLOW);
-        headers = {};
-        bodyParams = {};
-        if (request.body.json_schema) {
-            setJsonObjectFormat(bodyParams, request.body.messages, request.body.json_schema);
-        }
-    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY) {
-        apiUrl = API_NAVY;
-        apiKey = readRequestSecret(request, SECRET_KEYS.NAVY);
-        headers = {};
-        bodyParams = {};
-        const reasoningEffort = normalizeNavyReasoningEffort(request.body.reasoning_effort);
-        if (reasoningEffort) {
-            bodyParams.reasoning_effort = reasoningEffort;
-        }
-    } else {
-        console.warn('This chat completion source is not supported yet.');
-        return sendGenerateError(400, { error: true });
-    }
-
-    // A few of OpenAIs reasoning models support reasoning effort
-    if (request.body.reasoning_effort && [CHAT_COMPLETION_SOURCES.CUSTOM, CHAT_COMPLETION_SOURCES.OPENAI].includes(request.body.chat_completion_source)) {
-        if (OPENAI_REASONING_EFFORT_MODELS.includes(request.body.model)) {
-            bodyParams['reasoning_effort'] = OPENAI_FIXED_REASONING_EFFORT[request.body.model] ?? OPENAI_REASONING_EFFORT_MAP[request.body.reasoning_effort] ?? request.body.reasoning_effort;
-        }
-    }
-
-    if (request.body.verbosity && [CHAT_COMPLETION_SOURCES.CUSTOM, CHAT_COMPLETION_SOURCES.OPENAI].includes(request.body.chat_completion_source)) {
-        if (OPENAI_VERBOSITY_MODELS.test(request.body.model)) {
-            bodyParams['verbosity'] = request.body.verbosity;
-        }
-    }
-
-    if (!apiKey && !request.body.reverse_proxy && request.body.chat_completion_source !== CHAT_COMPLETION_SOURCES.CUSTOM) {
-        const providerName = request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY ? 'Navy' : 'OpenAI';
-        console.warn(`${providerName} API key is missing.`);
-        return sendGenerateError(400, { error: { message: `${providerName} API key is missing.` } });
-    }
-
-    // Add custom stop sequences
-    if (Array.isArray(request.body.stop) && request.body.stop.length > 0) {
-        bodyParams['stop'] = request.body.stop;
-    }
-
-    let endpointUrl;
-    try {
-        endpointUrl = buildChatCompletionsEndpointUrl(apiUrl);
-    } catch {
-        return sendGenerateError(400, {
-            error: {
-                message: 'Invalid chat completion endpoint URL. Use a full absolute URL such as https://api.openai.com/v1 or http://127.0.0.1:1/v1.',
-            },
-        });
-    }
-
-    const controller = new AbortController();
-    bindAbortControllerToRequestSocket(request, controller);
-
-    if (Array.isArray(request.body.tools) && request.body.tools.length > 0) {
-        bodyParams['tools'] = request.body.tools;
-        bodyParams['tool_choice'] = request.body.tool_choice;
-    }
-
-    if (request.body.json_schema && !bodyParams['response_format']) {
-        bodyParams['response_format'] = {
-            type: 'json_schema',
-            json_schema: {
-                name: request.body.json_schema.name,
-                strict: request.body.json_schema.strict ?? true,
-                schema: request.body.json_schema.value,
-            },
-        };
-    }
-
-    applyNavyRequestCompatibility(bodyParams, request.body);
-
-    const requestBody = {
-        'messages': request.body.messages,
-        'model': request.body.model,
-        'temperature': request.body.temperature,
-        'max_tokens': request.body.max_tokens,
-        'max_completion_tokens': request.body.max_completion_tokens,
-        'stream': request.body.stream,
-        'presence_penalty': request.body.presence_penalty,
-        'frequency_penalty': request.body.frequency_penalty,
-        'top_p': request.body.top_p,
-        'top_k': request.body.top_k,
-        'stop': request.body.stop,
-        'logit_bias': request.body.logit_bias,
-        'seed': request.body.seed,
-        'n': request.body.n,
-        ...bodyParams,
-    };
-
-    if (request.body.stream && request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENAI && !request.body.reverse_proxy) {
-        requestBody.stream_options = { include_usage: true };
-    }
-
-    if ([CHAT_COMPLETION_SOURCES.CUSTOM, CHAT_COMPLETION_SOURCES.ZANITY].includes(request.body.chat_completion_source)) {
-        excludeKeysByYaml(requestBody, request.body.custom_exclude_body);
-    }
-
-    /** @type {import('node-fetch').RequestInit} */
-    const config = {
-        method: 'post',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + apiKey,
-            ...headers,
-        },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-    };
-
-    await assertActiveSessionOperation(request);
-    providerResult = await makeRequest(config, request);
-    await assertActiveSessionOperation(request);
-    const result = await sendProviderDispatchResult(providerResult, request, response, {
-        timedWorldInfo: assembledTimedWorldInfo,
-        worldInfoOverflowed: assembledWorldInfoOverflowed,
-        worldInfo: assembledPromptSnapshot?.worldInfo || null,
-        promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
-        messagesCount: assembledMessagesCount,
-        firstIncludedMessageId: assembledFirstIncludedMessageId,
-        promptTokenCount: assembledPromptSnapshot?.itemization?.finalPromptTokens ?? null,
-    });
-    cleanup();
-    return result;
-
-    /**
+        /**
      * Makes a fetch request to the OpenAI API endpoint.
      * @param {import('node-fetch').RequestInit} config Fetch config
      * @param {express.Request} request Express request
      */
-    async function makeRequest(config, request) {
-        try {
-            controller.signal.throwIfAborted();
-            const fetchResponse = await fetch(endpointUrl, config);
-            return await handleFetchResponse(fetchResponse);
-        } catch (error) {
-            logChatCompletionFailure(request, 'Generation failed', { stage: 'provider_request' }, error);
-            const message = error.code === 'ECONNREFUSED'
-                ? `Connection refused: ${error.message}`
-                : error.message || 'Unknown error occurred';
+        async function makeRequest(config, request) {
+            try {
+                controller.signal.throwIfAborted();
+                const fetchResponse = await fetch(endpointUrl, config);
+                return await handleFetchResponse(fetchResponse);
+            } catch (error) {
+                logChatCompletionFailure(request, 'Generation failed', { stage: 'provider_request' }, error);
+                const message = error.code === 'ECONNREFUSED'
+                    ? `Connection refused: ${error.message}`
+                    : error.message || 'Unknown error occurred';
 
-            const payload = annotateErrorPayload({
-                error: {
-                    message,
-                    type: typeof error?.type === 'string' && error.type ? error.type : undefined,
-                    code: typeof error?.code === 'string' || typeof error?.code === 'number' ? error.code : undefined,
-                },
-            }, {
-                request,
-                type: typeof error?.name === 'string' && error.name ? error.name : 'ProviderRequestError',
-                stage: 'provider_request',
-                retryable: true,
-            });
-            return createProviderJsonResult(payload, { status: 502, ok: false });
-        }
-    }
-
-    /**
-     * @param {import("node-fetch").Response} fetchResponse
-     */
-    async function handleFetchResponse(fetchResponse, {
-        currentRequestBody = requestBody,
-        attemptedStructuredOutputFallbacks = [],
-    } = {}) {
-        if (request.body.stream && fetchResponse.ok) {
-            console.info('Streaming request in progress');
-            return createProviderStreamResult(fetchResponse);
-        }
-
-        if (fetchResponse.ok) {
-            /** @type {any} */
-            const json = await fetchResponse.json();
-            return createProviderJsonResult(json);
-        }
-
-        return await handleErrorResponse(fetchResponse, {
-            currentRequestBody,
-            attemptedStructuredOutputFallbacks,
-        });
-    }
-
-    /**
-     * @param {import("node-fetch").Response} errorResponse
-     */
-    async function handleErrorResponse(errorResponse, {
-        currentRequestBody = requestBody,
-        attemptedStructuredOutputFallbacks = [],
-    } = {}) {
-        const canRetryStructuredOutput = request.body.json_schema
-            && getStructuredOutputMode(currentRequestBody?.response_format);
-
-        if (canRetryStructuredOutput) {
-            const errorText = await errorResponse.clone().text().catch(() => '');
-            const fallbackMode = detectStructuredOutputFallbackMode(
-                errorText,
-                currentRequestBody,
-                request.body.json_schema,
-                attemptedStructuredOutputFallbacks,
-            );
-
-            if (fallbackMode) {
-                const responseFormatShape = detectResponseFormatShape(errorText, currentRequestBody);
-                const fallbackRequestBody = buildStructuredOutputFallbackRequestBody(
-                    currentRequestBody,
-                    request.body.json_schema,
-                    fallbackMode,
-                    responseFormatShape,
-                );
-                const fallbackConfig = {
-                    ...config,
-                    body: JSON.stringify(fallbackRequestBody),
-                };
-
-                console.warn('Provider rejected structured output format; retrying with weaker fallback.', {
-                    requestId: request.requestId,
-                    provider: request.body.chat_completion_source,
-                    model: request.body.model,
-                    fallbackMode: getStructuredOutputFallbackLabel(fallbackMode),
+                const payload = annotateErrorPayload({
+                    error: {
+                        message,
+                        type: typeof error?.type === 'string' && error.type ? error.type : undefined,
+                        code: typeof error?.code === 'string' || typeof error?.code === 'number' ? error.code : undefined,
+                    },
+                }, {
+                    request,
+                    type: typeof error?.name === 'string' && error.name ? error.name : 'ProviderRequestError',
+                    stage: 'provider_request',
+                    retryable: true,
                 });
-
-                try {
-                    const fallbackResponse = await fetch(endpointUrl, fallbackConfig);
-                    return await handleFetchResponse(fallbackResponse, {
-                        currentRequestBody: fallbackRequestBody,
-                        attemptedStructuredOutputFallbacks: [...attemptedStructuredOutputFallbacks, fallbackMode],
-                    });
-                } catch (fallbackError) {
-                    console.warn('Structured output fallback request failed:', fallbackError?.message || fallbackError);
-                }
+                return createProviderJsonResult(payload, { status: 502, ok: false });
             }
         }
 
-        return await createSanitizedProviderErrorResult(errorResponse, request);
-    }
+        /**
+     * @param {import("node-fetch").Response} fetchResponse
+     */
+        async function handleFetchResponse(fetchResponse, {
+            currentRequestBody = requestBody,
+            attemptedStructuredOutputFallbacks = [],
+        } = {}) {
+            if (request.body.stream && fetchResponse.ok) {
+                console.info('Streaming request in progress');
+                return createProviderStreamResult(fetchResponse);
+            }
+
+            if (fetchResponse.ok) {
+            /** @type {any} */
+                const json = await fetchResponse.json();
+                return createProviderJsonResult(json);
+            }
+
+            return await handleErrorResponse(fetchResponse, {
+                currentRequestBody,
+                attemptedStructuredOutputFallbacks,
+            });
+        }
+
+        /**
+     * @param {import("node-fetch").Response} errorResponse
+     */
+        async function handleErrorResponse(errorResponse, {
+            currentRequestBody = requestBody,
+            attemptedStructuredOutputFallbacks = [],
+        } = {}) {
+            const canRetryStructuredOutput = request.body.json_schema
+            && getStructuredOutputMode(currentRequestBody?.response_format);
+
+            if (canRetryStructuredOutput) {
+                const errorText = await errorResponse.clone().text().catch(() => '');
+                const fallbackMode = detectStructuredOutputFallbackMode(
+                    errorText,
+                    currentRequestBody,
+                    request.body.json_schema,
+                    attemptedStructuredOutputFallbacks,
+                );
+
+                if (fallbackMode) {
+                    const responseFormatShape = detectResponseFormatShape(errorText, currentRequestBody);
+                    const fallbackRequestBody = buildStructuredOutputFallbackRequestBody(
+                        currentRequestBody,
+                        request.body.json_schema,
+                        fallbackMode,
+                        responseFormatShape,
+                    );
+                    const fallbackConfig = {
+                        ...config,
+                        body: JSON.stringify(fallbackRequestBody),
+                    };
+
+                    console.warn('Provider rejected structured output format; retrying with weaker fallback.', {
+                        requestId: request.requestId,
+                        provider: request.body.chat_completion_source,
+                        model: request.body.model,
+                        fallbackMode: getStructuredOutputFallbackLabel(fallbackMode),
+                    });
+
+                    try {
+                        const fallbackResponse = await fetch(endpointUrl, fallbackConfig);
+                        return await handleFetchResponse(fallbackResponse, {
+                            currentRequestBody: fallbackRequestBody,
+                            attemptedStructuredOutputFallbacks: [...attemptedStructuredOutputFallbacks, fallbackMode],
+                        });
+                    } catch (fallbackError) {
+                        console.warn('Structured output fallback request failed:', fallbackError?.message || fallbackError);
+                    }
+                }
+            }
+
+            return await createSanitizedProviderErrorResult(errorResponse, request);
+        }
     })().catch((error) => {
         cleanup();
         cleanupRequestSocketAbortListeners(request);

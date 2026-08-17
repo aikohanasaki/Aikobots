@@ -1770,11 +1770,11 @@ async function syncUserNameToPersona() {
     }
 
     const operation = {
-            file_name: character.chat,
-            avatar_url: character.avatar,
-            user_name: name1,
-            persona_avatar: user_avatar,
-            integrity: chat_metadata?.integrity,
+        file_name: character.chat,
+        avatar_url: character.avatar,
+        user_name: name1,
+        persona_avatar: user_avatar,
+        integrity: chat_metadata?.integrity,
     };
     const { response, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId, saveSessionId }) => ({
         url: '/api/chats/sync-user-persona',

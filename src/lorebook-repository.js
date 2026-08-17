@@ -759,7 +759,7 @@ function canManageSecureLorebook(user, record) {
         return false;
     }
 
-    if (Boolean(user?.profile?.admin)) {
+    if (user?.profile?.admin) {
         return true;
     }
 
@@ -859,13 +859,6 @@ function assertSharedSecurePromotionNameAllowed(canonicalName) {
     }
 }
 
-function assertSharedSecureNameAvailable(name) {
-    const secureEntry = getSecureIndexMetadata(name);
-    const sharedEntry = getSharedSecureIndexMetadata(name);
-    if (secureEntry || sharedEntry) {
-        throw new LorebookRepositoryError('LorebookAlreadySecure', `Lorebook "${name}" already exists in secure storage.`, 409);
-    }
-}
 
 function assertUserLorebookNameAvailable(canonicalName) {
     const secureRecord = getSecureIndexEntry(canonicalName);
@@ -1365,7 +1358,7 @@ async function deleteResidualSecureLorebookArtifacts(user, name, userHandles = [
     const beforeReferenceState = await inspectLorebookReferenceState(canonicalName, userHandles);
     const deleteMarker = readSecureDeleteMarker(canonicalName);
 
-    if (deleteMarker ? !canManageSecureLorebook(user, deleteMarker) : !Boolean(user?.profile?.admin)) {
+    if (deleteMarker ? !canManageSecureLorebook(user, deleteMarker) : !user?.profile?.admin) {
         throw new LorebookRepositoryError(
             'LorebookAccessDenied',
             deleteMarker
@@ -2107,13 +2100,13 @@ export function listLorebooksForManagement(user) {
                         requireManageableSecure: true,
                     })
                     : secureRecord?.ownerHandle === user.profile.handle
-                    ? resolveLorebookWithMetadata(user, name, {
-                        storage: 'secure',
-                        requireManageableSecure: true,
-                    })
-                    : resolveLorebookWithMetadata(user, name, {
-                        storage: 'user',
-                    });
+                        ? resolveLorebookWithMetadata(user, name, {
+                            storage: 'secure',
+                            requireManageableSecure: true,
+                        })
+                        : resolveLorebookWithMetadata(user, name, {
+                            storage: 'user',
+                        });
 
                 items.push(buildListItem(resolved.metadata, user));
                 seenNames.add(name);
@@ -3084,7 +3077,7 @@ export async function checkoutSharedLorebook(user, name, force = false) {
             throw new LorebookRepositoryError('LorebookCheckedOut', `Lorebook "${canonicalName}" is checked out by ${checkedOutBy}.`, 423);
         }
 
-        if (checkedOutBy && checkedOutBy !== currentHandle && force && !Boolean(user?.profile?.admin)) {
+        if (checkedOutBy && checkedOutBy !== currentHandle && force && !user?.profile?.admin) {
             throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is checked out by ${checkedOutBy}.`, 403);
         }
 
@@ -3122,7 +3115,7 @@ export async function checkinSharedLorebook(user, name, force = false) {
             throw new LorebookRepositoryError('LorebookCheckedOut', `Lorebook "${canonicalName}" is checked out by ${checkedOutBy}.`, 423);
         }
 
-        if (checkedOutBy && checkedOutBy !== currentHandle && force && !Boolean(user?.profile?.admin)) {
+        if (checkedOutBy && checkedOutBy !== currentHandle && force && !user?.profile?.admin) {
             throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is checked out by ${checkedOutBy}.`, 403);
         }
 
@@ -3153,7 +3146,7 @@ export async function unshareLorebook(user, name, targetOwnerHandle) {
         const sharedSlug = canonicalName.startsWith('Y-') ? canonicalName.slice(2) : canonicalName;
         const targetName = `Z-${normalizedTargetOwnerHandle}-${sharedSlug}`;
 
-        if (!Boolean(user?.profile?.admin)) {
+        if (!user?.profile?.admin) {
             throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is not movable.`, 403);
         }
 

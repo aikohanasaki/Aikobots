@@ -8,6 +8,7 @@ import { write } from '../src/character-card-parser.js';
 import { getCharacterDistributionPolicy, setCharacterDistributionPolicy } from '../src/character-distribution-registry.js';
 import { FAVORITES_FILE } from '../src/favorites-repository.js';
 import { setConfigFilePath } from '../src/util.js';
+import { DEFAULT_USER } from '../src/constants.js';
 
 const BASE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 const CONFIG_PATH = fs.existsSync(path.resolve(process.cwd(), 'config.yaml'))
@@ -48,13 +49,15 @@ describe('character submission distribution rollback', () => {
     let previousDataRoot;
     let previousDefaultContentRoot;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         previousDataRoot = globalThis.DATA_ROOT;
         previousDefaultContentRoot = globalThis.DEFAULT_CONTENT_ROOT;
         dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aikobots-submissions-'));
         defaultContentRoot = path.join(dataRoot, 'default');
         globalThis.DATA_ROOT = dataRoot;
         globalThis.DEFAULT_CONTENT_ROOT = defaultContentRoot;
+        const { initUserStorage } = await import('../src/users.js');
+        await initUserStorage(dataRoot);
     });
 
     afterEach(() => {
@@ -66,7 +69,7 @@ describe('character submission distribution rollback', () => {
     });
 
     it('rolls back library copies, favorite migration, and policy when global publishing fails', async () => {
-        const actingUserHandle = 'rollback-user';
+        const actingUserHandle = DEFAULT_USER.handle;
         const sourcePath = path.join(dataRoot, 'uploads', 'Bot.png');
         const destinationPath = path.join(dataRoot, actingUserHandle, 'characters', 'Bot.png');
         const favoritesPath = path.join(dataRoot, actingUserHandle, FAVORITES_FILE);
@@ -111,7 +114,7 @@ describe('character submission distribution rollback', () => {
     });
 
     it('rolls back distributed character files when setup publication fails', async () => {
-        const actingUserHandle = 'rollback-user';
+        const actingUserHandle = DEFAULT_USER.handle;
         const sourcePath = path.join(dataRoot, 'uploads', 'Bot.png');
         const destinationPath = path.join(dataRoot, actingUserHandle, 'characters', 'Bot.png');
         writeCard(sourcePath, buildCard({ name: 'New Bot' }));

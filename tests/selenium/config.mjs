@@ -33,18 +33,26 @@ function parseNumber(value, fallback) {
 }
 
 export function loadConfig() {
-    const baseUrl = String(process.env.ST_BASE_URL || 'http://127.0.0.1:8000').trim();
+    const baseUrl = String(process.env.ST_BASE_URL || '').trim();
     const connectionProfileName = String(process.env.TEST_HARNESS_ST_CONNECTION_PROFILE_NAME || '').trim();
+    const chromeBinaryPath = String(process.env.TEST_HARNESS_CHROME_BINARY_PATH || '').trim();
+    const chromedriverPath = String(process.env.TEST_HARNESS_CHROMEDRIVER_PATH || '').trim();
 
-    if (!connectionProfileName) {
-        throw new Error('TEST_HARNESS_ST_CONNECTION_PROFILE_NAME is required and must be non-empty.');
+    const missing = [
+        !baseUrl && 'ST_BASE_URL',
+        !connectionProfileName && 'TEST_HARNESS_ST_CONNECTION_PROFILE_NAME',
+        !chromeBinaryPath && 'TEST_HARNESS_CHROME_BINARY_PATH',
+        !chromedriverPath && 'TEST_HARNESS_CHROMEDRIVER_PATH',
+    ].filter(Boolean);
+    if (missing.length) {
+        throw new Error(`Selenium is not configured. Set: ${missing.join(', ')}.`);
     }
 
     return {
         baseUrl,
         connectionProfileName,
-        chromeBinaryPath: String(process.env.TEST_HARNESS_CHROME_BINARY_PATH || '').trim() || null,
-        chromedriverPath: String(process.env.TEST_HARNESS_CHROMEDRIVER_PATH || '').trim() || null,
+        chromeBinaryPath,
+        chromedriverPath,
         headless: parseBoolean(process.env.ST_HEADLESS, true),
         timeouts: {
             stepMs: parseNumber(process.env.ST_STEP_TIMEOUT_MS, 20_000),

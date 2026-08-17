@@ -1437,7 +1437,7 @@ function setReasoningEventHandlers() {
         e.stopPropagation();
         e.preventDefault();
 
-        const { messageId, messageBlock } = getMessageFromJquery(this);
+        const { messageBlock } = getMessageFromJquery(this);
         const textarea = messageBlock.find('.reasoning_edit_textarea');
         textarea.remove();
         const hasMessageEditor = messageBlock.find('#curEditTextarea').length > 0;

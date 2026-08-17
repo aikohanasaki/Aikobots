@@ -3,6 +3,13 @@ import { beforeAll, describe, expect, it, jest } from '@jest/globals';
 jest.unstable_mockModule('../../public/script.js', () => ({
     getRequestHeaders: () => ({ 'Content-Type': 'application/json' }),
 }));
+jest.unstable_mockModule('../../public/scripts/utils.js', () => ({
+    getStringHash: text => String(text || '').length,
+}));
+jest.unstable_mockModule('../../public/scripts/i18n.js', () => ({
+    getCurrentLocale: () => 'en',
+    translate: value => value,
+}));
 
 let duplicateArcPromptPresetFile;
 let isRegenerationOnlyPreset;

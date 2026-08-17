@@ -63,6 +63,7 @@ describe('customs repository', () => {
                     'avatar.png': {
                         version: 1,
                         connectionProfileId: 'profile-id',
+                        modelId: '',
                         presetName: 'Preset A',
                         overrides: {
                             temp_openai: 0.8,
@@ -75,6 +76,7 @@ describe('customs repository', () => {
                     group1: {
                         version: 1,
                         connectionProfileId: '',
+                        modelId: '',
                         presetName: '',
                         overrides: {
                             top_k_openai: 40,

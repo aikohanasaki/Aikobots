@@ -7,7 +7,7 @@ import sanitize from 'sanitize-filename';
 import writeFileAtomic from 'write-file-atomic';
 
 import { parse, write } from './character-card-parser.js';
-import { getCharacterOwnerHandle, getCharacterOwnerHandles, getCharacterSharedKey, getCharacterSharingMode } from './character-linked-lorebooks.js';
+import { getCharacterOwnerHandle, getCharacterOwnerHandles, getCharacterSharedKey } from './character-linked-lorebooks.js';
 import { getUserDirectories } from './users.js';
 
 const SHARED_CHARACTER_DIRECTORY = ['_secure', 'shared-characters'];
@@ -354,14 +354,6 @@ async function writeSharedCharacterIndex(index) {
     await writeFileAtomic(getSharedCharacterIndexPath(), JSON.stringify(index, null, 4));
 }
 
-async function mutateSharedCharacterIndex(mutate) {
-    return runWithSharedCharacterLock(async () => {
-        const index = await readSharedCharacterIndex();
-        const result = await mutate(index);
-        await writeSharedCharacterIndex(index);
-        return result;
-    });
-}
 
 async function withSharedCharacterTransaction(transaction, { onRollback = null, rollbackMessage = 'Failed to restore shared character state.' } = {}) {
     return runWithSharedCharacterLock(async () => {
@@ -405,7 +397,7 @@ export function canManageSharedCharacter(user, record) {
         return false;
     }
 
-    if (Boolean(user?.profile?.admin)) {
+    if (user?.profile?.admin) {
         return true;
     }
 
@@ -475,7 +467,7 @@ function assertSharedCharacterCheckedOutForEdit(user, record) {
         return;
     }
 
-    if (Boolean(user?.profile?.admin)) {
+    if (user?.profile?.admin) {
         return;
     }
 
@@ -535,48 +527,10 @@ export function setCharacterSharingMetadata(characterCard, { ownerHandles, shari
     }
 }
 
-async function updateCanonicalCharacterMetadata(name, ownerHandles) {
-    const canonicalPath = getSharedCharacterPath(name);
-    const { rawBuffer, card } = await readCharacterCardFile(canonicalPath);
-    setCharacterSharingMetadata(card, { ownerHandles, sharingMode: 'shared', sharedCharacterKey: name });
-    await writeCharacterCardFile(rawBuffer, card, canonicalPath);
-}
 
-async function backfillCanonicalSharedCharacterMetadata(record) {
-    if (!record?.name) {
-        return;
-    }
-
-    try {
-        const canonicalPath = getSharedCharacterPath(record.name);
-        const { rawBuffer, card } = await readCharacterCardFile(canonicalPath);
-        const nextSharedKey = normalizeCharacterName(record.sharedCharacterKey || record.name);
-        const currentOwnerHandles = normalizeOwnerHandles(getCharacterOwnerHandles(card));
-        const currentSharingMode = getCharacterSharingMode(card);
-        const currentSharedKey = getCharacterSharedKey(card);
-        const needsBackfill =
-            currentSharingMode !== 'shared'
-            || currentSharedKey !== nextSharedKey
-            || currentOwnerHandles.length !== record.ownerHandles.length
-            || currentOwnerHandles.some(handle => !record.ownerHandles.includes(handle));
-
-        if (!needsBackfill) {
-            return;
-        }
-
-        setCharacterSharingMetadata(card, {
-            ownerHandles: record.ownerHandles,
-            sharingMode: 'shared',
-            sharedCharacterKey: nextSharedKey,
-        });
-        await writeCharacterCardFile(rawBuffer, card, canonicalPath);
-    } catch (error) {
-        console.warn(`[Characters] Failed to backfill shared metadata for "${record.name}".`, error);
-    }
-}
 
 function canPromoteCharacter(user, characterCard) {
-    if (Boolean(user?.profile?.admin)) {
+    if (user?.profile?.admin) {
         return true;
     }
 
@@ -854,7 +808,7 @@ export async function checkoutSharedCharacter(user, name, force = false) {
             throw new CharacterSharingRepositoryError('CharacterCheckedOut', `Character "${canonicalName}" is checked out by ${checkedOutBy}.`, 423);
         }
 
-        if (checkedOutBy && checkedOutBy !== currentHandle && force && !Boolean(user?.profile?.admin)) {
+        if (checkedOutBy && checkedOutBy !== currentHandle && force && !user?.profile?.admin) {
             throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is checked out by ${checkedOutBy}.`, 403);
         }
 
@@ -887,7 +841,7 @@ export async function checkinSharedCharacter(user, name, force = false) {
             throw new CharacterSharingRepositoryError('CharacterCheckedOut', `Character "${canonicalName}" is checked out by ${checkedOutBy}.`, 423);
         }
 
-        if (checkedOutBy && checkedOutBy !== currentHandle && force && !Boolean(user?.profile?.admin)) {
+        if (checkedOutBy && checkedOutBy !== currentHandle && force && !user?.profile?.admin) {
             throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is checked out by ${checkedOutBy}.`, 403);
         }
 
@@ -915,7 +869,7 @@ export async function deleteSharedCharacter(user, name) {
             throw new CharacterSharingRepositoryError('CharacterNotFound', `Character "${canonicalName}" not found.`, 404);
         }
 
-        if (!Boolean(user?.profile?.admin)) {
+        if (!user?.profile?.admin) {
             throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is not deletable.`, 403);
         }
 

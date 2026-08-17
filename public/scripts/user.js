@@ -645,10 +645,10 @@ function buildSubmissionCard(submission, { admin = false, onReview = null } = {}
         : String(submission.creatorNotes || '').trim();
     card.find('.submission_notes')
         .toggle(Boolean(submission.reviewNote || primaryNote))
-        .append(Boolean(primaryNote)
+        .append(primaryNote
             ? $('<div class="submission_review_note"></div>').text(admin ? `Inbox reason: ${primaryNote}` : primaryNote)
             : '')
-        .append(Boolean(submission.reviewNote) ? $('<div class="submission_review_note opacity50p"></div>').text(t`Admin note: ${submission.reviewNote}`) : '');
+        .append(submission.reviewNote ? $('<div class="submission_review_note opacity50p"></div>').text(t`Admin note: ${submission.reviewNote}`) : '');
     card.find('.submission_tags').toggle(Array.isArray(submission.tags) && submission.tags.length > 0).text(Array.isArray(submission.tags) ? submission.tags.join(', ') : '');
 
     if (admin && typeof onReview === 'function') {

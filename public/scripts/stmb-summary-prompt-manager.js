@@ -238,48 +238,44 @@ async function loadDoc(settings = null) {
 
     let data = null;
     let shouldSave = false;
-    try {
-        const response = await fetch(`/user/files/${SUMMARY_PROMPTS_FILE}`, {
-            method: 'GET',
-            credentials: 'include',
-            headers: getRequestHeaders(),
-        });
+    const response = await fetch(`/user/files/${SUMMARY_PROMPTS_FILE}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: getRequestHeaders(),
+    });
 
-        if (response.status === 404) {
-            data = buildNormalizedPromptsDoc(null, settings);
+    if (response.status === 404) {
+        data = buildNormalizedPromptsDoc(null, settings);
+        shouldSave = true;
+    } else if (!response.ok) {
+        throw new Error(`Failed to load prompts: ${response.status} ${response.statusText}`);
+    } else {
+        const text = await response.text();
+        let parsed = null;
+        try {
+            parsed = JSON.parse(text);
+        } catch (error) {
+            console.warn(`Invalid JSON in ${SUMMARY_PROMPTS_FILE}; recreating built-in summary prompts.`, error);
+        }
+        if (!validatePromptsFile(parsed)) {
+            console.warn(`Invalid ${SUMMARY_PROMPTS_FILE} structure; recreating built-in summary prompts.`);
+            data = buildNormalizedPromptsDoc(parsed, settings);
             shouldSave = true;
-        } else if (!response.ok) {
-            throw new Error(`Failed to load prompts: ${response.status} ${response.statusText}`);
         } else {
-            const text = await response.text();
-            let parsed = null;
-            try {
-                parsed = JSON.parse(text);
-            } catch (error) {
-                console.warn(`Invalid JSON in ${SUMMARY_PROMPTS_FILE}; recreating built-in summary prompts.`, error);
-            }
-            if (!validatePromptsFile(parsed)) {
-                console.warn(`Invalid ${SUMMARY_PROMPTS_FILE} structure; recreating built-in summary prompts.`);
-                data = buildNormalizedPromptsDoc(parsed, settings);
+            data = parsed;
+            if (migrateStmbPromptDefaults(
+                data,
+                SUMMARY_PROMPTS_VERSION,
+                LEGACY_SUMMARY_PROMPT_SIGNATURES,
+                getBuiltInSummaryPrompts(),
+            )) {
                 shouldSave = true;
-            } else {
-                data = parsed;
-                if (migrateStmbPromptDefaults(
-                    data,
-                    SUMMARY_PROMPTS_VERSION,
-                    LEGACY_SUMMARY_PROMPT_SIGNATURES,
-                    getBuiltInSummaryPrompts(),
-                )) {
-                    shouldSave = true;
-                }
-                if (isMissingBuiltInPromptOverride(data)) {
-                    data = buildNormalizedPromptsDoc(data, settings);
-                    shouldSave = true;
-                }
+            }
+            if (isMissingBuiltInPromptOverride(data)) {
+                data = buildNormalizedPromptsDoc(data, settings);
+                shouldSave = true;
             }
         }
-    } catch (error) {
-        throw error;
     }
 
     const localizedPrompts = getBuiltInSummaryPrompts();

@@ -2,6 +2,7 @@
 .github
 .vscode
 node_modules
+.npm-cache
 npm-debug.log
 readme*
 Start.bat

@@ -1,5 +1,4 @@
 import { t, translate } from './i18n.js';
-'use strict';
 
 import {
     characterGroupOverlay,
