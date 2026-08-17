@@ -6189,6 +6189,8 @@
   ,"STMemoryBooks_TopicalClip_SourceTypes": "Quellen"
   ,"STMemoryBooks_TopicalClip_IncludeMemories": "Gespeicherte Erinnerungen einbeziehen"
   ,"STMemoryBooks_TopicalClip_IncludeMessages": "Chatnachrichten einbeziehen"
+  ,"STMemoryBooks_TopicalClip_GenerateAutoAccept": "Generieren und automatisch übernehmen"
+  ,"STMemoryBooks_TopicalClip_AutoAcceptStarted": "Die Themen-Clip-Generierung wurde gestartet. Der Clip wird automatisch gespeichert."
   ,"STMemoryBooks_TopicalClip_MessageStart": "ID der Startnachricht"
   ,"STMemoryBooks_TopicalClip_MessageEnd": "ID der Endnachricht"
   ,"STMemoryBooks_TopicalClip_NoSourceTypes": "Wähle gespeicherte Erinnerungen, Chatnachrichten oder beides aus."

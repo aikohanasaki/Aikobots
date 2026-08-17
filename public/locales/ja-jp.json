@@ -6192,6 +6192,8 @@
   ,"STMemoryBooks_TopicalClip_SourceTypes": "ソース"
   ,"STMemoryBooks_TopicalClip_IncludeMemories": "保存済みメモリを含める"
   ,"STMemoryBooks_TopicalClip_IncludeMessages": "チャットメッセージを含める"
+  ,"STMemoryBooks_TopicalClip_GenerateAutoAccept": "生成して自動承認"
+  ,"STMemoryBooks_TopicalClip_AutoAcceptStarted": "話題のクリップの生成を開始しました。自動的に保存されます。"
   ,"STMemoryBooks_TopicalClip_MessageStart": "開始メッセージID"
   ,"STMemoryBooks_TopicalClip_MessageEnd": "終了メッセージID"
   ,"STMemoryBooks_TopicalClip_NoSourceTypes": "保存済みメモリ、チャットメッセージ、または両方を選択してください。"

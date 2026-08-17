@@ -15,6 +15,7 @@ import {
     parseClipSuggestionsResponse,
     rebuildOrdinaryClipAdditions,
     renderClipReviewReport,
+    resolveTopicalClipSaveResult,
     shouldPreserveClipReviewReport,
 } from '../public/scripts/stmb-clip-review-policy.js';
 
@@ -51,9 +52,17 @@ test('normalizes and filters Topical Clip suggestions', () => {
         { topic: ' Alice ', keywords: ['Alice'] },
         { topic: 'New Alliance', keywords: ['Alliance', ' alliance ', 'Treaty'] },
         { topic: 'new alliance', keywords: ['duplicate'] },
-    ] }), [{ type: 'topical', title: 'About Alice [STMB Clip]', topic: 'Alice' }]);
+    ] }), [{ type: 'topical', title: 'About Alice [STMB Clip]', topic: 'Alice' }], { sceneStart: 12, sceneEnd: 24 });
     assert.deepEqual(result.map(item => item.topic), ['New Alliance']);
     assert.deepEqual(result[0].keywords, ['Alliance', 'Treaty']);
+    assert.equal(result[0].sceneStart, 12);
+    assert.equal(result[0].sceneEnd, 24);
+});
+
+test('omits an invalid message range from Topical Clip suggestions', () => {
+    const [suggestion] = parseClipSuggestionsResponse('{"topics":[{"topic":"New Alliance","keywords":[]}]}', [], { sceneStart: 24, sceneEnd: 12 });
+    assert.equal(Object.hasOwn(suggestion, 'sceneStart'), false);
+    assert.equal(Object.hasOwn(suggestion, 'sceneEnd'), false);
 });
 
 test('packs records without dropping an oversized record', () => {
@@ -139,6 +148,21 @@ test('preserves source IDs when rebuilding edited ordinary additions', () => {
         { messageId: 17, text: 'first' },
         { messageId: 17, text: 'second' },
     ]);
+});
+
+test('waits for a Topical Clip background auto-accept after the popup closes', async () => {
+    let finishAutoAccept;
+    const autoAcceptTask = new Promise(resolve => { finishAutoAccept = resolve; });
+    let settled = false;
+    const result = resolveTopicalClipSaveResult(false, autoAcceptTask).then(value => {
+        settled = true;
+        return value;
+    });
+    await Promise.resolve();
+    assert.equal(settled, false);
+    finishAutoAccept(true);
+    assert.equal(await result, true);
+    assert.equal(await resolveTopicalClipSaveResult(false, Promise.resolve(false)), false);
 });
 
 test('renders unattributed ordinary additions without placeholder IDs', () => {

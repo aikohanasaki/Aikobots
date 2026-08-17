@@ -6249,6 +6249,8 @@
   ,"STMemoryBooks_TopicalClip_SourceTypes": "Sources"
   ,"STMemoryBooks_TopicalClip_IncludeMemories": "Inclure les Mémoires enregistrées"
   ,"STMemoryBooks_TopicalClip_IncludeMessages": "Inclure les messages du chat"
+  ,"STMemoryBooks_TopicalClip_GenerateAutoAccept": "Générer et accepter automatiquement"
+  ,"STMemoryBooks_TopicalClip_AutoAcceptStarted": "La génération du Clip thématique a démarré. Il sera enregistré automatiquement."
   ,"STMemoryBooks_TopicalClip_MessageStart": "ID du message de début"
   ,"STMemoryBooks_TopicalClip_MessageEnd": "ID du message de fin"
   ,"STMemoryBooks_TopicalClip_NoSourceTypes": "Sélectionnez les Mémoires enregistrées, les messages du chat ou les deux."

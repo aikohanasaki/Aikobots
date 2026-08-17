@@ -254,7 +254,11 @@ async function executeMemoryAssistanceJob(job, context) {
             const finalPrompt = buildTopicPrompt(topicPrompt, compiledScene, records);
             const allowed = await allowOversizedBatch(context, Math.ceil(finalPrompt.length / 4) + 400, threshold);
             if (allowed) {
-                topicSuggestions = parseClipSuggestionsResponse(await requestText(finalPrompt, profile, context.signal), records);
+                topicSuggestions = parseClipSuggestionsResponse(
+                    await requestText(finalPrompt, profile, context.signal),
+                    records,
+                    compiledScene.metadata,
+                );
                 suggestionPassSucceeded = true;
                 suggestionPassCompleted = true;
             } else {
@@ -496,7 +500,13 @@ export async function showClipReviewSuggestionsPopup(options = {}) {
                     const topic = String(topicRow.querySelector('.stmb-clip-topic-name')?.value || '').replace(/\s+/g, ' ').trim();
                     const keywords = String(topicRow.querySelector('.stmb-clip-topic-keywords')?.value || '').split(/[\n,]+/).map(value => value.trim()).filter(Boolean);
                     if (!topic) return;
-                    const saved = await showTopicalClipPopup({ lorebookName, topic, keywords: keywords.length ? keywords : [topic] });
+                    const saved = await showTopicalClipPopup({
+                        lorebookName,
+                        topic,
+                        keywords: keywords.length ? keywords : [topic],
+                        sceneStart: suggestion.sceneStart ?? metadata.sceneStart,
+                        sceneEnd: suggestion.sceneEnd ?? metadata.sceneEnd,
+                    });
                     if (!saved) return;
                 } else if (!event.target.closest('.stmb-clip-topic-dismiss')) return;
                 metadata.topicSuggestions = metadata.topicSuggestions.filter(item => item.id !== suggestion.id);

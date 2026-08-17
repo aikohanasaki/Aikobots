@@ -12,6 +12,7 @@ import {
     CLIP_REVIEW_REQUIRES_REVIEW,
     isLongClipEntryContent,
     matchesClipReviewTargetIdentity,
+    resolveTopicalClipSaveResult,
 } from './stmb-clip-review-policy.js';
 import { isSidePromptEntryTitle } from './stmb-sideprompts.js';
 import { escapeHtml, withGoBackButton } from './utils.js';
@@ -2066,6 +2067,7 @@ function buildTopicalClipPopupHtml(defaultLorebookName) {
             <div id="stmb-topical-clip-diagnostics" class="info_block info-block"></div>
             <div class="buttons_block justifyCenter gap10px whitespacenowrap">
                 <button id="stmb-topical-clip-generate" type="button" class="menu_button whitespacenowrap">${escapeHtml(tr('Generate Draft'))}</button>
+                <button id="stmb-topical-clip-generate-auto-accept" type="button" class="menu_button whitespacenowrap">${escapeHtml(tr('Generate and Auto-Accept', 'STMemoryBooks_TopicalClip_GenerateAutoAccept'))}</button>
             </div>
             <label class="world_entry_form_control">
                 <h4>${escapeHtml(tr('Generated draft'))}</h4>
@@ -2135,9 +2137,12 @@ export async function showTopicalClipPopup(options = {}) {
     const draftTextarea = dlg?.querySelector('#stmb-topical-clip-draft');
     const saveButton = dlg?.querySelector('#stmb-topical-clip-save');
     const generateButton = dlg?.querySelector('#stmb-topical-clip-generate');
+    const generateAutoAcceptButton = dlg?.querySelector('#stmb-topical-clip-generate-auto-accept');
 
     if (topicInput && options.topic) topicInput.value = String(options.topic);
     if (keywordsInput && Array.isArray(options.keywords)) keywordsInput.value = options.keywords.join(', ');
+    if (messageStartInput && Number.isInteger(options.sceneStart)) messageStartInput.value = String(options.sceneStart);
+    if (messageEndInput && Number.isInteger(options.sceneEnd)) messageEndInput.value = String(options.sceneEnd);
 
     const getMode = () => modeSelect?.value || 'create';
     const getSelectedLorebookName = () => {
@@ -2304,7 +2309,7 @@ export async function showTopicalClipPopup(options = {}) {
         clearDraft();
         renderDiagnostics(tr('Source memory selection updated.'));
     });
-    generateButton?.addEventListener('click', async () => {
+    const generateTopicalClipDraft = async (autoAccept = false) => {
         const selectedLorebookName = getSelectedLorebookName();
         if (selectedLorebookName && (selectedLorebookName !== currentLorebookName || !currentLorebookData?.entries)) {
             await loadSelectedLorebook(selectedLorebookName);
@@ -2435,12 +2440,17 @@ export async function showTopicalClipPopup(options = {}) {
             if (!allowed) return;
         }
 
-        generateButton.disabled = true;
-        generateButton.textContent = tr('Generating');
         if (saveButton) saveButton.disabled = true;
         try {
             const profileIndex = getCompactionProfileIndexFromSelect(popup, 'stmb-topical-clip-profile-select');
             setCompactionProfileIndex(profileIndex);
+            if (autoAccept) {
+                toastr.info(tr(
+                    'Topical Clip generation started. It will be saved automatically.',
+                    'STMemoryBooks_TopicalClip_AutoAcceptStarted',
+                ), 'STMB');
+                void popup.completeCancelled();
+            }
             const draft = await requestTopicalClipDraft(prompt, profileIndex);
             const draftHeadline = mode === 'update'
                 ? getClipHeadlineFromTitle(target.comment || makeTopicalClipHeadline(topic))
@@ -2463,17 +2473,54 @@ export async function showTopicalClipPopup(options = {}) {
                 messageSource,
             };
             if (draftTextarea) draftTextarea.value = normalizedDraft;
+            if (autoAccept) {
+                try {
+                    const result = await saveTopicalClipDraft(generationContext, normalizedDraft);
+                    const message = result?.mode === 'update'
+                        ? tr('Topical Clip entry updated.')
+                        : tr('Topical Clip saved to Memory Book.');
+                    toastr.success(message, 'STMB');
+                    return true;
+                } catch (error) {
+                    console.error(`${MODULE_NAME}: Failed to auto-save Topical Clip:`, error);
+                    toastr.error(error?.message || tr('Failed to save Topical Clip.'), 'STMB');
+                    return false;
+                }
+            }
             if (saveButton) saveButton.disabled = false;
             renderDiagnostics(tr('Draft generated. Review and edit before saving.'));
         } catch (error) {
             generationContext = null;
             console.error(`${MODULE_NAME}: Topical Clip generation failed:`, error);
             toastr.error(error?.message || tr('Topical Clip generation failed.'), 'STMB');
-        } finally {
-            generateButton.disabled = false;
-            generateButton.textContent = tr('Generate Draft');
         }
-    });
+        return false;
+    };
+    let activeGenerationTask = null;
+    let autoAcceptTask = null;
+    const startGeneration = autoAccept => {
+        if (activeGenerationTask) return activeGenerationTask;
+        if (generateButton) {
+            generateButton.disabled = true;
+            generateButton.textContent = tr('Generating');
+        }
+        if (generateAutoAcceptButton) generateAutoAcceptButton.disabled = true;
+        const task = Promise.resolve()
+            .then(() => generateTopicalClipDraft(autoAccept))
+            .finally(() => {
+                if (generateButton) {
+                    generateButton.disabled = false;
+                    generateButton.textContent = tr('Generate Draft');
+                }
+                if (generateAutoAcceptButton) generateAutoAcceptButton.disabled = false;
+                if (activeGenerationTask === task) activeGenerationTask = null;
+            });
+        activeGenerationTask = task;
+        if (autoAccept) autoAcceptTask = task;
+        return task;
+    };
+    generateButton?.addEventListener('click', () => { void startGeneration(false); });
+    generateAutoAcceptButton?.addEventListener('click', () => { void startGeneration(true); });
     saveButton?.addEventListener('click', async () => {
         const draft = String(draftTextarea?.value || '').trim();
         if (!generationContext) return;
@@ -2528,7 +2575,8 @@ export async function showTopicalClipPopup(options = {}) {
     }
     renderMode();
     await loadSelectedLorebook(getSelectedLorebookName() || defaultLorebookName);
-    return (await showPromise) === POPUP_RESULT.AFFIRMATIVE;
+    const manuallySaved = (await showPromise) === POPUP_RESULT.AFFIRMATIVE;
+    return resolveTopicalClipSaveResult(manuallySaved, autoAcceptTask);
 }
 
 export async function showStmbEntryReviewPopup(options = {}) {

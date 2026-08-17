@@ -167,7 +167,7 @@ function normalizeForComparison(value) {
     return normalizeForMatch(value).toLocaleLowerCase();
 }
 
-export function parseClipSuggestionsResponse(text, existingTopicalRecords = []) {
+export function parseClipSuggestionsResponse(text, existingTopicalRecords = [], sourceRange = null) {
     const parsed = JSON.parse(stripJsonFence(text));
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
         || Object.keys(parsed).length !== 1 || !Array.isArray(parsed.topics)) {
@@ -180,6 +180,9 @@ export function parseClipSuggestionsResponse(text, existingTopicalRecords = []) 
         .filter(Boolean));
     const acceptedTopics = new Set();
     const suggestions = [];
+    const sceneStart = Number(sourceRange?.sceneStart);
+    const sceneEnd = Number(sourceRange?.sceneEnd);
+    const hasSourceRange = Number.isInteger(sceneStart) && Number.isInteger(sceneEnd) && sceneStart >= 0 && sceneStart <= sceneEnd;
     for (const item of parsed.topics.slice(0, 5)) {
         if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
         const topic = normalizeForMatch(item.topic);
@@ -200,6 +203,7 @@ export function parseClipSuggestionsResponse(text, existingTopicalRecords = []) 
             id: `topic-${stableHashString(`${comparableTopic}\u0000${keywords.map(normalizeForComparison).join('\u0000')}`)}`,
             topic,
             keywords,
+            ...(hasSourceRange ? { sceneStart, sceneEnd } : {}),
         });
     }
     return suggestions;
@@ -271,6 +275,12 @@ export function rebuildOrdinaryClipAdditions(candidate, editedText) {
             text: text.trim(),
         };
     }).filter(item => item.text);
+}
+
+/** Waits for an optional background Topical Clip save before resolving the popup result. */
+export async function resolveTopicalClipSaveResult(manuallySaved, autoAcceptTask = null) {
+    const autoAccepted = autoAcceptTask ? await autoAcceptTask : false;
+    return Boolean(autoAccepted || manuallySaved);
 }
 
 /** Applies ordinary Clip candidates sequentially while preserving failures for review. */

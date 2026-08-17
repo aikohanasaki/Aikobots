@@ -4991,6 +4991,8 @@
     "STMemoryBooks_EstimatedTokens": "Примерное количество токенов",
     "STMemoryBooks_Compaction_TypeClip": "Фрагмент",
     "STMemoryBooks_TopicalClip_Title": "Тематический фрагмент",
+    "STMemoryBooks_TopicalClip_GenerateAutoAccept": "Сгенерировать и принять автоматически",
+    "STMemoryBooks_TopicalClip_AutoAcceptStarted": "Создание тематического фрагмента началось. Он будет сохранён автоматически.",
     "STMemoryBooks_ClipReview_SelectDescription": "«{{lorebookName}}» содержит больше пяти клипов. Выберите отдельные записи или запросите все.",
     "STMemoryBooks_TopicalClip_RunOnceAnyway": "Все равно запустить один раз",
     "STMemoryBooks_ClipReview_TokenWarningTitle": "Предупреждение о маркере помощи в памяти",
