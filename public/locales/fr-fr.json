@@ -6351,4 +6351,8 @@
   ,"Memory": "Mémoire"
   ,"Consolidation": "Consolidation"
   ,"Memory Assistance": "Aide à la mémoire"
+  ,"Finish or cancel the current edit before leaving this chat.": "Terminez ou annulez la modification en cours avant de quitter cette discussion."
+  ,"Finish or cancel the current edit before changing the displayed message window.": "Terminez ou annulez la modification en cours avant de changer la fenêtre de messages affichée."
+  ,"The message edit could not be applied safely. Your draft is still open; retry it, or copy it before canceling and reopening the edit.": "La modification du message n’a pas pu être appliquée en toute sécurité. Votre brouillon est toujours ouvert ; réessayez ou copiez-le avant d’annuler et de rouvrir la modification."
+  ,"The message edit could not be saved. Your draft was reopened; retry it, or copy it before canceling to reload the saved message.": "La modification du message n’a pas pu être enregistrée. Votre brouillon a été rouvert ; réessayez ou copiez-le avant d’annuler pour recharger le message enregistré."
 }

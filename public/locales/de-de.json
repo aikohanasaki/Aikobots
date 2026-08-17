@@ -6291,4 +6291,8 @@
   ,"Memory": "Erinnerung"
   ,"Consolidation": "Konsolidierung"
   ,"Memory Assistance": "Memory Assistance"
+  ,"Finish or cancel the current edit before leaving this chat.": "Beenden oder brechen Sie die aktuelle Bearbeitung ab, bevor Sie diesen Chat verlassen."
+  ,"Finish or cancel the current edit before changing the displayed message window.": "Beenden oder brechen Sie die aktuelle Bearbeitung ab, bevor Sie das angezeigte Nachrichtenfenster ändern."
+  ,"The message edit could not be applied safely. Your draft is still open; retry it, or copy it before canceling and reopening the edit.": "Die Nachrichtenbearbeitung konnte nicht sicher angewendet werden. Ihr Entwurf ist weiterhin geöffnet; versuchen Sie es erneut oder kopieren Sie ihn, bevor Sie die Bearbeitung abbrechen und erneut öffnen."
+  ,"The message edit could not be saved. Your draft was reopened; retry it, or copy it before canceling to reload the saved message.": "Die Nachrichtenbearbeitung konnte nicht gespeichert werden. Ihr Entwurf wurde erneut geöffnet; versuchen Sie es erneut oder kopieren Sie ihn, bevor Sie abbrechen, um die gespeicherte Nachricht neu zu laden."
 }

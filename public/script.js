@@ -2994,7 +2994,6 @@ let activeMessageEditSession = null;
 let messageEditSaveInFlight = false;
 let deferredAuthoritativeReloadChatIdentity = null;
 const MESSAGE_EDIT_STALE_WARNING = 'This message changed while it was being edited. Cancel and reopen the edit before saving.';
-const MESSAGE_EDIT_SAVE_FAILED_WARNING = 'The message edit could not be saved. Your draft was reopened; retry it, or copy it before canceling to reload the saved message.';
 
 function normalizeActiveChatIdentities({ repairDuplicates = true, regenerateAll = false } = {}) {
     return normalizeChatIdentities(chat, {
@@ -3072,6 +3071,39 @@ function createMessageEditSession(messageId, fieldType = null) {
 
 export function hasActiveMessageEditSession() {
     return activeMessageEditSession !== null || this_edit_mes_id >= 0 || messageEditSaveInFlight;
+}
+
+/** Reports whether the current chat still owns a user-visible message or reasoning draft. */
+function hasVisibleMessageEditDraft() {
+    if (!activeMessageEditSession || !isSameChatIdentity(activeMessageEditSession.chatIdentity, getActiveChatIdentity())) {
+        return false;
+    }
+
+    return chatElement.find('.edit_textarea, .reasoning_edit_textarea').length > 0;
+}
+
+/**
+ * Blocks leaving the current chat while its message editor contains an unsaved draft.
+ * @returns {boolean} Whether navigation must stop.
+ */
+export function blockMessageEditNavigation() {
+    if (!hasVisibleMessageEditDraft()) {
+        return false;
+    }
+
+    toastr.warning(t`Finish or cancel the current edit before leaving this chat.`);
+    return true;
+}
+
+/** Releases detached edit flags so they cannot suppress an otherwise valid chat render. */
+function clearDetachedMessageEditState() {
+    if (hasVisibleMessageEditDraft() || (activeMessageEditSession === null && !(this_edit_mes_id >= 0))) {
+        return;
+    }
+
+    clearActiveMessageEditSession();
+    this_edit_mes_id = undefined;
+    showSwipeButtons();
 }
 
 export function clearActiveMessageEditSession() {
@@ -4186,6 +4218,10 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
     if (selected_group || String(this_chid) !== String(id)) {
         //if clicked on a different character from what was currently selected
         if (!is_send_press) {
+            if (blockMessageEditNavigation()) {
+                return;
+            }
+
             if (!await confirmCharacterEditorNavigation()) {
                 return;
             }
@@ -6212,9 +6248,12 @@ function finalizeRenderedMessageWindow() {
 }
 
 export async function renderMessageWindow(startId = 0, count = null, navigationToken = null) {
-    if (blockIfEditing('changing the displayed message window')) {
+    if (hasVisibleMessageEditDraft()) {
+        toastr.warning(t`Finish or cancel the current edit before changing the displayed message window.`);
         return false;
     }
+
+    clearDetachedMessageEditState();
 
     return serializeHistoryWindowNavigation(async (activeNavigationToken) => {
         closeMessageEditor();
@@ -6463,10 +6502,15 @@ export async function printMessages() {
     const count = getInitialChatRenderCount();
     const startIndex = Math.max(0, chat.length - count);
 
-    await renderMessageWindow(startIndex, count);
+    const rendered = await renderMessageWindow(startIndex, count);
+    if (rendered === false) {
+        return false;
+    }
+
     showSwipeButtons();
     scrollChatToBottom({ waitForFrame: true });
     delay(debounce_timeout.short).then(() => scrollOnMediaLoad());
+    return true;
 }
 
 function scrollOnMediaLoad() {
@@ -6734,7 +6778,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
  * @returns {boolean} Whether the reload was deferred.
  */
 function deferChatReloadForMessageEdit(discardMessageEdit = false) {
-    if (discardMessageEdit || !hasActiveMessageEditSession()) {
+    if (discardMessageEdit || !hasVisibleMessageEditDraft()) {
         return false;
     }
 
@@ -13439,7 +13483,11 @@ export async function getChat() {
         }
         await ensureDeferredLoaderShown({ force: getTotalChatMessages() >= LONG_CHAT_DISPLAY_MIN });
         await waitForLoaderPaint();
-        await getChatResult();
+        const rendered = await getChatResult();
+        if (rendered === false) {
+            return false;
+        }
+
         eventSource.emit('chatLoaded', { detail: { id: this_chid, character: characters[this_chid] } });
         void prefetchCurrentChatTailBuffer(getCurrentChatId());
 
@@ -13450,6 +13498,7 @@ export async function getChat() {
             }
             $('#send_textarea').trigger('click').trigger('focus');
         }, 200);
+        return true;
     } catch (error) {
         console.error('Failed to load chat', error);
         toastr.error(t`Could not load this chat.`, t`Chat load failed`);
@@ -13565,7 +13614,11 @@ async function getChatResult() {
         }
     }
     await loadItemizedPrompts(getCurrentChatId());
-    await printMessages();
+    const rendered = await printMessages();
+    if (rendered === false) {
+        return false;
+    }
+
     await recomputeTimedWorldInfo();
     select_selected_character(this_chid);
 
@@ -13576,6 +13629,8 @@ async function getChatResult() {
         await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, 'first_message');
         await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, 'first_message');
     }
+
+    return true;
 }
 
 function getFirstMessage() {
@@ -13641,6 +13696,10 @@ export async function refreshPristineFirstMessage() {
 }
 
 export async function openCharacterChat(file_name) {
+    if (blockMessageEditNavigation()) {
+        return;
+    }
+
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
     const deferredLoader = deferLoader();
 
@@ -13987,7 +14046,6 @@ function updateMessage(div) {
         ?? mesBlock.find('.mes_text').text();
     const target = resolveActiveMessageEditSession();
     if (!target.ok) {
-        warnStaleMessageEdit();
         throw new Error(`Message edit target validation failed: ${target.reason}`);
     }
     assertOrdinaryMessageEditSwipeState(target);
@@ -14975,6 +15033,7 @@ async function messageEditDone(div) {
         updateResult = updateMessage(div);
     } catch (error) {
         console.warn(error);
+        toastr.warning(t`The message edit could not be applied safely. Your draft is still open; retry it, or copy it before canceling and reopening the edit.`);
         return;
     }
 
@@ -15062,7 +15121,7 @@ async function messageEditDone(div) {
         if (!deferAuthoritativeReloadAfterMessageEdit(editChatIdentity)) {
             return;
         }
-        toastr.warning(MESSAGE_EDIT_SAVE_FAILED_WARNING);
+        toastr.warning(t`The message edit could not be saved. Your draft was reopened; retry it, or copy it before canceling to reload the saved message.`);
         await messageEdit(messageId);
         return;
     }
@@ -19749,6 +19808,10 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
         return;
     }
 
+    if (blockMessageEditNavigation()) {
+        return;
+    }
+
     //Fix it; New chat doesn't create while open create character menu
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
     chat_file_for_del = getCurrentChatDetails()?.sessionName;
@@ -19884,6 +19947,10 @@ export async function renameChat(oldFileName, newName) {
  * @returns {Promise<boolean>} True if the chat was successfully closed, false otherwise.
  */
 export async function closeCurrentChat() {
+    if (blockMessageEditNavigation()) {
+        return false;
+    }
+
     if (is_send_press == false) {
         await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
         await clearChat();
@@ -20166,6 +20233,10 @@ async function removeCharacterFromUI() {
  * @returns {Promise<void>} - A promise that resolves when the new assistant chat is created
  */
 export async function newAssistantChat({ temporary = false } = {}) {
+    if (blockMessageEditNavigation()) {
+        return;
+    }
+
     await clearChat();
     if (!temporary) {
         return openPermanentAssistantChat();

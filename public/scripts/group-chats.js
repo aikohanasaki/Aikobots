@@ -95,6 +95,8 @@ import {
     chatElement,
     ensureMessageMediaIsArray,
     hasActiveMessageEditSession,
+    blockMessageEditNavigation,
+    flushDebouncedChatSave,
     applyChunkedChatPayload,
     getConfiguredLongChatDisplayCount,
     getInitialChatDisplayCount,
@@ -544,8 +546,11 @@ export async function getGroupChat(groupId, reload = false) {
         }
         chat.forEach(ensureMessageMediaIsArray);
         normalizeChatIdentities(chat, { generateUuid: uuidv4 });
-        chatElement.find('.mes').remove();
-        await printMessages();
+        const rendered = await printMessages();
+        if (rendered === false) {
+            return false;
+        }
+
         void prefetchCurrentChatTailBuffer(getCurrentChatId());
     }
 
@@ -555,6 +560,7 @@ export async function getGroupChat(groupId, reload = false) {
 
     await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
     if (freshChat) await eventSource.emit(event_types.GROUP_CHAT_CREATED);
+    return true;
 }
 
 /**
@@ -2315,6 +2321,10 @@ export async function openGroupById(groupId) {
         return false;
     }
 
+    if (selected_group !== groupId && blockMessageEditNavigation()) {
+        return false;
+    }
+
     if (!is_send_press && !is_group_generating) {
         select_group_chats(groupId);
 
@@ -2424,6 +2434,15 @@ export async function createNewGroupChat(groupId) {
         return false;
     }
 
+    if (blockMessageEditNavigation()) {
+        return false;
+    }
+
+    const pendingSaveResult = await flushDebouncedChatSave();
+    if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+        return false;
+    }
+
     const newChatName = humanizedDateTime();
     const hadExistingChats = group.chats.length > 0;
 
@@ -2475,6 +2494,15 @@ export async function openGroupChat(groupId, chatId) {
     const group = groups.find(x => x.id === groupId);
 
     if (!group || !group.chats.includes(chatId)) {
+        return;
+    }
+
+    if (blockMessageEditNavigation()) {
+        return;
+    }
+
+    const pendingSaveResult = await flushDebouncedChatSave();
+    if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
         return;
     }
 

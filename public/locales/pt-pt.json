@@ -1715,4 +1715,8 @@
   ,"${0} lorebook entries deleted.": "Foram eliminadas ${0} entradas de livro de lore."
   ,"Select lorebook entry for bulk actions": "Selecionar entrada do livro de lore para ações em massa"
   ,"Could not load chat data. Try reloading the page.": "Não foi possível carregar os dados do chat. Tente recarregar a página."
+  ,"Finish or cancel the current edit before leaving this chat.": "Conclua ou cancele a edição atual antes de sair deste chat."
+  ,"Finish or cancel the current edit before changing the displayed message window.": "Conclua ou cancele a edição atual antes de alterar a janela de mensagens apresentada."
+  ,"The message edit could not be applied safely. Your draft is still open; retry it, or copy it before canceling and reopening the edit.": "Não foi possível aplicar a edição da mensagem em segurança. O rascunho continua aberto; tente novamente ou copie-o antes de cancelar e reabrir a edição."
+  ,"The message edit could not be saved. Your draft was reopened; retry it, or copy it before canceling to reload the saved message.": "Não foi possível guardar a edição da mensagem. O rascunho foi reaberto; tente novamente ou copie-o antes de cancelar para recarregar a mensagem guardada."
 }

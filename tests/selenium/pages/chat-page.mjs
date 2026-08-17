@@ -680,6 +680,325 @@ export class ChatPage {
         return result;
     }
 
+    async verifyFailedEditPreservesDraft({ mesId, appendedText }) {
+        const opened = await this.driver.executeScript(`
+            const message = document.querySelector('.mes[mesid="' + String(arguments[0]) + '"]');
+            const editButton = message?.querySelector('.mes_edit');
+            if (!editButton) return false;
+            editButton.click();
+            return true;
+        `, mesId);
+
+        if (!opened) {
+            throw new Error(`Message edit button was not available for mesId=${mesId}.`);
+        }
+
+        await this.driver.wait(until.elementLocated(By.css(`.mes[mesid="${mesId}"] #curEditTextarea`)), this.config.timeouts.stepMs);
+        const result = await this.driver.executeAsyncScript(`
+            const done = arguments[arguments.length - 1];
+            const mesId = Number(arguments[0]);
+            const appendedText = String(arguments[1]);
+
+            import('/script.js')
+                .then(async ({ chat, hasActiveMessageEditSession }) => {
+                    const messageElement = document.querySelector('.mes[mesid="' + mesId + '"]');
+                    const textarea = messageElement?.querySelector('#curEditTextarea');
+                    const message = chat[mesId];
+                    if (!textarea || !message) {
+                        done({ error: 'message editor or backing message was unavailable' });
+                        return;
+                    }
+
+                    textarea.value += appendedText;
+                    const expectedValue = textarea.value;
+                    const originalUuid = message.aikobots_message_uuid;
+                    const originalText = message.mes;
+                    message.aikobots_message_uuid = 'invalid-selenium-message-uuid';
+                    messageElement.querySelector('.mes_edit_done')?.click();
+                    await new Promise(resolve => setTimeout(resolve, 100));
+
+                    const currentTextarea = document.querySelector('.mes[mesid="' + mesId + '"] #curEditTextarea');
+                    const warningShown = Array.from(document.querySelectorAll('#toast-container .toast-message'))
+                        .some(el => (el.textContent || '').includes('The message edit could not be applied safely.'));
+                    const draftPreserved = currentTextarea === textarea
+                        && currentTextarea?.isConnected
+                        && currentTextarea.value === expectedValue;
+                    const sessionPreserved = hasActiveMessageEditSession();
+                    const messageUnchanged = message.mes === originalText;
+
+                    message.aikobots_message_uuid = originalUuid;
+                    currentTextarea?.closest('.mes')?.querySelector('.mes_edit_cancel')?.click();
+                    done({ draftPreserved, messageUnchanged, sessionPreserved, warningShown });
+                })
+                .catch(error => done({ error: error?.message || String(error) }));
+        `, mesId, appendedText);
+
+        if (result?.error) {
+            throw new Error(result.error);
+        }
+        if (!result?.draftPreserved || !result?.messageUnchanged || !result?.sessionPreserved || !result?.warningShown) {
+            throw new Error(`Failed edit did not preserve its draft: ${JSON.stringify(result)}`);
+        }
+
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                return !document.querySelector('.mes[mesid="' + String(arguments[0]) + '"] #curEditTextarea');
+            `, mesId);
+        }, this.config.timeouts.stepMs);
+        return result;
+    }
+
+    async verifyNewChatBlockedByDraft({ mesId, appendedText }) {
+        const opened = await this.driver.executeScript(`
+            const message = document.querySelector('.mes[mesid="' + String(arguments[0]) + '"]');
+            const editButton = message?.querySelector('.mes_edit');
+            if (!editButton) return false;
+            editButton.click();
+            return true;
+        `, mesId);
+
+        if (!opened) {
+            throw new Error(`Message edit button was not available for mesId=${mesId}.`);
+        }
+
+        await this.driver.wait(until.elementLocated(By.css(`.mes[mesid="${mesId}"] #curEditTextarea`)), this.config.timeouts.stepMs);
+        const result = await this.driver.executeAsyncScript(`
+            const done = arguments[arguments.length - 1];
+            const mesId = Number(arguments[0]);
+            const appendedText = String(arguments[1]);
+
+            import('/script.js')
+                .then(async ({ doNewChat, getCurrentChatId, hasActiveMessageEditSession }) => {
+                    const textarea = document.querySelector('.mes[mesid="' + mesId + '"] #curEditTextarea');
+                    if (!textarea) {
+                        done({ error: 'edit textarea disappeared before navigation' });
+                        return;
+                    }
+
+                    textarea.value += appendedText;
+                    const expectedValue = textarea.value;
+                    const chatIdBefore = getCurrentChatId();
+                    await doNewChat();
+                    const currentTextarea = document.querySelector('.mes[mesid="' + mesId + '"] #curEditTextarea');
+                    const warningShown = Array.from(document.querySelectorAll('#toast-container .toast-message'))
+                        .some(el => (el.textContent || '').includes('Finish or cancel the current edit before leaving this chat.'));
+                    const result = {
+                        chatUnchanged: getCurrentChatId() === chatIdBefore,
+                        draftPreserved: currentTextarea === textarea
+                            && currentTextarea?.isConnected
+                            && currentTextarea.value === expectedValue,
+                        sessionPreserved: hasActiveMessageEditSession(),
+                        warningShown,
+                        messageCount: document.querySelectorAll('#chat .mes').length,
+                    };
+                    currentTextarea?.closest('.mes')?.querySelector('.mes_edit_cancel')?.click();
+                    done(result);
+                })
+                .catch(error => done({ error: error?.message || String(error) }));
+        `, mesId, appendedText);
+
+        if (result?.error) {
+            throw new Error(result.error);
+        }
+        if (!result?.chatUnchanged || !result?.draftPreserved || !result?.sessionPreserved || !result?.warningShown || result?.messageCount < 1) {
+            throw new Error(`New-chat navigation was not blocked safely: ${JSON.stringify(result)}`);
+        }
+
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                return !document.querySelector('.mes[mesid="' + String(arguments[0]) + '"] #curEditTextarea');
+            `, mesId);
+        }, this.config.timeouts.stepMs);
+        return result;
+    }
+
+    async verifyModelSwitchKeepsChatDom() {
+        const result = await this.driver.executeAsyncScript(`
+            const done = arguments[arguments.length - 1];
+            const source = document.querySelector('#chat_completion_source')?.value;
+            const selectorId = {
+                makersuite: 'model_google_select',
+                azure_openai: 'azure_openai_model',
+            }[source] || 'model_' + source + '_select';
+            const selector = document.getElementById(selectorId);
+            if (!selector || selector.options.length < 2) {
+                done({ error: 'active model selector does not offer a second model' });
+                return;
+            }
+
+            const originalValue = selector.value;
+            const nextOption = Array.from(selector.options).find(option => option.value !== originalValue);
+            if (!nextOption) {
+                done({ error: 'active model selector has no alternate value' });
+                return;
+            }
+
+            const snapshot = () => ({
+                messageCount: document.querySelectorAll('#chat .mes').length,
+                messageIds: Array.from(document.querySelectorAll('#chat .mes[mesid]')).map(el => el.getAttribute('mesid')),
+                swipeState: Array.from(document.querySelectorAll('.last_mes .swipe_left, .last_mes .swipe_right')).map(el => ({
+                    className: el.className,
+                    display: getComputedStyle(el).display,
+                    visibility: getComputedStyle(el).visibility,
+                })),
+            });
+
+            const before = snapshot();
+            selector.value = nextOption.value;
+            selector.dispatchEvent(new Event('change', { bubbles: true }));
+            setTimeout(() => {
+                const after = snapshot();
+                selector.value = originalValue;
+                selector.dispatchEvent(new Event('change', { bubbles: true }));
+                done({
+                    before,
+                    after,
+                    modelChanged: nextOption.value !== originalValue,
+                    domPreserved: JSON.stringify(before) === JSON.stringify(after),
+                });
+            }, 250);
+        `);
+
+        if (result?.error) {
+            throw new Error(result.error);
+        }
+        if (!result?.modelChanged || !result?.domPreserved || result?.after?.messageCount < 1) {
+            throw new Error(`Model switch changed chat DOM outside generation: ${JSON.stringify(result)}`);
+        }
+        return result;
+    }
+
+    async verifyReloadWaitsForEditSave({ mesId, appendedText }) {
+        const opened = await this.driver.executeScript(`
+            const message = document.querySelector('.mes[mesid="' + String(arguments[0]) + '"]');
+            const editButton = message?.querySelector('.mes_edit');
+            if (!editButton) return false;
+            editButton.click();
+            return true;
+        `, mesId);
+
+        if (!opened) {
+            throw new Error(`Message edit button was not available for mesId=${mesId}.`);
+        }
+
+        await this.driver.wait(until.elementLocated(By.css(`.mes[mesid="${mesId}"] #curEditTextarea`)), this.config.timeouts.stepMs);
+        const result = await this.driver.executeAsyncScript(`
+            const done = arguments[arguments.length - 1];
+            const mesId = Number(arguments[0]);
+            const appendedText = String(arguments[1]);
+            const timeoutMs = Number(arguments[2]);
+
+            import('/script.js')
+                .then(async ({ hasActiveMessageEditSession, isCurrentChatSqlite, reloadCurrentChat }) => {
+                    if (!isCurrentChatSqlite()) {
+                        done({ error: 'active Selenium chat is not SQLite-backed' });
+                        return;
+                    }
+
+                    const textarea = document.querySelector('.mes[mesid="' + mesId + '"] #curEditTextarea');
+                    const doneButton = textarea?.closest('.mes')?.querySelector('.mes_edit_done');
+                    if (!textarea || !doneButton) {
+                        done({ error: 'message editor was unavailable before delayed save' });
+                        return;
+                    }
+
+                    const originalFetch = window.fetch;
+                    let intercepted = false;
+                    let releaseSave = null;
+                    window.fetch = function (...args) {
+                        const requestUrl = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+                        if (!intercepted && /\/api\/chats\/(?:group\/)?message\/update$/.test(requestUrl)) {
+                            intercepted = true;
+                            return new Promise((resolve, reject) => {
+                                releaseSave = () => originalFetch.apply(window, args).then(resolve, reject);
+                            });
+                        }
+                        return originalFetch.apply(window, args);
+                    };
+
+                    try {
+                        textarea.value += appendedText;
+                        doneButton.click();
+                        const startedAt = Date.now();
+                        while (!intercepted && Date.now() - startedAt < timeoutMs) {
+                            await new Promise(resolve => setTimeout(resolve, 25));
+                        }
+                        if (!intercepted || !releaseSave) {
+                            done({ error: 'targeted SQLite edit request was not intercepted' });
+                            return;
+                        }
+
+                        let reloadSettled = false;
+                        const reloadPromise = reloadCurrentChat().then(value => {
+                            reloadSettled = true;
+                            return value;
+                        });
+                        await new Promise(resolve => setTimeout(resolve, 150));
+                        const waitedForSave = !reloadSettled;
+                        releaseSave();
+                        const reloadResult = await reloadPromise;
+                        done({
+                            waitedForSave,
+                            reloadResult,
+                            activeEdit: hasActiveMessageEditSession(),
+                            messageCount: document.querySelectorAll('#chat .mes').length,
+                        });
+                    } finally {
+                        window.fetch = originalFetch;
+                    }
+                })
+                .catch(error => done({ error: error?.message || String(error) }));
+        `, mesId, appendedText, Math.min(this.config.timeouts.stepMs, 5_000));
+
+        if (result?.error) {
+            throw new Error(result.error);
+        }
+        if (!result?.waitedForSave || result?.reloadResult === false || result?.activeEdit || result?.messageCount < 1) {
+            throw new Error(`Reload did not wait for the targeted edit save: ${JSON.stringify(result)}`);
+        }
+        return result;
+    }
+
+    async verifyDetachedEditStateDoesNotBlankChat({ mesId }) {
+        const opened = await this.driver.executeScript(`
+            const message = document.querySelector('.mes[mesid="' + String(arguments[0]) + '"]');
+            const editButton = message?.querySelector('.mes_edit');
+            if (!editButton) return false;
+            editButton.click();
+            return true;
+        `, mesId);
+
+        if (!opened) {
+            throw new Error(`Message edit button was not available for mesId=${mesId}.`);
+        }
+
+        await this.driver.wait(until.elementLocated(By.css(`.mes[mesid="${mesId}"] #curEditTextarea`)), this.config.timeouts.stepMs);
+        const result = await this.driver.executeAsyncScript(`
+            const done = arguments[arguments.length - 1];
+            import('/script.js')
+                .then(async ({ chat, hasActiveMessageEditSession, renderMessageWindow }) => {
+                    document.querySelector('.edit_textarea')?.remove();
+                    const count = Math.min(10, Math.max(1, chat.length));
+                    const startId = Math.max(0, chat.length - count);
+                    const renderResult = await renderMessageWindow(startId, count);
+                    done({
+                        renderResult,
+                        activeEdit: hasActiveMessageEditSession(),
+                        messageCount: document.querySelectorAll('#chat .mes').length,
+                    });
+                })
+                .catch(error => done({ error: error?.message || String(error) }));
+        `);
+
+        if (result?.error) {
+            throw new Error(result.error);
+        }
+        if (result?.renderResult !== true || result?.activeEdit || result?.messageCount < 1) {
+            throw new Error(`Detached edit state suppressed chat rendering: ${JSON.stringify(result)}`);
+        }
+        return result;
+    }
+
     async getConnectionStatusText() {
         return this.driver.executeScript(`
             const el = document.getElementById('top_chat_connection_profiles_status');

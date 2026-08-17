@@ -6294,4 +6294,8 @@
   ,"Memory": "メモリ"
   ,"Consolidation": "統合"
   ,"Memory Assistance": "記憶補助"
+  ,"Finish or cancel the current edit before leaving this chat.": "このチャットを離れる前に、現在の編集を完了するかキャンセルしてください。"
+  ,"Finish or cancel the current edit before changing the displayed message window.": "表示するメッセージ範囲を変更する前に、現在の編集を完了するかキャンセルしてください。"
+  ,"The message edit could not be applied safely. Your draft is still open; retry it, or copy it before canceling and reopening the edit.": "メッセージの編集を安全に適用できませんでした。下書きは開いたままです。再試行するか、編集をキャンセルして開き直す前に下書きをコピーしてください。"
+  ,"The message edit could not be saved. Your draft was reopened; retry it, or copy it before canceling to reload the saved message.": "メッセージの編集を保存できませんでした。下書きを再度開きました。再試行するか、キャンセルして保存済みメッセージを再読み込みする前に下書きをコピーしてください。"
 }
