@@ -9213,6 +9213,9 @@ class StreamingProcessor {
     async onErrorStreaming(error = null) {
         const preserveDetachedGeneration = error?.generationRecoveryAvailable === true;
         this.detachedRecoveryPending = preserveDetachedGeneration;
+        if (preserveDetachedGeneration && this.generator?.generationId) {
+            exhaustedGenerationRecoveries.add(this.generator.generationId);
+        }
         if (!preserveDetachedGeneration) {
             this.clearGenerationRecovery();
             this.abortController.abort();
@@ -11162,6 +11165,7 @@ function cancelPendingGeneration(record) {
 }
 
 let pendingGenerationRecoveryPromise = null;
+const exhaustedGenerationRecoveries = new Set();
 
 /** Reattaches this tab's pending generation after its authoritative chat has loaded. */
 async function resumePendingGenerationForCurrentChat() {
@@ -11172,6 +11176,9 @@ async function resumePendingGenerationForCurrentChat() {
     const recoveryTask = (async () => {
         const pending = await findGenerationRecoveryForCurrentChat();
         if (!pending) {
+            return;
+        }
+        if (exhaustedGenerationRecoveries.has(pending.generationId)) {
             return;
         }
         if (isGenerationRecoveryApplied(pending)) {

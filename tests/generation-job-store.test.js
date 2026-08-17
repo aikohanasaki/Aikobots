@@ -7,6 +7,7 @@ import {
     appendGenerationEvent,
     closeGenerationJobStore,
     createGenerationJob,
+    finalizeStaleGenerationJob,
     finishGenerationJob,
     getGenerationEventsAfter,
     getGenerationJob,
@@ -77,6 +78,41 @@ describe('generation job store', () => {
         expect(finishGenerationJob(id, 'alice', 'cancelled').state).toBe('cancelled');
     });
 
+    it('atomically finalizes an abandoned owner and rejects its late events', () => {
+        const id = '12121212-1212-4121-8121-121212121212';
+        jest.spyOn(Date, 'now').mockReturnValue(10);
+        createGenerationJob({
+            id,
+            userHandle: 'alice',
+            requestFingerprint: 'hash',
+            requestId: 'request-stale',
+            recovery: {
+                type: 'normal',
+                chatIdentity: { groupId: '', characterId: '2', chatId: 'chat-1' },
+                anchorMessageUuid: '13131313-1313-4131-8131-131313131313',
+                outputMessageUuid: '14141414-1414-4141-8141-141414141414',
+                createdAt: 10,
+                startedAt: 10,
+                canMultiSwipe: false,
+                forceChid: null,
+                swipeTarget: null,
+            },
+        });
+        markGenerationJobRunning(id, 'alice');
+
+        Date.now.mockReturnValue(100);
+        expect(finalizeStaleGenerationJob(id, 'alice', 50)).toEqual(expect.objectContaining({
+            state: 'failed',
+            resolvedAt: 100,
+        }));
+        expect(appendGenerationEvent(id, 'alice', 'data: late')).toBeNull();
+        expect(listGenerationRecoveries('alice')).toEqual([]);
+        expect(getGenerationEventsAfter(id, 'alice', 0).events.map(event => event.eventBlock)).toEqual([
+            'data: {"error":{"message":"Generation worker stopped before completion."}}',
+            'data: [DONE]',
+        ]);
+    });
+
     it('discovers only the owner\'s unresolved content-free recovery records', () => {
         const id = '66666666-6666-4666-8666-666666666666';
         const now = Date.now();
@@ -119,6 +155,31 @@ describe('generation job store', () => {
 
         expect(requestGenerationCancellation(id, 'alice').state).toBe('cancelled');
         expect(markGenerationJobRunning(id, 'alice').claimed).toBe(false);
+    });
+
+    it('resolves recovery records that finish without committable output', () => {
+        const id = '15151515-1515-4151-8151-151515151515';
+        const now = Date.now();
+        createGenerationJob({
+            id,
+            userHandle: 'alice',
+            requestFingerprint: 'hash',
+            requestId: 'request-failed',
+            recovery: {
+                type: 'normal',
+                chatIdentity: { groupId: '', characterId: '2', chatId: 'chat-1' },
+                anchorMessageUuid: '16161616-1616-4161-8161-161616161616',
+                outputMessageUuid: '17171717-1717-4171-8171-171717171717',
+                createdAt: now,
+                startedAt: now,
+                canMultiSwipe: false,
+                forceChid: null,
+                swipeTarget: null,
+            },
+        });
+
+        expect(finishGenerationJob(id, 'alice', 'failed').resolvedAt).toEqual(expect.any(Number));
+        expect(listGenerationRecoveries('alice')).toEqual([]);
     });
 
     it('keeps healthy work and gives unresolved completions the seven-day window', () => {

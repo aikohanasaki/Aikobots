@@ -10,6 +10,7 @@ import {
     closeGenerationJobStore,
     createGenerationJob,
     finishGenerationJob,
+    getGenerationJob,
     markGenerationJobRunning,
     setGenerationJobResponseHeaders,
 } from '../src/generation-job-store.js';
@@ -141,7 +142,7 @@ describe('generation stream response headers', () => {
         expect(response.ended).toBe(true);
     });
 
-    it('ends a stale generation while waiting for response headers', async () => {
+    it('finalizes a stale generation while waiting for response headers', async () => {
         const id = '34343434-3434-4343-8343-343434343434';
         jest.spyOn(Date, 'now').mockReturnValue(1);
         createGenerationJob({ id, userHandle: 'alice', requestFingerprint: 'hash', requestId: 'request-stale-headers' });
@@ -157,11 +158,16 @@ describe('generation stream response headers', () => {
 
         await streamGeneration(request, response);
 
-        expect(response.flushed).toBe(false);
+        expect(response.flushed).toBe(true);
+        expect(response.writes).toEqual([
+            'id: 1\ndata: {"error":{"message":"Generation worker stopped before completion."}}\n\n',
+            'id: 2\ndata: [DONE]\n\n',
+        ]);
         expect(response.ended).toBe(true);
+        expect(getGenerationJob(id, 'alice').state).toBe('failed');
     });
 
-    it('ends a stale generation after response headers are available', async () => {
+    it('finalizes a stale generation after response headers are available', async () => {
         const id = '45454545-4545-4454-8454-454545454545';
         jest.spyOn(Date, 'now').mockReturnValue(1);
         createGenerationJob({ id, userHandle: 'alice', requestFingerprint: 'hash', requestId: 'request-stale-events' });
@@ -179,6 +185,11 @@ describe('generation stream response headers', () => {
         await streamGeneration(request, response);
 
         expect(response.flushed).toBe(true);
+        expect(response.writes).toEqual([
+            'id: 1\ndata: {"error":{"message":"Generation worker stopped before completion."}}\n\n',
+            'id: 2\ndata: [DONE]\n\n',
+        ]);
         expect(response.ended).toBe(true);
+        expect(getGenerationJob(id, 'alice').state).toBe('failed');
     });
 });

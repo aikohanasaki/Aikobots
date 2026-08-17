@@ -309,9 +309,9 @@ export function appendGenerationEvent(id, userHandle, eventBlock) {
     const userKey = getUserKey(userHandle);
     const append = db.transaction(() => {
         const row = db.prepare(`
-            SELECT last_event_sequence FROM generation_jobs WHERE id = ? AND user_key = ?
+            SELECT state, last_event_sequence FROM generation_jobs WHERE id = ? AND user_key = ?
         `).get(id, userKey);
-        if (!row) {
+        if (!row || TERMINAL_STATES.has(row.state)) {
             return null;
         }
 
@@ -328,6 +328,40 @@ export function appendGenerationEvent(id, userHandle, eventBlock) {
         return sequence;
     });
     return append.immediate();
+}
+
+/** Atomically turns an abandoned owner into a replayable terminal failure. */
+export function finalizeStaleGenerationJob(id, userHandle, staleBefore) {
+    const db = openDatabase();
+    const userKey = getUserKey(userHandle);
+    const finalize = db.transaction(() => {
+        const row = getAuthorizedRow(db, id, userHandle);
+        if (!row || TERMINAL_STATES.has(row.state) || row.updated_at > staleBefore) {
+            return serializeJob(row);
+        }
+
+        const cancelled = Boolean(row.cancel_requested_at) || row.state === 'cancel_requested';
+        const eventBlocks = cancelled
+            ? ['data: {"error":{"message":"Generation was cancelled."}}', 'data: [DONE]']
+            : ['data: {"error":{"message":"Generation worker stopped before completion."}}', 'data: [DONE]'];
+        const now = Date.now();
+        let sequence = Number(row.last_event_sequence);
+        const insertEvent = db.prepare(`
+            INSERT INTO generation_events (job_id, sequence, event_block, created_at)
+            VALUES (?, ?, ?, ?)
+        `);
+        for (const eventBlock of eventBlocks) {
+            insertEvent.run(id, ++sequence, eventBlock, now);
+        }
+        db.prepare(`
+            UPDATE generation_jobs
+            SET state = ?, last_event_sequence = ?, resolved_at = COALESCE(resolved_at, ?),
+                updated_at = ?, finished_at = ?
+            WHERE id = ? AND user_key = ?
+        `).run(cancelled ? 'cancelled' : 'failed', sequence, row.recovery_json ? now : null, now, now, id, userKey);
+        return serializeJob(getAuthorizedRow(db, id, userHandle));
+    });
+    return finalize.immediate();
 }
 
 /** Reads a bounded ordered page of replayable SSE events. */
@@ -411,16 +445,24 @@ export function finishGenerationJob(id, userHandle, state) {
     const now = Date.now();
     const terminalUpdate = state !== 'cancelled' ? db.prepare(`
         UPDATE generation_jobs
-        SET state = ?, updated_at = ?, finished_at = ?
+        SET state = ?, resolved_at = CASE WHEN ? = 'failed' AND recovery_json IS NOT NULL
+                THEN COALESCE(resolved_at, ?) ELSE resolved_at END,
+            updated_at = ?, finished_at = ?
         WHERE id = ? AND user_key = ?
           AND state IN ('queued', 'running')
     `) : db.prepare(`
         UPDATE generation_jobs
-        SET state = ?, updated_at = ?, finished_at = ?
+        SET state = ?, resolved_at = CASE WHEN recovery_json IS NOT NULL
+                THEN COALESCE(resolved_at, ?) ELSE resolved_at END,
+            updated_at = ?, finished_at = ?
         WHERE id = ? AND user_key = ?
           AND state IN ('queued', 'running', 'cancel_requested')
     `);
-    terminalUpdate.run(state, now, now, id, getUserKey(userHandle));
+    if (state === 'cancelled') {
+        terminalUpdate.run(state, now, now, now, id, getUserKey(userHandle));
+    } else {
+        terminalUpdate.run(state, state, now, now, now, id, getUserKey(userHandle));
+    }
     return serializeJob(getAuthorizedRow(db, id, userHandle));
 }
 

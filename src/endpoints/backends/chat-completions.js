@@ -69,6 +69,7 @@ import {
 } from '../../active-session-store.js';
 import {
     createGenerationJob,
+    finalizeStaleGenerationJob,
     finishGenerationJob,
     getGenerationEventsAfter,
     getGenerationJob,
@@ -4561,7 +4562,14 @@ router.get('/generations/:id/stream', async function (request, response) {
         && Object.keys(initial.responseHeaders || {}).length === 0
         && !['completed', 'cancelled', 'failed'].includes(initial.state)) {
         if (isGenerationOwnerStale(initial)) {
-            return response.end();
+            initial = finalizeStaleGenerationJob(
+                request.params.id,
+                userHandle,
+                Date.now() - STALE_GENERATION_OWNER_MS,
+            );
+            if (['completed', 'cancelled', 'failed'].includes(initial?.state)) {
+                break;
+            }
         }
         await delayDetachedGeneration(DETACHED_GENERATION_POLL_MS);
         if (closed) {
@@ -4608,7 +4616,12 @@ router.get('/generations/:id/stream', async function (request, response) {
             return response.end();
         }
         if (isGenerationOwnerStale(page.job)) {
-            return response.end();
+            finalizeStaleGenerationJob(
+                request.params.id,
+                userHandle,
+                Date.now() - STALE_GENERATION_OWNER_MS,
+            );
+            continue;
         }
         if (Date.now() - lastHeartbeatAt >= STREAM_HEARTBEAT_INTERVAL_MS) {
             response.write(': heartbeat\n\n');
