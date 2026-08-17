@@ -69,6 +69,7 @@ import { redirectDeprecatedEndpoints, ServerStartup, setupPrivateEndpoints } fro
 import { diskCache } from './endpoints/characters.js';
 import { migrateFlatSecrets } from './endpoints/secrets.js';
 import { refreshDefaultContentCharacterIndex } from './character-submissions.js';
+import { drainGenerationTasks } from './generation-drain.js';
 
 // Work around a node v20.0.0, v20.1.0, and v20.2.0 bug. The issue was fixed in v20.3.0.
 // https://github.com/nodejs/node/issues/47822#issuecomment-1564708870
@@ -293,9 +294,12 @@ async function preSetupTasks() {
     const consoleTitle = process.title;
 
     let isExiting = false;
-    const exitProcess = async () => {
+    const exitProcess = async (drainGenerations = false) => {
         if (isExiting) return;
         isExiting = true;
+        if (drainGenerations) {
+            await drainGenerationTasks();
+        }
         await statsOnExit();
         if (typeof cleanupPlugins === 'function') {
             await cleanupPlugins();
@@ -306,11 +310,11 @@ async function preSetupTasks() {
     };
 
     // Set up event listeners for a graceful shutdown
-    process.on('SIGINT', exitProcess);
-    process.on('SIGTERM', exitProcess);
+    process.on('SIGINT', () => void exitProcess(true));
+    process.on('SIGTERM', () => void exitProcess(true));
     process.on('uncaughtException', (err) => {
         console.error('Uncaught exception:', err);
-        exitProcess();
+        void exitProcess();
     });
 
     // Add request proxy.

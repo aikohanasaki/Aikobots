@@ -81,6 +81,7 @@ import {
     touchGenerationJob,
 } from '../../generation-job-store.js';
 import { GenerationJobResponse } from '../../generation-job-response.js';
+import { startTrackedGenerationTask } from '../../generation-drain.js';
 
 import { readRequestSecret, readSecret, SECRET_KEYS } from '../secrets.js';
 import {
@@ -4482,16 +4483,22 @@ router.post('/generations', async function (request, response) {
         const generationBody = structuredClone(request.body.request);
         const requestId = request.requestId || uuidv4();
         const userHandle = getGenerationUserHandle(request);
-        const created = createGenerationJob({
-            id,
-            userHandle,
-            requestFingerprint: getGenerationRequestFingerprint(generationBody),
-            requestId,
-            recovery: request.body.recovery ?? null,
+        let created;
+        const generationTask = startTrackedGenerationTask(() => {
+            created = createGenerationJob({
+                id,
+                userHandle,
+                requestFingerprint: getGenerationRequestFingerprint(generationBody),
+                requestId,
+                recovery: request.body.recovery ?? null,
+            });
+            if (created.created || created.job.state === 'queued') {
+                return runDetachedGeneration(request, id, generationBody, requestId)
+                    .catch(() => recordDetachedGenerationFailure(id, userHandle, generationBody.stream));
+            }
         });
-        if (created.created || created.job.state === 'queued') {
-            void runDetachedGeneration(request, id, generationBody, requestId)
-                .catch(() => recordDetachedGenerationFailure(id, userHandle, generationBody.stream));
+        if (!generationTask) {
+            return response.status(503).send({ error: { message: 'Could not start generation.' } });
         }
         return response.status(created.created ? 202 : 200).send({
             id,
