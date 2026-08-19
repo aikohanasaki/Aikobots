@@ -1,9 +1,9 @@
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import {
     eventSource,
     event_types,
 } from '../script.js';
-import { closeActiveMemoryPreviewPopups } from './stmb-popups.js';
+import { closeActiveMemoryPreviewPopups, showFailedAIResponsePopup } from './stmb-popups.js';
 import { buildStmbSceneContext, getStmbChatKey } from './stmb-scene.js';
 import {
     buildStmbRetryPayload,
@@ -604,7 +604,31 @@ async function executeRunningJob(chatKey, store, nextJob, executor) {
                 message: String(error?.message || 'Unknown STMB job failure'),
             };
             if (!error?.stmbToastrShown) {
-                globalThis.toastr?.error?.(`${getJobTypeLabel(nextJob.type)} job failed: ${nextJob.error.message}`, 'STMB');
+                const failureMessage = `${getJobTypeLabel(nextJob.type)} job failed: ${nextJob.error.message}`;
+                const canReviewRawResponse = nextJob.type === 'memory'
+                    && error?.code === 'EMPTY_OR_INVALID'
+                    && Boolean(String(error?.rawResponse || '').trim());
+                if (canReviewRawResponse) {
+                    const rawResponseLabel = translate('Raw response from AI');
+                    const toast = globalThis.toastr?.error?.(
+                        `${escapeHtml(failureMessage)}<br><a href="#" class="stmb-raw-response-link">${escapeHtml(rawResponseLabel)}</a>`,
+                        'STMB',
+                        {
+                            timeOut: 0,
+                            extendedTimeOut: 0,
+                            closeButton: true,
+                            tapToDismiss: false,
+                            escapeHtml: false,
+                        },
+                    );
+                    toast?.find('.stmb-raw-response-link')?.on('click', event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        showFailedAIResponsePopup(error);
+                    });
+                } else {
+                    globalThis.toastr?.error?.(failureMessage, 'STMB');
+                }
             }
         }
     } finally {

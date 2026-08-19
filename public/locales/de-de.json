@@ -4269,6 +4269,7 @@
     "Error:": "Fehler:",
     "Code:": "Code:",
     "Raw AI Response": "Rohe KI-Reaktion",
+    "Raw response from AI": "Rohe KI-Reaktion",
     "Copy Raw": "Roh kopieren",
     "Create Memory from corrected JSON": "Erstellen Sie Speicher aus korrigiertem JSON",
     "Unable to apply corrected JSON because the original generation context is missing.": "Korrigiertes JSON kann nicht angewendet werden, da der ursprüngliche Generierungskontext fehlt.",

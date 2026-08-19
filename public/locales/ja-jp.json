@@ -4274,6 +4274,7 @@
     "Error:": "エラー：",
     "Code:": "コード：",
     "Raw AI Response": "生の AI 応答",
+    "Raw response from AI": "生の AI 応答",
     "Copy Raw": "未加工でコピー",
     "Create Memory from corrected JSON": "修正されたJSONからメモリを作成する",
     "Unable to apply corrected JSON because the original generation context is missing.": "元の生成コンテキストが欠落しているため、修正された JSON を適用できません。",

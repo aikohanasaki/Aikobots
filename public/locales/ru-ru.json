@@ -4714,6 +4714,7 @@
     "Profile": "Профиль",
     "Review Failed AI Response": "Проверить неудачный ответ ИИ",
     "Raw AI Response": "Сырой ответ ИИ",
+    "Raw response from AI": "Сырой ответ ИИ",
     "Copy Raw": "Копировать сырой ответ",
     "Create Memory from corrected JSON": "Создать память из исправленного JSON",
     "Unable to apply corrected JSON because the original generation context is missing.": "Невозможно применить исправленный JSON, потому что отсутствует исходный контекст генерации.",

@@ -4562,6 +4562,7 @@
     "Error:": "Erreur:",
     "Code:": "Code:",
     "Raw AI Response": "Réponse brute de l'IA",
+    "Raw response from AI": "Réponse brute de l'IA",
     "Copy Raw": "Copier brut",
     "Create Memory from corrected JSON": "Créer de la mémoire à partir de JSON corrigé",
     "Unable to apply corrected JSON because the original generation context is missing.": "Impossible d'appliquer le JSON corrigé car le contexte de génération d'origine est manquant.",
