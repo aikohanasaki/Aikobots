@@ -278,6 +278,7 @@ import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
 import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter } from './scripts/swipe-policy.js';
+import { shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence-policy.js';
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
@@ -1513,17 +1514,16 @@ export function isCurrentCharacterChatTemporary() {
     );
 }
 
-function hasUserMessageInCurrentChat() {
-    return chat.some(message => message?.is_user === true);
-}
-
 /**
- * Skips pristine character chats that still contain only a locally generated greeting.
- * Bot-only generated openings mark the chat tainted and must be persisted.
+ * Keeps an ordinary new character chat client-only until the user sends its first message.
+ * Explicit Recommended Chat Setup confirmation uses the documented persistPristine exception.
  */
 function shouldSkipPristineGreetingSave() {
-    const hasLocalGreeting = isCurrentCharacterChatTemporary() || chatLoadState.hasLocalPristineGreeting;
-    return hasLocalGreeting && !hasUserMessageInCurrentChat() && chat_metadata['tainted'] !== true;
+    return shouldSkipUnstartedCharacterChatSave({
+        isTemporary: isCurrentCharacterChatTemporary(),
+        hasLocalPristineGreeting: chatLoadState.hasLocalPristineGreeting,
+        messages: chat,
+    });
 }
 
 function getTemporaryCharacterChatPendingFileName() {
@@ -1558,7 +1558,7 @@ function isCurrentGroupChatTemporary() {
         && currentChatId
         && String(temporaryGroupChat.groupId) === String(selected_group)
         && String(temporaryGroupChat.chatId) === currentChatId
-        && !hasUserMessageInCurrentChat(),
+        && !chat.some(message => message?.is_user === true),
     );
 }
 
