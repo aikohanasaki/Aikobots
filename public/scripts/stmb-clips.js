@@ -1,4 +1,4 @@
-import { chat_metadata, saveSettingsDebounced } from '../script.js';
+import { chat_metadata, getFirstDisplayedMessageId, getLastDisplayedMessageId, saveSettingsDebounced } from '../script.js';
 import { DOMPurify } from '../lib.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { stableHashString } from './hashing.js';
@@ -2141,8 +2141,23 @@ export async function showTopicalClipPopup(options = {}) {
 
     if (topicInput && options.topic) topicInput.value = String(options.topic);
     if (keywordsInput && Array.isArray(options.keywords)) keywordsInput.value = options.keywords.join(', ');
-    if (messageStartInput && Number.isInteger(options.sceneStart)) messageStartInput.value = String(options.sceneStart);
-    if (messageEndInput && Number.isInteger(options.sceneEnd)) messageEndInput.value = String(options.sceneEnd);
+    const suggestedMessageRange = Number.isInteger(options.sceneStart)
+        && Number.isInteger(options.sceneEnd)
+        && options.sceneStart >= 0
+        && options.sceneStart <= options.sceneEnd
+        ? { sceneStart: options.sceneStart, sceneEnd: options.sceneEnd }
+        : null;
+    const firstDisplayedMessageId = getFirstDisplayedMessageId();
+    const lastDisplayedMessageId = getLastDisplayedMessageId();
+    const displayedMessageRange = Number.isInteger(firstDisplayedMessageId)
+        && Number.isInteger(lastDisplayedMessageId)
+        && firstDisplayedMessageId >= 0
+        && firstDisplayedMessageId <= lastDisplayedMessageId
+        ? { sceneStart: firstDisplayedMessageId, sceneEnd: lastDisplayedMessageId }
+        : null;
+    const initialMessageRange = suggestedMessageRange || displayedMessageRange;
+    if (messageStartInput && initialMessageRange) messageStartInput.value = String(initialMessageRange.sceneStart);
+    if (messageEndInput && initialMessageRange) messageEndInput.value = String(initialMessageRange.sceneEnd);
 
     const getMode = () => modeSelect?.value || 'create';
     const getSelectedLorebookName = () => {
@@ -2565,8 +2580,6 @@ export async function showTopicalClipPopup(options = {}) {
         const rangeInfo = await fetchStmbChatRangeInfo({ sceneContext: buildStmbSceneContext() });
         const lastAvailable = Number(rangeInfo?.lastAvailableMessageId ?? -1);
         if (lastAvailable >= 0) {
-            if (messageStartInput) messageStartInput.value = String(Math.max(0, lastAvailable - 20));
-            if (messageEndInput) messageEndInput.value = String(lastAvailable);
             messageStartInput?.setAttribute('max', String(lastAvailable));
             messageEndInput?.setAttribute('max', String(lastAvailable));
         }
