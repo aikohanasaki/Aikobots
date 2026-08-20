@@ -6,6 +6,7 @@ import {
     classifyMemoryAssistanceOutcome,
     getDefaultClipReviewLorebookName,
     getSelectedClipReviewUids,
+    getTopicalClipRecursionOverrides,
     isLongClipEntryContent,
     makeClipReviewRecord,
     matchesClipReviewTargetIdentity,
@@ -57,6 +58,21 @@ test('normalizes and filters Topical Clip suggestions', () => {
     assert.deepEqual(result[0].keywords, ['Alliance', 'Treaty']);
     assert.equal(result[0].sceneStart, 12);
     assert.equal(result[0].sceneEnd, 24);
+});
+
+test('projects Topical Clip recursion flags from the selected profile', () => {
+    assert.deepEqual(getTopicalClipRecursionOverrides({
+        preventRecursion: true,
+        delayUntilRecursion: true,
+        connection: { apiKey: 'must not be persisted' },
+    }), {
+        preventRecursion: true,
+        delayUntilRecursion: true,
+    });
+    assert.deepEqual(getTopicalClipRecursionOverrides(null), {
+        preventRecursion: false,
+        delayUntilRecursion: false,
+    });
 });
 
 test('omits an invalid message range from Topical Clip suggestions', () => {

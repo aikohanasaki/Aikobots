@@ -10,6 +10,7 @@ import { syncStmbLocalizedPromptFields } from './stmb-prompt-default-migration.j
 import {
     CLIP_LONG_ENTRY_TOKEN_THRESHOLD,
     CLIP_REVIEW_REQUIRES_REVIEW,
+    getTopicalClipRecursionOverrides,
     isLongClipEntryContent,
     matchesClipReviewTargetIdentity,
     resolveTopicalClipSaveResult,
@@ -473,7 +474,7 @@ async function afterLorebookWrite(lorebookName, lorebookData, entry) {
     }
 }
 
-async function createClipLorebookEntry(lorebookName, lorebookData, { title, content, activation, keywords, metadataUpdates = {} }) {
+async function createClipLorebookEntry(lorebookName, lorebookData, { title, content, activation, keywords, metadataUpdates = {}, recursionOverrides = {} }) {
     if (getClipEntryByFinalTitle(lorebookData, title)) {
         throw new Error(tr('A clip entry with this title already exists.'));
     }
@@ -499,6 +500,7 @@ async function createClipLorebookEntry(lorebookName, lorebookData, { title, cont
             disable: false,
             position: 0,
             order: 100,
+            ...recursionOverrides,
         },
     });
     await afterLorebookWrite(lorebookName, lorebookData, result?.entry);
@@ -1625,12 +1627,11 @@ function buildTopicalClipPrompt({ mode, topic, keywords, sourceEntries, sourceMe
     );
 }
 
-async function requestTopicalClipDraft(prompt, profileIndex) {
+async function requestTopicalClipDraft(prompt, profile) {
     if (typeof runtime.buildGenerateData !== 'function') {
         throw new Error('STMB generation helper is not configured.');
     }
 
-    const profile = runtime.getProfile?.(profileIndex) || null;
     const generateData = await runtime.buildGenerateData([{ role: 'user', content: prompt }], profile);
     const response = await generateStmbText({ generateData });
     const draft = String(response?.text || '').trim();
@@ -1838,6 +1839,7 @@ async function saveTopicalClipDraft(context, draft, options = {}) {
         targetContentHash,
         sourceSnapshot,
         messageSource,
+        recursionOverrides,
     } = context || {};
     const contentDraft = String(draft || '').trim();
     if (!contentDraft) throw new Error(tr('Generated draft is empty.'));
@@ -1871,6 +1873,7 @@ async function saveTopicalClipDraft(context, draft, options = {}) {
                 vectorized: true,
                 selective: true,
                 disable: false,
+                ...recursionOverrides,
             },
         });
         return { mode: 'update', lorebookData: freshLorebook, entry: updated };
@@ -1898,6 +1901,7 @@ async function saveTopicalClipDraft(context, draft, options = {}) {
         metadataUpdates: {
             data: buildEntryDataWithTopicalMetadata(null, metadata),
         },
+        recursionOverrides,
     });
     if (lorebookData && entry?.uid !== undefined) {
         lorebookData.entries = lorebookData.entries && typeof lorebookData.entries === 'object' ? lorebookData.entries : {};
@@ -2459,6 +2463,7 @@ export async function showTopicalClipPopup(options = {}) {
         try {
             const profileIndex = getCompactionProfileIndexFromSelect(popup, 'stmb-topical-clip-profile-select');
             setCompactionProfileIndex(profileIndex);
+            const profile = runtime.getProfile?.(profileIndex) || null;
             if (autoAccept) {
                 toastr.info(tr(
                     'Topical Clip generation started. It will be saved automatically.',
@@ -2466,7 +2471,7 @@ export async function showTopicalClipPopup(options = {}) {
                 ), 'STMB');
                 void popup.completeCancelled();
             }
-            const draft = await requestTopicalClipDraft(prompt, profileIndex);
+            const draft = await requestTopicalClipDraft(prompt, profile);
             const draftHeadline = mode === 'update'
                 ? getClipHeadlineFromTitle(target.comment || makeTopicalClipHeadline(topic))
                 : makeTopicalClipHeadline(topic);
@@ -2486,6 +2491,7 @@ export async function showTopicalClipPopup(options = {}) {
                         ? snapshotTopicalSourceEntries(allEligibleSources)
                         : (getTopicalClipMetadata(target)?.last_source_snapshot || []),
                 messageSource,
+                recursionOverrides: getTopicalClipRecursionOverrides(profile),
             };
             if (draftTextarea) draftTextarea.value = normalizedDraft;
             if (autoAccept) {
