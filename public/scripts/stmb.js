@@ -78,6 +78,7 @@ import {
     parseStructuredMemoryResponse,
     resolveStmbChatCopyKind,
     resolveStmbProfileConnectionSummary,
+    shouldBlockStmbMemoryPreparation,
     buildStmbCatchupChunks,
 } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo, getStmbChatKey, isPassiveStmbFlushSuppressedForChat } from './stmb-scene.js';
@@ -246,6 +247,7 @@ import {
 const $ = window.jQuery;
 let stmbSettings = normalizeStmbSettings();
 let activeRootTask = null;
+let memoryPreparationInProgress = false;
 let stmbInitialized = false;
 let sceneButtonsBound = false;
 let slashCommandsRegistered = false;
@@ -7686,7 +7688,13 @@ async function checkAutoSummaryTrigger(options = {}) {
     }
 
     setSceneRange(sceneStart, sceneEnd, sceneContext);
-    await initiateMemoryCreation({ range: { sceneStart, sceneEnd }, keepSceneMarkers: false, sceneContext, source: 'autoSummary' });
+    await initiateMemoryCreation({
+        range: { sceneStart, sceneEnd },
+        keepSceneMarkers: false,
+        sceneContext,
+        source: 'autoSummary',
+        requiresIdleQueue: true,
+    });
 }
 
 function validateSceneMarkers() {
@@ -9577,6 +9585,7 @@ async function initiateMemoryCreation(options = {}) {
     const notifyIfBusy = Boolean(options?.notifyIfBusy);
     const sceneContext = options?.sceneContext || buildStmbSceneContext();
     const source = options?.source || 'memory';
+    const requiresIdleQueue = Boolean(options?.requiresIdleQueue);
 
     assertRangeWithinCurrentChat(range);
 
@@ -9584,19 +9593,29 @@ async function initiateMemoryCreation(options = {}) {
         return null;
     }
 
-    if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(sceneContext))) {
+    if (shouldBlockStmbMemoryPreparation({
+        hasActiveTask: hasActiveStmbTasks(),
+        hasActiveJob: hasActiveStmbJobs(getStmbChatKey(sceneContext)),
+        preparationInProgress: memoryPreparationInProgress,
+        requiresIdleQueue,
+    })) {
         if (notifyIfBusy) {
             toastr.info(translate('Memory creation is already in progress'), 'STMB');
         }
         return null;
     }
 
-    return executeMemoryCreationFromRange(range, {
-        keepSceneMarkers,
-        profileIndex,
-        sceneContext,
-        source,
-    });
+    memoryPreparationInProgress = true;
+    try {
+        return await executeMemoryCreationFromRange(range, {
+            keepSceneMarkers,
+            profileIndex,
+            sceneContext,
+            source,
+        });
+    } finally {
+        memoryPreparationInProgress = false;
+    }
 }
 
 function getStmbCanonicalEntryNumber(entry) {
@@ -10187,7 +10206,12 @@ async function nextMemoryCommand() {
 
         const range = await getNextMemoryRange();
         setSceneRange(range.sceneStart, range.sceneEnd);
-        launchMemoryCreationInBackground({ range, keepSceneMarkers: true, notifyIfBusy: true }, 'Failed to create next memory.');
+        launchMemoryCreationInBackground({
+            range,
+            keepSceneMarkers: true,
+            notifyIfBusy: true,
+            requiresIdleQueue: true,
+        }, 'Failed to create next memory.');
     } catch (error) {
         if (error?.message === 'No new messages available for /nextmemory') {
             toastr.info(translate('No new messages since the last memory.'), 'STMB');

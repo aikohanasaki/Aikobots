@@ -2044,6 +2044,16 @@ export function getRangeFromManagedMemoryEntry(entry) {
     return null;
 }
 
+/** Returns whether a memory request must wait before preparing its queue snapshot. */
+export function shouldBlockStmbMemoryPreparation({
+    hasActiveTask = false,
+    hasActiveJob = false,
+    preparationInProgress = false,
+    requiresIdleQueue = false,
+} = {}) {
+    return Boolean(hasActiveTask || preparationInProgress || (requiresIdleQueue && hasActiveJob));
+}
+
 export function findOverlappingManagedMemoryEntry(entries, range) {
     const newStart = Number(range?.sceneStart);
     const newEnd = Number(range?.sceneEnd);
