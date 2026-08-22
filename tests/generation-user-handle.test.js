@@ -13,11 +13,13 @@ setConfigFilePath(CONFIG_PATH);
 
 let requireGenerationUserHandle;
 let getGenerationJobLimits;
+let getDetachedGenerationClaimDelay;
 
 beforeAll(async () => {
     const module = await import('../src/endpoints/backends/chat-completions.js');
     const { router } = module;
     getGenerationJobLimits = module.getGenerationJobLimits;
+    getDetachedGenerationClaimDelay = module.getDetachedGenerationClaimDelay;
     requireGenerationUserHandle = router.stack.find(layer =>
         layer.handle?.name === 'requireGenerationUserHandle',
     ).handle;
@@ -72,5 +74,12 @@ describe('generation user ownership', () => {
         })[key] ?? fallback;
 
         expect(getGenerationJobLimits({ user: { profile: { handle: 'default-user' } } }, readConfig).maxConcurrentPerUser).toBe(2);
+    });
+
+    it('backs off failed generation claims with bounded jitter', () => {
+        expect([0, 1, 2, 20].map(attempt => getDetachedGenerationClaimDelay(attempt, () => 0)))
+            .toEqual([250, 400, 800, 800]);
+        expect([0, 1, 2, 20].map(attempt => getDetachedGenerationClaimDelay(attempt, () => 1)))
+            .toEqual([250, 500, 1000, 1000]);
     });
 });

@@ -121,8 +121,10 @@ router.post('/change-password', async (request, response) => {
         }
 
         const existingUser = await storage.getItem(toKey(request.body.handle));
+        let disabled = false;
         const user = existingUser && await updateUserRecord(request.body.handle, current => {
             if (!current.enabled) {
+                disabled = true;
                 return current;
             }
             if (!request.user.profile.admin && current.password && current.password !== getPasswordHash(request.body.oldPassword, current.salt)) {
@@ -138,6 +140,10 @@ router.post('/change-password', async (request, response) => {
             }
             return current;
         });
+        if (disabled) {
+            console.error('Change password failed: User is disabled');
+            return response.status(403).json({ error: 'User is disabled' });
+        }
         if (!user) {
             if (!existingUser) {
                 console.error('Change password failed: User not found');
@@ -145,11 +151,6 @@ router.post('/change-password', async (request, response) => {
             }
             console.error('Change password failed: Incorrect password');
             return response.status(403).json({ error: 'Incorrect password' });
-        }
-
-        if (!user.enabled) {
-            console.error('Change password failed: User is disabled');
-            return response.status(403).json({ error: 'User is disabled' });
         }
 
         return response.sendStatus(204);

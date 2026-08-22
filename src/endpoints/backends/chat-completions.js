@@ -130,6 +130,7 @@ const PROMPT_INSPECTION_LOCK_TIMEOUT_MS = 5000;
 const PROMPT_INSPECTION_LOCK_STALE_MS = 60_000;
 const PROMPT_INSPECTION_LOCK_HEARTBEAT_MS = 1000;
 const DETACHED_GENERATION_POLL_MS = 250;
+const DETACHED_GENERATION_MAX_CLAIM_POLL_MS = 1000;
 const GENERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const GENERATION_JOB_DEFAULTS = Object.freeze({
     maxConcurrentPerUser: 2,
@@ -4666,6 +4667,15 @@ function delayDetachedGeneration(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/** Returns a bounded jittered delay after an unsuccessful detached-generation claim. */
+export function getDetachedGenerationClaimDelay(failedClaims, random = Math.random) {
+    const nominalDelay = Math.min(
+        DETACHED_GENERATION_MAX_CLAIM_POLL_MS,
+        DETACHED_GENERATION_POLL_MS * (2 ** Math.max(0, Number(failedClaims) || 0)),
+    );
+    return Math.max(DETACHED_GENERATION_POLL_MS, nominalDelay * (0.8 + 0.2 * random()));
+}
+
 /** Returns validated scheduling limits, including account entitlement. */
 export function getGenerationJobLimits(request, readConfig = getConfigValue) {
     const readInteger = (key, fallback, minimum = 0) => {
@@ -4717,6 +4727,7 @@ async function runDetachedGeneration(sourceRequest, id, preparation, requestId, 
     try {
         const snapshot = await snapshotServerGenerationSource(sourceRequest, preparation);
         abortController.signal.throwIfAborted();
+        let failedClaims = 0;
         while (true) {
             const job = getGenerationJob(id, userHandle);
             if (!job || ['completed', 'cancelled', 'failed', 'cancel_requested'].includes(job.state)) {
@@ -4726,8 +4737,7 @@ async function runDetachedGeneration(sourceRequest, id, preparation, requestId, 
             if (claim.claimed) {
                 break;
             }
-            touchGenerationJob(id, userHandle);
-            await delayDetachedGeneration(DETACHED_GENERATION_POLL_MS);
+            await delayDetachedGeneration(getDetachedGenerationClaimDelay(failedClaims++));
         }
 
         const generationBody = await prepareServerGenerationBody(sourceRequest, preparation, snapshot);

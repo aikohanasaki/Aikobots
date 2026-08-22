@@ -346,9 +346,8 @@ export function claimScheduledGenerationJob(id, userHandle, limits) {
     const secondaryPriorityAgeMs = Math.max(0, Number(limits?.secondaryPriorityAgeMs) || 0);
     const staleOwnerMs = Math.max(1, Number(limits?.staleOwnerMs) || 45_000);
 
-    finalizeStaleGenerationJobs(now - staleOwnerMs);
-
     const claim = db.transaction(() => {
+        finalizeStaleGenerationJobsInTransaction(db, now - staleOwnerMs);
         const requested = db.prepare(`
             SELECT * FROM generation_jobs WHERE id = ? AND user_key = ?
         `).get(id, userKey);
@@ -501,14 +500,19 @@ function finalizeStaleRow(db, row) {
     return serializeJob(db.prepare('SELECT * FROM generation_jobs WHERE id = ?').get(row.id));
 }
 
-/** Marks every abandoned queued or running owner failed so its slots cannot remain stuck. */
-export function finalizeStaleGenerationJobs(staleBefore) {
-    const db = openDatabase();
-    const finalize = db.transaction(() => db.prepare(`
+/** Finalizes abandoned owners while the caller holds the generation-job write transaction. */
+function finalizeStaleGenerationJobsInTransaction(db, staleBefore) {
+    return db.prepare(`
         SELECT * FROM generation_jobs
         WHERE state IN ('queued', 'running', 'cancel_requested') AND updated_at <= ?
         ORDER BY created_at, id
-    `).all(staleBefore).map(row => finalizeStaleRow(db, row)));
+    `).all(staleBefore).map(row => finalizeStaleRow(db, row));
+}
+
+/** Marks every abandoned queued or running owner failed so its slots cannot remain stuck. */
+export function finalizeStaleGenerationJobs(staleBefore) {
+    const db = openDatabase();
+    const finalize = db.transaction(() => finalizeStaleGenerationJobsInTransaction(db, staleBefore));
     return finalize.immediate();
 }
 

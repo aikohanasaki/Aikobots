@@ -958,6 +958,8 @@ Secure lorebook entries are resolved only inside the owning worker during server
 
 Scheduling is shared across workers but does not require PM2: one Node event loop can own multiple concurrent provider calls. `generationJobs.maxConcurrentGlobal` is divided into general slots and `reservedFirstGenerationSlots` first-generation-only slots. A first generation is the oldest queued job for a user who has no running job; it may claim either pool. Other jobs use only general slots. General claims prefer first generations, then secondary generations; a secondary waiting at least `secondaryPriorityAgeSeconds` joins normal general-pool FIFO priority without becoming eligible for a reserved slot. Classification is recalculated after every claim or completion and running calls are never preempted. Standard users may run one generation at a time; patrons and admins may run `maxConcurrentPerUser`. Every user may additionally retain up to `maxQueuedPerUser` waiting jobs. Accounts-disabled installations receive the same running entitlement as admins.
 
+An unsuccessful owner claim backs off from 250 milliseconds to a jittered maximum of one second. Queued owners remain live through the same 15-second durable owner heartbeat used by running jobs rather than writing on every claim poll. Each immediate claim transaction finalizes stale owners before calculating capacity, so stale-slot release and the next claim use one atomic scheduler view without a separate stale-sweep transaction.
+
 The configuration keys and defaults are:
 
 | Key | Default | Meaning |

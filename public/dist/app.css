@@ -10769,7 +10769,7 @@ body.active-session-read-only [data-active-session-disabled="true"] {
 }
 
 .top_chat_tab_status.failed {
-    color: var(--SmartThemeRedColor);
+    color: var(--SmartThemeRedColor, var(--fullred));
 }
 
 .top_chat_tabs_badge {
