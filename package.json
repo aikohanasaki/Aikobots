@@ -152,6 +152,7 @@
         "test:selenium:doctor": "node tests/selenium/doctor.mjs",
         "test:selenium:mvp": "node tests/selenium/run.mjs",
         "test:selenium:mvp:smoke": "node tests/selenium/run.mjs --smoke",
+        "test:selenium:new-chat-dirty": "node tests/selenium/run.mjs --new-chat-dirty",
         "test:frontend:smoke": "node tests/frontend-bundle-smoke.mjs",
         "plugins:update": "node plugins update",
         "plugins:install": "node plugins install"

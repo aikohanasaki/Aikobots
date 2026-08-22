@@ -961,6 +961,7 @@ let chatSaveDeferredForSwipeGeneration = false;
 let pendingStreamingSqliteMutation = null;
 let temporaryCharacterChat = null;
 let temporaryGroupChat = null;
+const deferredTemporaryGenerationAttempts = new Map();
 const CHAT_SAVE_RESULT = {
     SAVED: 'saved',
     FAILED: 'failed',
@@ -1515,14 +1516,18 @@ export function isCurrentCharacterChatTemporary() {
 }
 
 /**
- * Keeps an ordinary new character chat client-only until the user sends its first message.
- * Explicit Recommended Chat Setup confirmation uses the documented persistPristine exception.
+ * Keeps an unmodified new character chat client-only.
+ * Explicit Recommended Chat Setup confirmation may persist a nonempty pristine greeting.
+ * @param {object} [options] Persistence policy overrides.
+ * @param {boolean} [options.persistPristine] Whether a confirmed workflow may persist a pristine greeting.
  */
-function shouldSkipPristineGreetingSave() {
+function shouldSkipPristineGreetingSave({ persistPristine = false } = {}) {
     return shouldSkipUnstartedCharacterChatSave({
         isTemporary: isCurrentCharacterChatTemporary(),
         hasLocalPristineGreeting: chatLoadState.hasLocalPristineGreeting,
         messages: chat,
+        isDirty: chat_metadata.tainted === true,
+        persistPristine,
     });
 }
 
@@ -8911,6 +8916,7 @@ class StreamingProcessor {
         this.createdAt = new Date();
         this.continueMessage = type === 'continue' ? continueMessage : '';
         this.swipeTarget = swipeTarget;
+        this.temporaryGenerationAttempt = null;
         this.swipes = [];
         this.swipeReasoning = [];
         /** @type {import('./scripts/logprobs.js').TokenLogprobs[]} */
@@ -9057,6 +9063,10 @@ class StreamingProcessor {
             // Update reasoning
             await this.reasoningHandler.process(messageId, mesChanged, this.promptReasoning);
             processedText = targetMessage['mes'];
+            if (this.temporaryGenerationAttempt
+                && ((processedText.trim() !== '' && processedText.trim() !== '...') || this.reasoningHandler.reasoning)) {
+                this.temporaryGenerationAttempt.producedContent = true;
+            }
 
             // Token count update.
             const tokenCountText = this.reasoningHandler.reasoning + processedText;
@@ -9197,6 +9207,11 @@ class StreamingProcessor {
         if (this.type === 'continue' && isValidAikobotsUuid(generationId)) {
             targetMessage.extra = targetMessage.extra || {};
             targetMessage.extra[GENERATION_RECOVERY_MARKER_KEY] = generationId;
+        }
+        const finishedText = String(targetMessage.mes || '').trim();
+        if (this.temporaryGenerationAttempt
+            && ((finishedText && finishedText !== '...') || this.reasoningHandler.reasoning || this.images.length > 0)) {
+            this.temporaryGenerationAttempt.producedContent = true;
         }
         const saveResult = await saveSqliteReplyMutation({
             mutation: this.type === 'swipe' || this.type === 'continue' ? 'update' : 'append',
@@ -9746,6 +9761,98 @@ async function restoreUnsavedDeletedLastMessage(messageId, message) {
     return true;
 }
 
+/** Returns whether validation reached a foreground generation attempt that dirties a direct opening. */
+function isDirtyingForegroundGeneration(type, generationRecovery, dryRun) {
+    return !dryRun
+        && !generationRecovery
+        && [undefined, 'normal', 'continue', 'regenerate', 'swipe'].includes(type);
+}
+
+/** Captures the original temporary chat so an accepted request can settle it safely. */
+function createTemporaryGenerationAttempt(type, options, dryRun) {
+    if (selected_group || !isCurrentCharacterChatTemporary() || !isDirtyingForegroundGeneration(type, options?.generationRecovery, dryRun)) {
+        return null;
+    }
+
+    return {
+        accepted: false,
+        deferred: false,
+        producedContent: false,
+        chatIdentity: getActiveChatIdentity(),
+        initialMessages: structuredClone(chat),
+    };
+}
+
+/** Restores a temporary opening when a generation stopped before producing content. */
+async function restoreTemporaryGenerationInitialMessages(attempt) {
+    if (!attempt || chat.some(message => message?.is_user === true)) {
+        return;
+    }
+
+    await clearChat({ flushPendingSave: false });
+    chat.splice(0, chat.length, ...structuredClone(attempt.initialMessages));
+    resetChatLoadState();
+    if (chat.length > 0) {
+        markChatRangeLoaded(0, chat.length - 1);
+    }
+    await printMessages();
+    await recomputeTimedWorldInfo();
+    refreshChatStateAfterSaveRollback();
+}
+
+/** Persists a nonempty dirty opening if its accepted generation still owns the active chat. */
+async function finalizeTemporaryGenerationAttempt(attempt) {
+    if (!attempt?.accepted || attempt.deferred
+        || !isSameChatIdentity(attempt.chatIdentity, getActiveChatIdentity())
+        || !isCurrentCharacterChatTemporary()) {
+        return;
+    }
+
+    if (!attempt.producedContent) {
+        await restoreTemporaryGenerationInitialMessages(attempt);
+    }
+    if (chat.length > 0) {
+        await saveChatConditional({ immediate: true, forceFull: true });
+    }
+}
+
+/** Defers finalization while a durable generation remains recoverable. */
+function deferTemporaryGenerationAttempt(attempt, generationId) {
+    if (!attempt) {
+        return;
+    }
+
+    attempt.deferred = true;
+    if (generationId) {
+        deferredTemporaryGenerationAttempts.set(generationId, attempt);
+    }
+}
+
+/** Reclaims the original temporary-chat attempt for an in-page recovery resume. */
+function takeDeferredTemporaryGenerationAttempt(generationRecovery) {
+    const generationId = generationRecovery?.generationId;
+    if (!generationId) {
+        return null;
+    }
+
+    const attempt = deferredTemporaryGenerationAttempts.get(generationId) || null;
+    deferredTemporaryGenerationAttempts.delete(generationId);
+    if (attempt) {
+        attempt.deferred = false;
+    }
+    return attempt;
+}
+
+/** Drops deferred finalizers as soon as their original chat is no longer active. */
+function discardSwitchedTemporaryGenerationAttempts() {
+    const activeIdentity = getActiveChatIdentity();
+    for (const [generationId, attempt] of deferredTemporaryGenerationAttempts) {
+        if (!isSameChatIdentity(attempt.chatIdentity, activeIdentity)) {
+            deferredTemporaryGenerationAttempts.delete(generationId);
+        }
+    }
+}
+
 /**
  * @typedef {object} JsonSchema
  * @property {string} name Name of the schema.
@@ -9777,7 +9884,7 @@ async function restoreUnsavedDeletedLastMessage(messageId, message) {
  * @param {boolean} dryRun Whether to actually generate a message or just assemble the prompt
  * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
  */
-async function generateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, swipeTarget = null, generationRecovery = null } = {}, dryRun = false) {
+async function generateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, swipeTarget = null, generationRecovery = null } = {}, dryRun = false, temporaryGenerationAttempt = null) {
     enforceChatCompletionsOnlyMode();
     console.log('Generate entered');
 
@@ -9852,6 +9959,14 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     // Occurs only if the generation is not aborted due to slash commands execution
     await eventSource.emit(event_types.GENERATION_AFTER_COMMANDS, type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage }, dryRun);
 
+    const dirtyingForegroundGeneration = isDirtyingForegroundGeneration(type, generationRecovery, dryRun);
+    if (dirtyingForegroundGeneration) {
+        chat_metadata['tainted'] = true;
+        if (temporaryGenerationAttempt) {
+            temporaryGenerationAttempt.accepted = true;
+        }
+    }
+
     if (!dryRun) {
         // Ping server to make sure it is still alive
         const pingResult = await pingServer();
@@ -9864,8 +9979,10 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
         // Hide swipes if not in a dry run.
         hideSwipeButtons();
-        // If generated any message, set the flag to indicate it can't be recreated again.
-        chat_metadata['tainted'] = true;
+        // Preserve established-chat behavior without letting background work persist a pristine temporary opening.
+        if (!isCurrentCharacterChatTemporary()) {
+            chat_metadata['tainted'] = true;
+        }
     }
 
     if (selected_group && !is_group_generating) {
@@ -10798,6 +10915,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         if (isStreamingEnabled() && type !== 'quiet') {
             continue_mag = promptReasoning.removePrefix(continue_mag);
             streamingProcessor = new StreamingProcessor(type, force_name2, generation_started, continue_mag, promptReasoning, swipeTarget);
+            streamingProcessor.temporaryGenerationAttempt = temporaryGenerationAttempt;
             if (isContinue) {
                 // Save reply does add cycle text to the prompt, so it's not needed here
                 streamingProcessor.firstMessageText = '';
@@ -10810,6 +10928,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
             hideSwipeButtons();
             let getMessage = await streamingProcessor.generate();
             if (streamingProcessor?.detachedRecoveryPending) {
+                deferTemporaryGenerationAttempt(temporaryGenerationAttempt, streamingProcessor.generator?.generationId);
                 streamingProcessor = null;
                 setTimeout(() => { void resumePendingGenerationForCurrentChat(); }, 0);
                 return;
@@ -10975,6 +11094,9 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 ? await saveReply({ type, getMessage, title, swipes, swipeReasoning, reasoning, reasoningSignature, imageUrls, openAIRequestId, swipeTarget })
                 : await saveReply({ type: 'appendFinal', getMessage, title, swipes, swipeReasoning, reasoning, reasoningSignature, imageUrls, openAIRequestId });
             ({ type, getMessage } = replyResult);
+            if (temporaryGenerationAttempt && (String(getMessage || '').trim() || reasoning || imageUrls.length > 0)) {
+                temporaryGenerationAttempt.producedContent = true;
+            }
 
             // This relies on `saveReply` having been called to add the message to the chat, so it must be last.
             parseAndSaveLogprobs(data, continue_mag);
@@ -11238,6 +11360,7 @@ async function resumePendingGenerationForCurrentChat() {
 }
 
 eventSource.on(event_types.CHAT_CHANGED, () => {
+    discardSwitchedTemporaryGenerationAttempts();
     setTimeout(() => { void resumePendingGenerationForCurrentChat(); }, 0);
 });
 //MARK: Generate() ends
@@ -11247,6 +11370,9 @@ export async function Generate(type, options = {}, dryRun = false) {
         return generateInternal(type, options, dryRun);
     }
 
+    const temporaryGenerationAttempt = takeDeferredTemporaryGenerationAttempt(options?.generationRecovery)
+        || createTemporaryGenerationAttempt(type, options, dryRun);
+
     const isForegroundGeneration = type !== 'quiet';
     if (isForegroundGeneration) {
         is_send_press = true;
@@ -11255,8 +11381,9 @@ export async function Generate(type, options = {}, dryRun = false) {
 
     const stopBackgroundAudio = beginMobileBackgroundAudioGeneration();
     try {
-        return await generateInternal(type, options, dryRun);
+        return await generateInternal(type, options, dryRun, temporaryGenerationAttempt);
     } finally {
+        await finalizeTemporaryGenerationAttempt(temporaryGenerationAttempt);
         if (isForegroundGeneration) {
             setGenerationPreflightIndicator(false);
         }
@@ -13231,7 +13358,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         ? pendingTemporaryFileName
         : existingFileName || (isPendingSoloCharacterSave ? `${name2} - ${humanizedDateTime()}` : existingFileName);
 
-    if (!persistPristine && shouldSkipPristineGreetingSave()) {
+    if (shouldSkipPristineGreetingSave({ persistPristine })) {
         return CHAT_SAVE_RESULT.SAVED;
     }
 
@@ -15055,6 +15182,11 @@ async function saveSqliteReplyMutation(replyResult) {
     let saveResult;
     let finalResult = CHAT_SAVE_RESULT.FAILED;
     try {
+        if (!selected_group && isCurrentCharacterChatTemporary() && !currentChatFileNameLooksSqlite()) {
+            finalResult = await saveChatConditional({ immediate: true, forceFull: true });
+            return finalResult;
+        }
+
         if (replyResult.mutation === 'append') {
             saveResult = await saveSqliteMessageAppend(messageId, message);
         } else {
@@ -18342,7 +18474,7 @@ async function saveChatOnce(options = {}) {
     try {
         cancelDebouncedChatSave();
 
-        if (!selected_group && shouldSkipPristineGreetingSave()) {
+        if (!selected_group && shouldSkipPristineGreetingSave({ persistPristine: options.persistPristine === true })) {
             return CHAT_SAVE_RESULT.SAVED;
         }
 

@@ -10,8 +10,10 @@ import { runChatBasicCreateRenameScenario } from './scenarios/chat-basic-create-
 import { runChatEditCancelOnlyScenario } from './scenarios/chat-edit-cancel-only.mjs';
 import { runChatImportExportRoundtripScenario } from './scenarios/chat-import-export-roundtrip.mjs';
 import { runChatLongSwipeSmokeScenario } from './scenarios/chat-long-swipe-smoke.mjs';
+import { runChatNewChatDirtyPersistenceScenario } from './scenarios/chat-new-chat-dirty-persistence.mjs';
 
 const isSmoke = process.argv.includes('--smoke');
+const isNewChatDirtyOnly = process.argv.includes('--new-chat-dirty');
 
 async function main() {
     const config = loadConfig();
@@ -88,10 +90,14 @@ async function main() {
         });
 
         tests.push(await runSetupConnectionProfileScenario({ page, logger, captureArtifacts, config }));
-        tests.push(await runChatBasicCreateRenameScenario({ page, logger, captureArtifacts }));
-        tests.push(await runChatEditCancelOnlyScenario({ page, logger, captureArtifacts }));
+        if (isNewChatDirtyOnly) {
+            tests.push(await runChatNewChatDirtyPersistenceScenario({ page, logger, captureArtifacts }));
+        } else {
+            tests.push(await runChatBasicCreateRenameScenario({ page, logger, captureArtifacts }));
+            tests.push(await runChatEditCancelOnlyScenario({ page, logger, captureArtifacts }));
+        }
 
-        if (!isSmoke) {
+        if (!isSmoke && !isNewChatDirtyOnly) {
             tests.push(await runChatImportExportRoundtripScenario({
                 page,
                 logger,

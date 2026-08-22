@@ -580,6 +580,168 @@ export class ChatPage {
         `);
     }
 
+    async getChatPersistenceState() {
+        return this.driver.executeAsyncScript(`
+            const done = arguments[arguments.length - 1];
+            import('/script.js')
+                .then(({ chat, chat_metadata, getCurrentChatId, isCurrentCharacterChatTemporary }) => done({
+                    chatId: String(getCurrentChatId() || ''),
+                    isTemporary: isCurrentCharacterChatTemporary(),
+                    isDirty: chat_metadata?.tainted === true,
+                    messages: chat.map(message => ({
+                        isUser: message?.is_user === true,
+                        isSystem: message?.is_system === true,
+                        text: String(message?.mes || ''),
+                    })),
+                }))
+                .catch(error => done({ error: error?.message || String(error) }));
+        `);
+    }
+
+    async reloadCurrentChatForPersistenceTest() {
+        const result = await this.driver.executeAsyncScript(`
+            const done = arguments[arguments.length - 1];
+            import('/script.js')
+                .then(async ({ reloadCurrentChat }) => done({ reloaded: await reloadCurrentChat() }))
+                .catch(error => done({ error: error?.message || String(error) }));
+        `);
+        if (result?.error || result?.reloaded === false) {
+            throw new Error(result?.error || 'Current chat could not be reloaded.');
+        }
+    }
+
+    async deleteLastMessageForPersistenceTest() {
+        const result = await this.driver.executeAsyncScript(`
+            const done = arguments[arguments.length - 1];
+            import('/script.js')
+                .then(async ({ deleteLastMessage }) => done({ result: await deleteLastMessage({ persist: true }) }))
+                .catch(error => done({ error: error?.message || String(error) }));
+        `);
+        if (result?.error || result?.result !== 'saved') {
+            throw new Error(result?.error || `Message deletion failed: ${JSON.stringify(result)}`);
+        }
+    }
+
+    async editMessageForPersistenceTest(messageId, text) {
+        const opened = await this.driver.executeScript(`
+            const message = document.querySelector('.mes[mesid="' + String(arguments[0]) + '"]');
+            message?.querySelector('.mes_edit')?.click();
+            return Boolean(message);
+        `, messageId);
+        if (!opened) {
+            throw new Error(`Message ${messageId} was not available to edit.`);
+        }
+
+        await this.driver.wait(until.elementLocated(By.css(`.mes[mesid="${messageId}"] #curEditTextarea`)), this.config.timeouts.stepMs);
+        await this.driver.executeScript(`
+            const textarea = document.querySelector('.mes[mesid="' + String(arguments[0]) + '"] #curEditTextarea');
+            textarea.value = String(arguments[1]);
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            textarea.closest('.mes')?.querySelector('.mes_edit_done')?.click();
+        `, messageId, text);
+        await this.driver.wait(async () => !(await this.getChatPersistenceState()).isTemporary, this.config.timeouts.responseMs);
+    }
+
+    async installNewChatGenerationProbe(mode) {
+        const result = await this.driver.executeScript(`
+            const mode = String(arguments[0]);
+            const existing = window.__aikobotsNewChatGenerationProbe;
+            if (existing?.originalFetch) window.fetch = existing.originalFetch;
+
+            const state = {
+                mode,
+                originalFetch: window.fetch,
+                saveRequests: 0,
+                targetedMutationRequests: 0,
+                generationRequests: 0,
+            };
+            window.__aikobotsNewChatGenerationProbe = state;
+            window.fetch = function(input, init) {
+                const rawUrl = typeof input === 'string' ? input : String(input?.url || '');
+                const pathname = new URL(rawUrl, location.href).pathname;
+                const method = String(init?.method || input?.method || 'GET').toUpperCase();
+                if (pathname === '/api/chats/save') state.saveRequests++;
+                if (/^\/api\/chats\/message\/(?:append|update)$/.test(pathname)) state.targetedMutationRequests++;
+
+                if (pathname === '/api/backends/chat-completions/generations' && method === 'POST' && mode !== 'observe') {
+                    state.generationRequests++;
+                    if (mode === 'fail') {
+                        return Promise.resolve(new Response('Selenium generation failure', { status: 503 }));
+                    }
+                    return Promise.resolve(new Response(JSON.stringify({ request_id: 'selenium-new-chat-dirty' }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    }));
+                }
+                if (/^\/api\/backends\/chat-completions\/generations\/[^/]+\/stream$/.test(pathname) && mode === 'complete') {
+                    const body = [
+                        'id: 1',
+                        'data: {"choices":[{"index":0,"delta":{"content":"Selenium bot-only generated opening."},"finish_reason":null}]}',
+                        '',
+                        'id: 2',
+                        'data: [DONE]',
+                        '',
+                        '',
+                    ].join('\\n');
+                    return Promise.resolve(new Response(body, {
+                        status: 200,
+                        headers: { 'Content-Type': 'text/event-stream' },
+                    }));
+                }
+                if (/^\/api\/backends\/chat-completions\/generations\/[^/]+\/result$/.test(pathname) && mode === 'complete') {
+                    return Promise.resolve(new Response(JSON.stringify({
+                        choices: [{ message: { content: 'Selenium bot-only generated opening.' }, finish_reason: 'stop' }],
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+                }
+                return state.originalFetch.call(this, input, init);
+            };
+            return { installed: true };
+        `, mode);
+        if (result?.installed !== true) {
+            throw new Error('New-chat generation probe could not be installed.');
+        }
+    }
+
+    async getNewChatGenerationProbeState() {
+        return this.driver.executeScript(`
+            const state = window.__aikobotsNewChatGenerationProbe;
+            return {
+                saveRequests: state?.saveRequests || 0,
+                targetedMutationRequests: state?.targetedMutationRequests || 0,
+                generationRequests: state?.generationRequests || 0,
+            };
+        `);
+    }
+
+    async releaseNewChatGenerationProbe() {
+        await this.driver.executeScript(`
+            const state = window.__aikobotsNewChatGenerationProbe;
+            if (state?.originalFetch) window.fetch = state.originalFetch;
+            delete window.__aikobotsNewChatGenerationProbe;
+        `);
+    }
+
+    async generateForPersistenceTest(type = 'regenerate') {
+        const result = await this.driver.executeAsyncScript(`
+            const done = arguments[arguments.length - 1];
+            import('/script.js')
+                .then(async ({ Generate }) => {
+                    try {
+                        await Generate(String(arguments[0]));
+                        done({ settled: true });
+                    } catch (error) {
+                        done({ settled: true, generationError: error?.message || String(error) });
+                    }
+                })
+                .catch(error => done({ error: error?.message || String(error) }));
+        `, type);
+        if (result?.error || result?.settled !== true) {
+            throw new Error(result?.error || 'Generation did not settle.');
+        }
+        await this.waitForStandardSendState();
+        return result;
+    }
+
     async getNonSystemMessageIdsInOrder() {
         return this.driver.executeScript(`
             return Array.from(document.querySelectorAll('.mes[mesid]'))
