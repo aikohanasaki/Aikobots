@@ -52,6 +52,8 @@ import {
 } from '../../prompt-converters.js';
 import { assembleChatCompletionPrompt } from '../../prompting/chat-completion-assembly.js';
 import { compareChatCompletionMessages } from '../../prompting/chat-completion-compare.js';
+import { createMacroState, evaluatePromptMacros } from '../../prompting/macro-evaluator.js';
+import { getRegexedString, regex_placement } from '../../prompting/regex-runtime.js';
 import { runServerGenerationExtensions } from '../../extensions/server-runtime.js';
 import { withDirectoryLock } from '../../file-system-lock.js';
 import {
@@ -60,7 +62,7 @@ import {
     normalizePromptCacheUsage,
 } from '../../prompt-cache-usage.js';
 import { prepareEntriesForScan, resolveSortedEntriesPayload } from '../worldinfo.js';
-import { resolveCoreChatPayload } from '../chats.js';
+import { resolveCoreChatPayload, resolveLogicalChatReference } from '../chats.js';
 import {
     ACTIVE_SESSION_ERROR,
     ACTIVE_SESSION_LOCK_MESSAGE,
@@ -69,13 +71,13 @@ import {
 } from '../../active-session-store.js';
 import {
     createGenerationJob,
+    claimScheduledGenerationJob,
     finalizeStaleGenerationJob,
     finishGenerationJob,
     getGenerationEventsAfter,
     getGenerationJob,
     isGenerationCancellationRequested,
     listGenerationRecoveries,
-    markGenerationJobRunning,
     requestGenerationCancellation,
     resolveGenerationRecovery,
     touchGenerationJob,
@@ -129,6 +131,14 @@ const PROMPT_INSPECTION_LOCK_STALE_MS = 60_000;
 const PROMPT_INSPECTION_LOCK_HEARTBEAT_MS = 1000;
 const DETACHED_GENERATION_POLL_MS = 250;
 const GENERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const GENERATION_JOB_DEFAULTS = Object.freeze({
+    maxConcurrentPerUser: 2,
+    maxQueuedPerUser: 2,
+    maxConcurrentGlobal: 20,
+    reservedFirstGenerationSlots: 4,
+    maxQueuedGlobal: 10,
+    secondaryPriorityAgeSeconds: 60,
+});
 
 // blocked due to site policy, unblocking august 2026
 const BLOCKED_CUSTOM_ENDPOINT_HOSTNAME = 'voidai.app';
@@ -624,6 +634,22 @@ function getRequestProvider(request) {
 function getRequestModel(request) {
     const model = request?.body?.model ?? request?.body?.prompt_context?.model ?? null;
     return typeof model === 'string' && model.trim() ? model : undefined;
+}
+
+/** Returns provider diagnostics without prompt, tool-schema, or attachment content. */
+function getSafeProviderRequestLog(body) {
+    const messages = Array.isArray(body?.messages)
+        ? body.messages
+        : Array.isArray(body?.contents)
+            ? body.contents
+            : [];
+    return {
+        model: typeof body?.model === 'string' ? body.model : undefined,
+        stream: typeof body?.stream === 'boolean' ? body.stream : undefined,
+        messagesCount: messages.length,
+        toolsCount: Array.isArray(body?.tools) ? body.tools.length : 0,
+        hasSystemPrompt: Boolean(body?.system || body?.system_instruction),
+    };
 }
 
 /**
@@ -1258,7 +1284,7 @@ async function sendClaudeRequest(request) {
             additionalHeaders['anthropic-beta'] = betaHeaders.join(',');
         }
 
-        console.debug('Claude request:', requestBody);
+        console.debug('Claude request:', getSafeProviderRequestLog(requestBody));
 
         const generateResponse = await fetch(apiUrl + '/messages', {
             method: 'POST',
@@ -1447,7 +1473,7 @@ async function sendMakerSuiteRequest(request) {
     }
 
     const body = getGeminiBody();
-    console.debug(`${apiName} request:`, body);
+    console.debug(`${apiName} request:`, getSafeProviderRequestLog(body));
 
     try {
         const controller = new AbortController();
@@ -1606,7 +1632,7 @@ async function sendAI21Request(request) {
         signal: controller.signal,
     };
 
-    console.debug('AI21 request:', body);
+    console.debug('AI21 request:', getSafeProviderRequestLog(body));
 
     try {
         const generateResponse = await fetch(API_AI21 + '/chat/completions', options);
@@ -1686,7 +1712,7 @@ async function sendMistralAIRequest(request) {
             timeout: 0,
         };
 
-        console.debug('MisralAI request:', requestBody);
+        console.debug('MisralAI request:', getSafeProviderRequestLog(requestBody));
 
         const generateResponse = await fetch(apiUrl + '/chat/completions', config);
         if (request.body.stream) {
@@ -1761,7 +1787,7 @@ async function sendCohereRequest(request) {
             };
         }
 
-        console.debug('Cohere request:', requestBody);
+        console.debug('Cohere request:', getSafeProviderRequestLog(requestBody));
 
         const config = {
             method: 'POST',
@@ -1869,7 +1895,7 @@ async function sendDeepSeekRequest(request) {
             signal: controller.signal,
         };
 
-        console.debug('DeepSeek request:', requestBody);
+        console.debug('DeepSeek request:', getSafeProviderRequestLog(requestBody));
 
         const generateResponse = await fetch(apiUrl + '/chat/completions', config);
 
@@ -1975,7 +2001,7 @@ async function sendXaiRequest(request) {
             signal: controller.signal,
         };
 
-        console.debug('xAI request:', requestBody);
+        console.debug('xAI request:', getSafeProviderRequestLog(requestBody));
 
         const generateResponse = await fetch(apiUrl + '/chat/completions', config);
 
@@ -2069,7 +2095,7 @@ async function sendAimlapiRequest(request) {
             signal: controller.signal,
         };
 
-        console.debug('AI/ML API request:', requestBody);
+        console.debug('AI/ML API request:', getSafeProviderRequestLog(requestBody));
 
         const generateResponse = await fetch(apiUrl + '/chat/completions', config);
 
@@ -2159,7 +2185,7 @@ async function sendElectronHubRequest(request) {
             signal: controller.signal,
         };
 
-        console.debug('Electron Hub request:', requestBody);
+        console.debug('Electron Hub request:', getSafeProviderRequestLog(requestBody));
 
         const generateResponse = await fetch(apiUrl + '/chat/completions', config);
 
@@ -2248,7 +2274,7 @@ async function sendAzureOpenAIRequest(request) {
     };
 
     console.info(`Sending request to Azure OpenAI: ${endpointUrl}`);
-    console.debug('Azure OpenAI Request Body:', apiRequestBody);
+    console.debug('Azure OpenAI request:', getSafeProviderRequestLog(apiRequestBody));
     try {
         const fetchResponse = await fetch(endpointUrl, config);
 
@@ -2274,6 +2300,181 @@ async function sendAzureOpenAIRequest(request) {
 }
 
 export const router = express.Router();
+
+function getServerPromptMacroEnv(promptContext) {
+    const groupNames = Array.isArray(promptContext.groupNames) ? promptContext.groupNames.filter(Boolean) : [];
+    const groupValues = promptContext.groupMacroValues || {};
+    return {
+        user: promptContext.userName || '',
+        char: promptContext.charName || promptContext.name2 || '',
+        group: groupValues.group || groupNames.join(', '),
+        charIfNotGroup: groupValues.charIfNotGroup || groupValues.group || promptContext.charName || promptContext.name2 || '',
+        groupNotMuted: groupValues.groupNotMuted || groupNames.join(', '),
+        notChar: groupValues.notChar || promptContext.userName || '',
+    };
+}
+
+async function readServerPromptAttachment(directories, file) {
+    if (typeof file?.text === 'string') {
+        return file.text;
+    }
+
+    try {
+        const pathname = new URL(String(file?.url || ''), 'http://localhost').pathname;
+        if (!pathname.startsWith('/user/files/')) {
+            return '';
+        }
+        const filename = path.basename(decodeURIComponent(pathname));
+        const filesRoot = path.resolve(directories.files);
+        const filePath = path.resolve(filesRoot, filename);
+        if (!filename || (filePath !== filesRoot && !filePath.startsWith(`${filesRoot}${path.sep}`))) {
+            return '';
+        }
+        return await fsPromises.readFile(filePath, 'utf8');
+    } catch {
+        return '';
+    }
+}
+
+async function appendServerPromptFiles(directories, message, content) {
+    const files = Array.isArray(message?.extra?.files) ? message.extra.files : [];
+    if (!files.length) {
+        return content;
+    }
+    const fileTexts = (await Promise.all(files.map(file => readServerPromptAttachment(directories, file)))).filter(Boolean);
+    return fileTexts.length ? `${fileTexts.join('\n\n')}\n\n${content}` : content;
+}
+
+function appendServerPromptTitles(message, content) {
+    const titles = [];
+    if (message?.extra?.append_title && message.extra.title) {
+        titles.push(String(message.extra.title));
+    }
+    for (const media of Array.isArray(message?.extra?.media) ? message.extra.media : []) {
+        if (media?.append_title && media.title) {
+            titles.push(String(media.title));
+        }
+    }
+    return titles.length ? `${content}\n\n${titles.join('\n\n')}` : content;
+}
+
+function addServerPromptReasoning(coreChat, promptContext, macroState, env) {
+    const settings = promptContext.powerUser?.reasoning || {};
+    const regexScripts = promptContext.promptRegexScripts || [];
+    const maxAdditions = Math.max(0, Number(settings.max_additions) || 0);
+    let additions = 0;
+
+    for (let index = coreChat.length - 1; index >= 0; index--) {
+        const isPrefix = promptContext.type === 'continue' && index === coreChat.length - 1;
+        if (!isPrefix && (!settings.add_to_prompts || additions >= maxAdditions)) {
+            break;
+        }
+        const depth = coreChat.length - index - (promptContext.type === 'continue' ? 2 : 1);
+        const reasoning = getRegexedString(
+            String(coreChat[index]?.extra?.reasoning || ''),
+            regex_placement.REASONING,
+            regexScripts,
+            env,
+            { isPrompt: true, depth, macroState },
+        );
+        if (!reasoning || reasoning === '\u200B') {
+            continue;
+        }
+        additions++;
+        const prefix = evaluatePromptMacros(String(settings.prefix || ''), env, { macroState });
+        const separator = evaluatePromptMacros(String(settings.separator || ''), env, { macroState });
+        const suffix = evaluatePromptMacros(String(settings.suffix || ''), env, { macroState });
+        const content = String(coreChat[index].mes || '');
+        const vectorContent = String(coreChat[index].promptVectorMes || '');
+        coreChat[index].mes = isPrefix && !content
+            ? `${prefix}${reasoning}`
+            : `${prefix}${reasoning}${suffix}${separator}${content}`;
+        coreChat[index].promptVectorMes = isPrefix && !vectorContent
+            ? `${prefix}${reasoning}`
+            : `${prefix}${reasoning}${suffix}${separator}${vectorContent}`;
+    }
+}
+
+/** Converts a revision-checked raw chat snapshot into the input expected by server prompt assembly. */
+async function prepareServerCoreChat(directories, messages, promptContext) {
+    const canUseTools = Boolean(promptContext.canUseTools);
+    const macroState = createMacroState(promptContext.macroSnapshot || {}, promptContext.extensionPrompts || {});
+    const env = getServerPromptMacroEnv(promptContext);
+    env.__macroState = macroState;
+    const regexScripts = promptContext.promptRegexScripts || [];
+    const filtered = messages
+        .map((message, messageId) => ({ message, messageId }))
+        .filter(({ message }) => message
+            && !message.extra?.ignore
+            && (!message.is_system || (canUseTools && Array.isArray(message.extra?.tool_invocations))));
+
+    if (promptContext.type === 'swipe') {
+        filtered.pop();
+    }
+    if (filtered.length) {
+        filtered[0].message = {
+            ...filtered[0].message,
+            mes: evaluatePromptMacros(String(filtered[0].message.mes || ''), env, { macroState }),
+        };
+    }
+
+    const coreChat = await Promise.all(filtered.map(async ({ message, messageId }, index) => {
+        const depth = filtered.length - index - (promptContext.type === 'continue' ? 2 : 1);
+        const placement = message.is_user ? regex_placement.USER_INPUT : regex_placement.AI_OUTPUT;
+        let content = getRegexedString(String(message.mes || ''), placement, regexScripts, env, {
+            isPrompt: true,
+            depth,
+            macroState,
+        });
+        const promptVectorMes = appendServerPromptTitles(message, content);
+        content = await appendServerPromptFiles(directories, message, content);
+        content = appendServerPromptTitles(message, content);
+        return { ...message, mes: content, promptVectorMes, index, messageId };
+    }));
+    addServerPromptReasoning(coreChat, promptContext, macroState, env);
+    return coreChat;
+}
+
+/** Reads and validates one authoritative SQLite source snapshot. */
+async function snapshotServerGenerationSource(request, preparation) {
+    const promptContext = structuredClone(preparation.promptContext);
+    const logicalChat = await resolveLogicalChatReference(request.user.directories, preparation.source.chatRef);
+    if (logicalChat.storageMode !== 'sqlite' || !logicalChat.storageHealthy || !logicalChat.header) {
+        throw createChatCompletionStageError('Generation requires SQLite chat storage.', 409, {
+            stage: 'source_snapshot',
+            retryable: false,
+        });
+    }
+    const revision = Number(logicalChat.header.chat_revision) || 0;
+    const lastMessage = logicalChat.messages.at(-1);
+    if (revision !== preparation.source.expectedRevision
+        || lastMessage?.aikobots_message_uuid !== preparation.source.anchorMessageUuid) {
+        throw createChatCompletionStageError('The chat changed before generation preparation.', 409, {
+            stage: 'source_snapshot',
+            retryable: false,
+        });
+    }
+
+    return { promptContext, messages: logicalChat.messages };
+}
+
+/** Converts a validated source snapshot into the existing in-memory provider request. */
+async function prepareServerGenerationBody(request, preparation, snapshot) {
+    const promptContext = snapshot.promptContext;
+    promptContext.type = preparation.source.generationType;
+    promptContext.coreChat = await prepareServerCoreChat(request.user.directories, snapshot.messages, promptContext);
+    if (promptContext.type === 'continue') {
+        const lastContent = String(promptContext.coreChat.at(-1)?.mes || '');
+        promptContext.cyclePrompt = lastContent.endsWith(' ')
+            ? lastContent
+            : `${lastContent}${String(promptContext.oaiSettings?.continue_postfix || '')}`;
+    }
+    delete promptContext.generationSource;
+    return {
+        ...structuredClone(preparation.providerRequest),
+        prompt_context: promptContext,
+    };
+}
 
 export async function prepareServerPromptContext(user, directories, promptContext) {
     if (!promptContext || typeof promptContext !== 'object') {
@@ -3619,7 +3820,7 @@ router.post('/bias', async function (request, response) {
                     result[token] = entry.value;
                 }
             } catch {
-                console.warn('Tokenizer failed to encode:', entry.text);
+                console.warn('Tokenizer failed to encode an entry.');
             }
         }
 
@@ -4382,8 +4583,116 @@ function getGenerationRequestFingerprint(body) {
     return createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
 
+function invalidGenerationPreparation(message = 'A valid generation preparation envelope is required.') {
+    const error = new Error(message);
+    error.status = 400;
+    error.code = 'invalid_generation_preparation';
+    return error;
+}
+
+function hasOnlyKeys(value, allowedKeys) {
+    return Object.keys(value).every(key => allowedKeys.includes(key));
+}
+
+/** Strictly validates the content-bearing envelope without copying any of it into shared job metadata. */
+export function normalizeGenerationPreparation(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || value.version !== 1
+        || !hasOnlyKeys(value, ['version', 'nonce', 'source', 'provider_request', 'prompt_context'])) {
+        throw invalidGenerationPreparation();
+    }
+    const nonce = value.nonce;
+    const source = value.source;
+    const providerRequest = value.provider_request;
+    const promptContext = value.prompt_context;
+    if (typeof nonce !== 'string' || !GENERATION_ID_PATTERN.test(nonce)
+        || !source || typeof source !== 'object' || Array.isArray(source)
+        || !hasOnlyKeys(source, ['generationType', 'expectedRevision', 'anchorMessageUuid', 'chatRef'])
+        || !providerRequest || typeof providerRequest !== 'object' || Array.isArray(providerRequest)
+        || !promptContext || typeof promptContext !== 'object' || Array.isArray(promptContext)) {
+        throw invalidGenerationPreparation();
+    }
+    if (Object.hasOwn(providerRequest, 'prompt_context')
+        || Object.hasOwn(providerRequest, 'messages')
+        || Object.hasOwn(providerRequest, 'prompt')
+        || Object.hasOwn(providerRequest, 'input')) {
+        throw invalidGenerationPreparation('Prepared prompts are not accepted by the generation-job endpoint.');
+    }
+    if ((Array.isArray(promptContext.coreChat) && promptContext.coreChat.length)
+        || (Array.isArray(promptContext.messages) && promptContext.messages.length)
+        || Array.isArray(promptContext.worldInfoRequest?.sortedEntries)) {
+        throw invalidGenerationPreparation('Chat or resolved lorebook content is not accepted in the preparation envelope.');
+    }
+
+    const generationType = source.generationType;
+    const expectedRevision = source.expectedRevision;
+    const anchorMessageUuid = source.anchorMessageUuid;
+    const chatRef = source.chatRef;
+    if (typeof generationType !== 'string'
+        || !['normal', 'regenerate', 'swipe', 'continue', 'quiet', 'impersonate'].includes(generationType)
+        || !Number.isInteger(expectedRevision) || expectedRevision < 0
+        || typeof anchorMessageUuid !== 'string' || !GENERATION_ID_PATTERN.test(anchorMessageUuid)
+        || !chatRef || typeof chatRef !== 'object' || Array.isArray(chatRef)) {
+        throw invalidGenerationPreparation();
+    }
+    if (chatRef.type === 'group') {
+        if (!hasOnlyKeys(chatRef, ['type', 'chatId']) || typeof chatRef.chatId !== 'string' || !chatRef.chatId.trim()) {
+            throw invalidGenerationPreparation();
+        }
+    } else if (chatRef.type === 'character') {
+        if (!hasOnlyKeys(chatRef, ['type', 'avatarUrl', 'fileName'])
+            || typeof chatRef.avatarUrl !== 'string' || !chatRef.avatarUrl.trim()
+            || typeof chatRef.fileName !== 'string' || !chatRef.fileName.trim()) {
+            throw invalidGenerationPreparation();
+        }
+    } else {
+        throw invalidGenerationPreparation();
+    }
+
+    return {
+        version: 1,
+        nonce,
+        source: {
+            generationType,
+            expectedRevision,
+            anchorMessageUuid,
+            chatRef: structuredClone(chatRef),
+        },
+        providerRequest: structuredClone(providerRequest),
+        promptContext: structuredClone(promptContext),
+    };
+}
+
 function delayDetachedGeneration(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Returns validated scheduling limits, including account entitlement. */
+export function getGenerationJobLimits(request, readConfig = getConfigValue) {
+    const readInteger = (key, fallback, minimum = 0) => {
+        const value = Number(readConfig(`generationJobs.${key}`, fallback));
+        return Number.isInteger(value) && value >= minimum ? value : fallback;
+    };
+    const entitled = !readConfig('enableUserAccounts', false, 'boolean')
+        || Boolean(request.user?.profile?.admin)
+        || Boolean(request.user?.profile?.patron);
+    const maxConcurrentGlobal = readInteger('maxConcurrentGlobal', GENERATION_JOB_DEFAULTS.maxConcurrentGlobal, 1);
+    return {
+        maxConcurrentPerUser: entitled
+            ? readInteger('maxConcurrentPerUser', GENERATION_JOB_DEFAULTS.maxConcurrentPerUser, 1)
+            : 1,
+        maxQueuedPerUser: readInteger('maxQueuedPerUser', GENERATION_JOB_DEFAULTS.maxQueuedPerUser),
+        maxConcurrentGlobal,
+        reservedFirstGenerationSlots: Math.min(
+            maxConcurrentGlobal,
+            readInteger('reservedFirstGenerationSlots', GENERATION_JOB_DEFAULTS.reservedFirstGenerationSlots),
+        ),
+        maxQueuedGlobal: readInteger('maxQueuedGlobal', GENERATION_JOB_DEFAULTS.maxQueuedGlobal),
+        secondaryPriorityAgeMs: readInteger(
+            'secondaryPriorityAgeSeconds',
+            GENERATION_JOB_DEFAULTS.secondaryPriorityAgeSeconds,
+        ) * 1000,
+        staleOwnerMs: STALE_GENERATION_OWNER_MS,
+    };
 }
 
 /** Returns whether a nonterminal generation has stopped receiving owner heartbeats. */
@@ -4393,25 +4702,9 @@ function isGenerationOwnerStale(job, now = Date.now()) {
 }
 
 /** Runs the existing provider dispatch independently of the creating HTTP socket. */
-async function runDetachedGeneration(sourceRequest, id, generationBody, requestId) {
+async function runDetachedGeneration(sourceRequest, id, preparation, requestId, limits) {
     const userHandle = getGenerationUserHandle(sourceRequest);
     const abortController = new AbortController();
-    const sink = new GenerationJobResponse(id, userHandle, generationBody.stream);
-    const detachedRequest = Object.create(sourceRequest);
-    Object.assign(detachedRequest, {
-        body: generationBody,
-        requestId,
-        socket: sink.socket,
-        activeSessionOperation: {
-            signal: abortController.signal,
-            assertAllowed: () => abortController.signal.throwIfAborted(),
-        },
-    });
-    const claim = markGenerationJobRunning(id, userHandle);
-    if (!claim.claimed) {
-        return;
-    }
-
     const cancelPoll = setInterval(() => {
         if (isGenerationCancellationRequested(id, userHandle)) {
             abortController.abort();
@@ -4422,28 +4715,60 @@ async function runDetachedGeneration(sourceRequest, id, generationBody, requestI
     ownerHeartbeat.unref?.();
 
     try {
+        const snapshot = await snapshotServerGenerationSource(sourceRequest, preparation);
+        abortController.signal.throwIfAborted();
+        while (true) {
+            const job = getGenerationJob(id, userHandle);
+            if (!job || ['completed', 'cancelled', 'failed', 'cancel_requested'].includes(job.state)) {
+                return;
+            }
+            const claim = claimScheduledGenerationJob(id, userHandle, limits);
+            if (claim.claimed) {
+                break;
+            }
+            touchGenerationJob(id, userHandle);
+            await delayDetachedGeneration(DETACHED_GENERATION_POLL_MS);
+        }
+
+        const generationBody = await prepareServerGenerationBody(sourceRequest, preparation, snapshot);
+        abortController.signal.throwIfAborted();
+
+        const sink = new GenerationJobResponse(id, userHandle, generationBody.stream);
+        const detachedRequest = Object.create(sourceRequest);
+        Object.assign(detachedRequest, {
+            body: generationBody,
+            requestId,
+            socket: sink.socket,
+            activeSessionOperation: {
+                signal: abortController.signal,
+                assertAllowed: () => abortController.signal.throwIfAborted(),
+            },
+        });
         if (isGenerationCancellationRequested(id, userHandle)) {
             abortController.abort();
         }
-        await handleChatCompletionsGenerate(detachedRequest, sink);
-    } catch {
-        sink.failed = true;
-        if (generationBody.stream && !sink.writableEnded) {
-            sink.write(`data: ${JSON.stringify({ error: { message: 'Generation failed.' } })}\n\n`);
+        try {
+            await handleChatCompletionsGenerate(detachedRequest, sink);
+        } catch {
+            sink.failed = true;
+            if (generationBody.stream && !sink.writableEnded) {
+                sink.write(`data: ${JSON.stringify({ error: { message: 'Generation failed.' } })}\n\n`);
+            }
+        } finally {
+            sink.ensureDoneEvent();
+            if (!sink.writableEnded) {
+                sink.end();
+            }
+
+            const cancelled = isGenerationCancellationRequested(id, userHandle);
+            let job = finishGenerationJob(id, userHandle, cancelled ? 'cancelled' : sink.failed ? 'failed' : 'completed');
+            if (job?.state === 'cancel_requested') {
+                job = finishGenerationJob(id, userHandle, 'cancelled');
+            }
         }
     } finally {
         clearInterval(cancelPoll);
         clearInterval(ownerHeartbeat);
-        sink.ensureDoneEvent();
-        if (!sink.writableEnded) {
-            sink.end();
-        }
-
-        const cancelled = isGenerationCancellationRequested(id, userHandle);
-        let job = finishGenerationJob(id, userHandle, cancelled ? 'cancelled' : sink.failed ? 'failed' : 'completed');
-        if (job?.state === 'cancel_requested') {
-            job = finishGenerationJob(id, userHandle, 'cancelled');
-        }
     }
 }
 
@@ -4469,10 +4794,6 @@ function recordDetachedGenerationFailure(id, userHandle, stream) {
 router.use('/generations', requireGenerationUserHandle);
 
 router.post('/generations', async function (request, response) {
-    if (!request.body?.request || typeof request.body.request !== 'object') {
-        return response.status(400).send({ error: { message: 'Generation request is required.' } });
-    }
-
     const id = String(request.body.generation_id || '');
     if (!GENERATION_ID_PATTERN.test(id)) {
         return response.status(400).send({ error: { message: 'A valid generation ID is required.' } });
@@ -4480,21 +4801,27 @@ router.post('/generations', async function (request, response) {
 
     try {
         await assertActiveSessionOperation(request);
-        const generationBody = structuredClone(request.body.request);
+        const preparation = normalizeGenerationPreparation(request.body.preparation);
         const requestId = request.requestId || uuidv4();
         const userHandle = getGenerationUserHandle(request);
+        const limits = getGenerationJobLimits(request);
         let created;
         const generationTask = startTrackedGenerationTask(() => {
             created = createGenerationJob({
                 id,
                 userHandle,
-                requestFingerprint: getGenerationRequestFingerprint(generationBody),
+                requestFingerprint: getGenerationRequestFingerprint({
+                    version: preparation.version,
+                    nonce: preparation.nonce,
+                    source: preparation.source,
+                }),
                 requestId,
                 recovery: request.body.recovery ?? null,
+                limits,
             });
-            if (created.created || created.job.state === 'queued') {
-                return runDetachedGeneration(request, id, generationBody, requestId)
-                    .catch(() => recordDetachedGenerationFailure(id, userHandle, generationBody.stream));
+            if (created.created) {
+                return runDetachedGeneration(request, id, preparation, requestId, limits)
+                    .catch(() => recordDetachedGenerationFailure(id, userHandle, Boolean(preparation.providerRequest.stream)));
             }
         });
         if (!generationTask) {
@@ -4509,8 +4836,15 @@ router.post('/generations', async function (request, response) {
         if (isActiveSessionError(error)) {
             return sendActiveSessionRequired(response);
         }
-        return response.status(Number(error?.status) || 500).send({
-            error: { message: Number(error?.status) === 409 ? error.message : 'Could not start generation.' },
+        const status = Number(error?.status) || 500;
+        if (status === 503) {
+            response.setHeader('Retry-After', '1');
+        }
+        return response.status(status).send({
+            error: {
+                code: error?.code || undefined,
+                message: [400, 409, 429, 503].includes(status) ? error.message : 'Could not start generation.',
+            },
         });
     }
 });

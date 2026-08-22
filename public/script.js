@@ -110,6 +110,7 @@ import {
     setupChatCompletionPromptManager,
     consumeOpenAIResponseData,
     buildServerAssemblyPayload,
+    buildOpenAIGenerateData,
     debugServerAssemblyDump,
     getLastServerAssemblyDebugDump,
     maintainPromptInspectionSnapshots,
@@ -190,7 +191,7 @@ import {
     validateMessageSwipeState,
 } from './scripts/chat-identities.js';
 
-import { cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, runGenerationInterceptors } from './scripts/extensions.js';
+import { canUseServerGenerationPreparation, cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, runGenerationInterceptors } from './scripts/extensions.js';
 import { COMMENT_NAME_DEFAULT, CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
 import {
     tag_map,
@@ -220,7 +221,7 @@ import { markdownExclusionExt } from './scripts/showdown-exclusion.js';
 import { markdownUnderscoreExt } from './scripts/showdown-underscore.js';
 import { NOTE_MODULE_NAME, initAuthorsNote, metadata_keys, setFloatingPrompt, shouldWIAddPrompt } from './scripts/authors-note.js';
 import { registerPromptManagerMigration } from './scripts/PromptManager.js';
-import { getRegexedString, regex_placement } from './scripts/extensions/regex/engine.js';
+import { getRegexScripts, getRegexedString, regex_placement } from './scripts/extensions/regex/engine.js';
 import { initLogprobs, saveLogprobsForActiveMessage } from './scripts/logprobs.js';
 import { FILTER_STATES, FILTER_TYPES, FilterHelper, isFilterState } from './scripts/filters.js';
 import { getCfgPrompt, getGuidanceScale, initCfg } from './scripts/cfg-scale.js';
@@ -266,7 +267,7 @@ import { initDataMaid } from './scripts/data-maid.js';
 import { clearItemizedPrompts, deleteItemizedPrompts, findItemizedPromptSet, getLatestItemizedPrompt, initItemizedPrompts, itemizedParams, itemizedPrompts, loadItemizedPrompts, promptItemize, replaceItemizedPromptText, saveItemizedPrompts, setLatestItemizedPrompt } from './scripts/itemized-prompts.js';
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
 import { event_types, eventSource } from './scripts/events.js';
-import { isAdmin } from './scripts/user.js';
+import { isAdmin, isPatron } from './scripts/user.js';
 import { initializeHiddenTemplates } from './scripts/hidden-templates.js';
 import { initializeModelTagInjection } from './scripts/model-tag-injection.js';
 import { initAccessibility } from './scripts/a11y.js';
@@ -282,7 +283,9 @@ import { shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
-import { clearPendingGeneration, getPendingGeneration, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
+import { clearPendingGeneration, listPendingGenerations, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
+import { createGenerationReadinessSignal, waitForGenerationReadiness } from './scripts/generation-readiness.js';
+import { listChatWorkspaceTabs, removeChatWorkspaceTab, upsertChatWorkspaceTab } from './scripts/chat-workspace-tabs.js';
 import { initWorldInfoLocks, loadWorldInfoLocksSettings } from './scripts/world-info-locks.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
@@ -2854,6 +2857,384 @@ function restoreTopChatPanelsState() {
     }
 }
 
+function getCurrentChatWorkspaceTab() {
+    const chatId = normalizeTopChatFileName(getCurrentChatId());
+    if (!chatId) {
+        return null;
+    }
+    if (selected_group) {
+        const group = groups.find(item => String(item.id) === String(selected_group));
+        return {
+            ownerType: 'group',
+            ownerId: String(selected_group),
+            chatId,
+            label: `${group?.name || translate('Group')}: ${chatId}`,
+        };
+    }
+    const character = characters[this_chid];
+    if (!character?.avatar) {
+        return null;
+    }
+    return {
+        ownerType: 'character',
+        ownerId: String(character.avatar),
+        chatId,
+        label: `${character.name || name2}: ${chatId}`,
+    };
+}
+
+function recoveryMatchesWorkspaceTab(recovery, tab) {
+    if (!recovery?.chatIdentity || !tab || recovery.chatIdentity.chatId !== tab.chatId) {
+        return false;
+    }
+    if (tab.ownerType === 'group') {
+        return recovery.chatIdentity.groupId === tab.ownerId;
+    }
+    const characterId = characters.findIndex(character => String(character?.avatar || '') === tab.ownerId);
+    return !recovery.chatIdentity.groupId && recovery.chatIdentity.characterId === String(characterId);
+}
+
+function getWorkspaceTabRecovery(tab) {
+    return latestGenerationRecoveries.find(recovery => recoveryMatchesWorkspaceTab(recovery, tab))
+        || listPendingGenerations().find(recovery => recoveryMatchesWorkspaceTab(recovery, tab))
+        || null;
+}
+
+function isCurrentWorkspaceTab(tab) {
+    const current = getCurrentChatWorkspaceTab();
+    return Boolean(current && `${current.ownerType}:${current.ownerId}:${current.chatId}` === tab.key);
+}
+
+/** Disconnects foreground delivery while leaving the detached provider job running. */
+async function parkForegroundGeneration({ discardEphemeralMessage = false } = {}) {
+    if (!is_send_press) {
+        return { ok: true, parked: false };
+    }
+    const generationId = await waitForGenerationReadiness({
+        isActive: () => is_send_press,
+        getGenerationId: () => foregroundGenerationId || streamingProcessor?.generator?.generationId || '',
+        signal: foregroundGenerationReadiness,
+    });
+    if (!generationId) {
+        return { ok: !is_send_press, parked: false };
+    }
+
+    const parked = new Error('Generation delivery parked.');
+    parked.generationRecoveryAvailable = true;
+    parked.generationParked = true;
+    parked.discardEphemeralMessage = discardEphemeralMessage;
+    if (streamingProcessor) {
+        streamingProcessor.abortController.abort(parked);
+    } else {
+        abortController?.abort(parked);
+    }
+    await foregroundGenerationPromise?.catch(() => null);
+    while (is_group_generating) {
+        await delay(25);
+    }
+    return { ok: true, parked: true };
+}
+
+async function openChatWorkspaceTab(tab, { discardCurrentChat = false } = {}) {
+    if (!tab || isCurrentWorkspaceTab(tab)) {
+        return;
+    }
+    const parkResult = await parkForegroundGeneration({ discardEphemeralMessage: true });
+    if (!parkResult.ok) {
+        return;
+    }
+    discardCurrentChat ||= parkResult.parked;
+
+    if (!discardCurrentChat) {
+        const pendingSaveResult = await flushDebouncedChatSave();
+        if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+            return;
+        }
+    }
+
+    workspaceTabNavigationInProgress = true;
+    try {
+        const chatId = normalizeTopChatFileName(tab.chatId);
+        if (!chatId) {
+            return;
+        }
+        if (tab.ownerType === 'group') {
+            await openManageChatsOwnerChat({ type: 'group', id: tab.ownerId }, chatId, { discardCurrentChat });
+            return;
+        }
+
+        const characterId = characters.findIndex(character => String(character?.avatar || '') === tab.ownerId);
+        if (characterId < 0) {
+            toastr.error(t`This chat's character is no longer available.`);
+            return;
+        }
+        await openManageChatsOwnerChat({ type: 'character', id: characterId }, chatId, { discardCurrentChat });
+    } finally {
+        workspaceTabNavigationInProgress = false;
+        rememberCurrentChatWorkspaceTab();
+    }
+}
+
+async function confirmGeneratingTabClose() {
+    const preference = ['keep', 'cancel'].includes(power_user.patron_tab_close_behavior)
+        ? power_user.patron_tab_close_behavior
+        : 'ask';
+    const customButtons = preference === 'ask'
+        ? [
+            { text: translate('Close and keep generating'), result: POPUP_RESULT.CUSTOM1 },
+            { text: translate('Close and cancel generation'), result: POPUP_RESULT.CUSTOM2 },
+        ]
+        : [{
+            text: preference === 'keep' ? translate('Close and keep generating') : translate('Close and cancel generation'),
+            result: POPUP_RESULT.CUSTOM1,
+        }];
+    const result = await callGenericPopup(
+        translate('This chat is still generating. Keep the tab open, continue in the background, or cancel the generation.'),
+        POPUP_TYPE.TEXT,
+        '',
+        {
+            okButton: false,
+            cancelButton: translate('Keep tab open'),
+            defaultResult: POPUP_RESULT.NEGATIVE,
+            customButtons,
+        },
+    );
+    if (preference === 'ask') {
+        return result === POPUP_RESULT.CUSTOM1 ? 'keep' : result === POPUP_RESULT.CUSTOM2 ? 'cancel' : null;
+    }
+    return result === POPUP_RESULT.CUSTOM1 ? preference : null;
+}
+
+async function cancelWorkspaceRecovery(recovery) {
+    if (!recovery?.generationId) {
+        return;
+    }
+    await fetch(`/api/backends/chat-completions/generations/${recovery.generationId}/cancel`, {
+        method: 'POST',
+        headers: getRequestHeaders(),
+    }).catch(() => null);
+    clearPendingGeneration(recovery.generationId);
+    if (streamingProcessor?.generator?.generationId === recovery.generationId) {
+        streamingProcessor.onStopStreaming();
+        await foregroundGenerationPromise?.catch(() => null);
+    }
+}
+
+async function closeChatWorkspaceTab(tab) {
+    let discardCurrentChat = false;
+    let recovery = getWorkspaceTabRecovery(tab);
+    const isGenerating = ['queued', 'running'].includes(recovery?.state)
+        || (isCurrentWorkspaceTab(tab) && is_send_press);
+    if (isGenerating) {
+        const closeAction = await confirmGeneratingTabClose();
+        if (!closeAction) {
+            return;
+        }
+        if (!recovery) {
+            await refreshWorkspaceGenerationStates();
+            recovery = getWorkspaceTabRecovery(tab);
+        }
+        if (closeAction === 'cancel') {
+            if (isCurrentWorkspaceTab(tab) && is_send_press) {
+                stopGeneration();
+                await foregroundGenerationPromise?.catch(() => null);
+            } else {
+                await cancelWorkspaceRecovery(recovery);
+            }
+        } else if (isCurrentWorkspaceTab(tab)) {
+            const parkResult = await parkForegroundGeneration({ discardEphemeralMessage: true });
+            if (!parkResult.ok) {
+                return;
+            }
+            discardCurrentChat = parkResult.parked;
+        }
+    } else if (recovery?.state === 'failed') {
+        await acknowledgeGenerationRecovery(recovery.generationId);
+    }
+
+    removeChatWorkspaceTab(tab.key);
+    if (isCurrentWorkspaceTab(tab)) {
+        const nextTab = listChatWorkspaceTabs().find(candidate => candidate.key !== tab.key);
+        if (nextTab) {
+            await openChatWorkspaceTab(nextTab, { discardCurrentChat });
+        } else {
+            await closeCurrentChat({ discardPending: discardCurrentChat });
+        }
+    }
+    renderChatWorkspaceTabs();
+}
+
+function createWorkspaceStatus(recovery) {
+    const status = document.createElement('span');
+    status.className = 'top_chat_tab_status';
+    if (!recovery?.state) {
+        return status;
+    }
+    const icon = document.createElement('i');
+    const text = document.createElement('span');
+    text.className = 'sr-only';
+    if (['queued', 'running'].includes(recovery.state)) {
+        status.classList.add('generating');
+        icon.className = 'fa-solid fa-spinner fa-spin';
+        text.textContent = recovery.state === 'queued' ? translate('Queued') : translate('Generating');
+    } else if (recovery.state === 'completed') {
+        status.classList.add('completed');
+        icon.className = 'icon-supported fa-solid fa-circle-check';
+        text.textContent = translate('Done');
+    } else if (recovery.state === 'failed') {
+        status.classList.add('failed');
+        icon.className = 'fa-solid fa-circle-exclamation';
+        text.textContent = translate('Failed');
+    } else {
+        return status;
+    }
+    icon.setAttribute('aria-hidden', 'true');
+    status.append(icon, text);
+    return status;
+}
+
+function createWorkspaceAvatar(tab) {
+    const avatar = document.createElement('span');
+    avatar.className = 'top_chat_tab_avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+
+    if (tab.ownerType === 'group') {
+        const group = groups.find(item => String(item.id) === tab.ownerId);
+        const groupAvatar = getGroupAvatar(group).get(0);
+        groupAvatar?.removeAttribute('title');
+        if (groupAvatar) {
+            avatar.append(groupAvatar);
+            return avatar;
+        }
+    }
+
+    const image = document.createElement('img');
+    image.alt = '';
+    image.src = tab.ownerId === 'none' ? default_avatar : getThumbnailUrl('avatar', tab.ownerId);
+    image.addEventListener('error', () => {
+        if (image.src !== new URL(default_avatar, document.baseURI).href) {
+            image.src = default_avatar;
+        }
+    });
+    avatar.append(image);
+    return avatar;
+}
+
+function renderChatWorkspaceTabs() {
+    if (!topChatButtons.tabsToggle || !topChatTabsList) {
+        return;
+    }
+    const entitled = isPatron();
+    document.getElementById('patron-tab-close-behavior-block')?.classList.toggle('displayNone', !entitled);
+    topChatButtons.tabsToggle.classList.toggle('locked', !entitled);
+    topChatButtons.tabsToggle.title = entitled ? translate('Open chat tabs') : translate('Chat tabs require patron access');
+    topChatButtons.tabsToggle.setAttribute('aria-label', topChatButtons.tabsToggle.title);
+    topChatButtons.tabsToggle.querySelector('i')?.classList.toggle('fa-lock', !entitled);
+    topChatButtons.tabsToggle.querySelector('i')?.classList.toggle('fa-folder-tree', entitled);
+
+    const recoveriesCount = latestGenerationRecoveries.length;
+    if (topChatTabsBadge) {
+        topChatTabsBadge.hidden = recoveriesCount === 0;
+        topChatTabsBadge.textContent = recoveriesCount ? String(recoveriesCount) : '';
+    }
+    topChatTabsList.replaceChildren();
+    if (!entitled) {
+        return;
+    }
+
+    for (const tab of listChatWorkspaceTabs()) {
+        const container = document.createElement('div');
+        container.className = 'top_chat_tab';
+        container.classList.toggle('selected', isCurrentWorkspaceTab(tab));
+        container.title = tab.label;
+
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'top_chat_tab_open';
+        open.setAttribute('role', 'tab');
+        open.setAttribute('aria-selected', String(isCurrentWorkspaceTab(tab)));
+        const label = document.createElement('span');
+        label.className = 'sr-only';
+        label.textContent = tab.label;
+        open.append(createWorkspaceAvatar(tab), createWorkspaceStatus(getWorkspaceTabRecovery(tab)), label);
+        open.addEventListener('click', () => { void openChatWorkspaceTab(tab); });
+
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'top_chat_tab_close';
+        close.title = translate('Close chat tab');
+        close.setAttribute('aria-label', `${translate('Close chat tab')}: ${tab.label}`);
+        close.innerHTML = '<i class="fa-solid fa-times" aria-hidden="true"></i>';
+        close.addEventListener('click', () => { void closeChatWorkspaceTab(tab); });
+        container.append(open, close);
+        topChatTabsList.append(container);
+    }
+}
+
+async function refreshWorkspaceGenerationStates() {
+    if (!isPatron()) {
+        latestGenerationRecoveries = [];
+        renderChatWorkspaceTabs();
+        return;
+    }
+    latestGenerationRecoveries = await getServerGenerationRecoveries();
+    for (const recovery of latestGenerationRecoveries) {
+        savePendingGeneration(recovery);
+        if (recovery.chatIdentity.groupId) {
+            const group = groups.find(item => String(item.id) === recovery.chatIdentity.groupId);
+            upsertChatWorkspaceTab({
+                ownerType: 'group',
+                ownerId: recovery.chatIdentity.groupId,
+                chatId: recovery.chatIdentity.chatId,
+                label: `${group?.name || translate('Group')}: ${recovery.chatIdentity.chatId}`,
+                createdAt: recovery.createdAt,
+            });
+        } else {
+            const character = characters[Number(recovery.chatIdentity.characterId)];
+            if (character?.avatar) {
+                upsertChatWorkspaceTab({
+                    ownerType: 'character',
+                    ownerId: character.avatar,
+                    chatId: recovery.chatIdentity.chatId,
+                    label: `${character.name}: ${recovery.chatIdentity.chatId}`,
+                    createdAt: recovery.createdAt,
+                });
+            }
+        }
+    }
+    renderChatWorkspaceTabs();
+}
+
+function rememberCurrentChatWorkspaceTab() {
+    if (!isPatron() || workspaceTabNavigationInProgress) {
+        return;
+    }
+    const current = getCurrentChatWorkspaceTab();
+    if (current) {
+        upsertChatWorkspaceTab(current);
+    }
+    renderChatWorkspaceTabs();
+}
+
+async function toggleChatWorkspaceTabs(show = undefined) {
+    if (!isPatron()) {
+        await callGenericPopup(
+            translate('Chat tabs and background generations require patron access.'),
+            POPUP_TYPE.TEXT,
+        );
+        return;
+    }
+    const shouldShow = typeof show === 'boolean' ? show : topChatTabs?.hidden !== false;
+    topChatBarElement.classList.toggle('tabs-open', shouldShow);
+    if (topChatTabs) {
+        topChatTabs.hidden = !shouldShow;
+    }
+    if (shouldShow) {
+        rememberCurrentChatWorkspaceTab();
+        await refreshWorkspaceGenerationStates();
+    }
+}
+
 function initTopChatUi() {
     if (!topChatBarElement || !topChatBarChatNameSelect) {
         return;
@@ -2873,6 +3254,14 @@ function initTopChatUi() {
     bindTopChatButton(topChatButtons.renameChat, renameCurrentTopChat);
     bindTopChatButton(topChatButtons.deleteChat, deleteCurrentTopChat);
     bindTopChatButton(topChatButtons.closeChat, handleCloseChatAction);
+    bindTopChatButton(topChatButtons.tabsToggle, () => toggleChatWorkspaceTabs());
+    bindTopChatButton(topChatButtons.tabsBack, () => toggleChatWorkspaceTabs(false));
+    bindTopChatButton(topChatButtons.tabsAdd, async () => {
+        const parkResult = await parkForegroundGeneration();
+        if (parkResult.ok) {
+            await toggleChatWorkspaceTabs(false);
+        }
+    });
 
     topChatBarChatNameSelect.addEventListener('change', async () => {
         await openTopChatById(topChatBarChatNameSelect.value);
@@ -2904,6 +3293,7 @@ function initTopChatUi() {
     }, debounce_timeout.short);
 
     eventSource.on(event_types.CHAT_CHANGED, () => requestTopChatUiRefresh(false));
+    eventSource.on(event_types.CHAT_CHANGED, rememberCurrentChatWorkspaceTab);
     eventSource.on(event_types.CHAT_RENAMED, () => requestTopChatUiRefresh(true));
     eventSource.on(event_types.BRANCH_CREATED, () => requestTopChatUiRefresh(true));
     eventSource.on(event_types.CHECKPOINT_CREATED, () => requestTopChatUiRefresh(true));
@@ -2927,10 +3317,19 @@ function initTopChatUi() {
         bindTopChatConnectionProfilesSelect();
         restoreTopChatPanelsState();
         void refreshTopChatConnectionProfiles();
+        rememberCurrentChatWorkspaceTab();
+        void refreshWorkspaceGenerationStates();
+        const recoveryRefresh = setInterval(() => {
+            if (!document.hidden) {
+                void refreshWorkspaceGenerationStates();
+            }
+        }, 3000);
+        window.addEventListener('pagehide', () => clearInterval(recoveryRefresh), { once: true });
     });
 
     void refreshTopChatBarState();
     syncTopChatConnectionProfilesSelect();
+    renderChatWorkspaceTabs();
 }
 
 export const talkativeness_default = 0.5;
@@ -3249,6 +3648,9 @@ const topChatConnectionProfiles = /** @type {HTMLDivElement} */ (document.getEle
 const topChatConnectionProfilesSelect = /** @type {HTMLSelectElement} */ (document.getElementById('top_chat_connection_profiles_select'));
 const topChatConnectionProfilesStatus = /** @type {HTMLDivElement} */ (document.getElementById('top_chat_connection_profiles_status'));
 const topChatConnectionProfilesModelIcon = /** @type {HTMLDivElement} */ (document.getElementById('top_chat_connection_profiles_model_icon'));
+const topChatTabs = /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_tabs'));
+const topChatTabsList = /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_tabs_list'));
+const topChatTabsBadge = /** @type {HTMLSpanElement} */ (document.getElementById('top_chat_bar_tabs_badge'));
 const topChatButtons = {
     toggleSidebar: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_toggle_sidebar')),
     toggleConnectionProfiles: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_toggle_connection_profiles')),
@@ -3257,10 +3659,18 @@ const topChatButtons = {
     renameChat: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_rename_chat')),
     deleteChat: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_delete_chat')),
     closeChat: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_close_chat')),
+    tabsToggle: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_tabs_toggle')),
+    tabsBack: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_tabs_back')),
+    tabsAdd: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_tabs_add')),
 };
 let isTopChatConnectionProfilesBound = false;
 let topChatSidebarPopulateToken = '';
 let isManageChatsActionPending = false;
+let latestGenerationRecoveries = [];
+let foregroundGenerationPromise = null;
+let foregroundGenerationId = '';
+const foregroundGenerationReadiness = createGenerationReadinessSignal();
+let workspaceTabNavigationInProgress = false;
 
 export let token;
 const ACTIVE_SESSION_STORAGE_KEY = 'aikobots.tabSessionId';
@@ -4204,9 +4614,11 @@ export function resultCheckStatus() {
  * @param {number} id The ID of the character to switch to.
  * @param {object} [options] Options for the switch.
  * @param {boolean} [options.switchMenu=true] Whether to switch the right menu to the character edit menu if the character is already selected.
+ * @param {boolean} [options.loadChat=true] Whether to load the character's current chat.
+ * @param {boolean} [options.flushPendingSave=true] Whether to flush the current chat before clearing it.
  * @returns {Promise<void>} A promise that resolves when the character is switched.
  */
-export async function selectCharacterById(id, { switchMenu = true } = {}) {
+export async function selectCharacterById(id, { switchMenu = true, loadChat = true, flushPendingSave = true } = {}) {
     if (characters[id] === undefined) {
         return;
     }
@@ -4233,7 +4645,7 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
 
             const deferredLoader = deferLoader();
             try {
-                await clearChat();
+                await clearChat({ flushPendingSave });
                 discardTemporaryCharacterChat();
                 cancelTtsPlay();
                 resetSelectedGroup();
@@ -4242,7 +4654,9 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
                 setCharacterId(id);
                 chat.length = 0;
                 chat_metadata = {};
-                await getChat();
+                if (loadChat) {
+                    await getChat();
+                }
             } finally {
                 await deferredLoader.clear();
             }
@@ -5826,8 +6240,39 @@ export function isPromptHiddenChatMessage(message, { allowToolInvocations = fals
     return !(allowToolInvocations && Array.isArray(message?.extra?.tool_invocations));
 }
 
-function getCoreChatPayloadForAssembly(coreChat) {
-    return coreChat;
+function getCoreChatPayloadForAssembly(coreChat, serverPreparationSource = null) {
+    return serverPreparationSource ? [] : coreChat;
+}
+
+/** Captures the content-free SQLite identity that the worker must verify before prompt preparation. */
+function getServerGenerationSource(type) {
+    if (!currentChatFileNameLooksSqlite() || !canUseServerGenerationPreparation()) {
+        return null;
+    }
+
+    const chatId = String(getCurrentChatId() || '');
+    const anchorMessageUuid = chat.at(-1)?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    if (!chatId || !isValidAikobotsUuid(anchorMessageUuid)) {
+        return null;
+    }
+
+    const chatRef = selected_group
+        ? { type: 'group', chatId }
+        : {
+            type: 'character',
+            avatarUrl: String(characters[this_chid]?.avatar || ''),
+            fileName: chatId,
+        };
+    if (chatRef.type === 'character' && !chatRef.avatarUrl) {
+        return null;
+    }
+
+    return {
+        chatRef,
+        expectedRevision: getChatSaveRevision(),
+        anchorMessageUuid,
+        generationType: String(type || 'normal'),
+    };
 }
 
 export function applyChunkedChatPayload(response, { replace = false, currentView = null } = {}) {
@@ -8543,13 +8988,12 @@ export async function getExtensionPromptSnapshot(source = extension_prompts) {
 }
 
 /**
- * Returns a filtered prompt-state payload for server-side chat-completion assembly.
- * This is narrower than the client extension registry shape and only includes
- * prompt data relevant to built-in generation behavior.
+ * Returns the browser-owned prompt injections needed by server-side assembly.
+ * Server-owned prompt producers are excluded so the owning worker remains authoritative.
  * @param {Record<string, any>} [source] Source prompt registry
  * @returns {Promise<{ modules: Record<string, any>, prompts: any[] }>}
  */
-export async function getServerPromptState(source = extension_prompts) {
+export async function getClientPromptInjectionSnapshot(source = extension_prompts) {
     const moduleKeyMap = {
         '1_memory': 'summary',
         '2_floating_prompt': 'authorsNote',
@@ -8564,6 +9008,9 @@ export async function getServerPromptState(source = extension_prompts) {
     };
 
     for (const key of Object.keys(source || {}).sort()) {
+        if (key === '3_vectors') {
+            continue;
+        }
         const prompt = source[key];
 
         if (!await shouldIncludeExtensionPrompt(prompt)) {
@@ -8907,6 +9354,7 @@ class StreamingProcessor {
         this.isStopped = false;
         this.isFinished = false;
         this.detachedRecoveryPending = false;
+        this.detachedRecoveryParked = false;
         this.generator = this.nullStreamingGeneration;
         this.abortController = new AbortController();
         this.firstMessageText = '...';
@@ -9253,8 +9701,10 @@ class StreamingProcessor {
 
     async onErrorStreaming(error = null) {
         const preserveDetachedGeneration = error?.generationRecoveryAvailable === true;
+        const parkedDetachedGeneration = error?.generationParked === true;
         this.detachedRecoveryPending = preserveDetachedGeneration;
-        if (preserveDetachedGeneration && this.generator?.generationId) {
+        this.detachedRecoveryParked = parkedDetachedGeneration;
+        if (preserveDetachedGeneration && !parkedDetachedGeneration && this.generator?.generationId) {
             exhaustedGenerationRecoveries.add(this.generator.generationId);
         }
         if (!preserveDetachedGeneration) {
@@ -9269,7 +9719,7 @@ class StreamingProcessor {
         const ephemeralMessage = chat[this.messageId];
         const shouldRestoreAuthoritativeMessage = isPendingStreamingSqliteMutationActive();
         clearPendingStreamingSqliteMutation(ephemeralMessage, { result: CHAT_SAVE_RESULT.FAILED });
-        if (shouldRestoreAuthoritativeMessage) {
+        if (shouldRestoreAuthoritativeMessage && error?.discardEphemeralMessage !== true) {
             await reloadCurrentChat({ flushPendingSave: false });
         }
     }
@@ -10087,6 +10537,28 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     let { messageBias, promptBias, isUserPromptBias } = getBiasStrings(textareaText, type);
+    let preparedOpenAIRequest = null;
+    let serverPreflightCompleted = false;
+    const canPrepareServerGeneration = !dryRun
+        && !generationRecovery
+        && currentChatFileNameLooksSqlite()
+        && canUseServerGenerationPreparation();
+
+    if (canPrepareServerGeneration) {
+        const pendingUserText = textareaText || (type === undefined ? oai_settings.send_if_empty.trim() : '');
+        const interceptorChat = pendingUserText
+            ? [{ mes: pendingUserText, is_user: true }]
+            : [chat.at(-1)].filter(Boolean);
+        console.debug('Running client generation preflight before chat mutation');
+        const aborted = await runGenerationInterceptors(interceptorChat, getMaxContextSize(), type, { preflightOnly: true });
+        if (aborted) {
+            console.debug('Generation aborted by client preflight');
+            unblockGeneration(type);
+            return Promise.resolve();
+        }
+        preparedOpenAIRequest = await buildOpenAIGenerateData(type, [], { jsonSchema });
+        serverPreflightCompleted = true;
+    }
 
     //*********************************
     //PRE FORMATING STRING
@@ -10159,6 +10631,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         charDepthPrompt,
         creatorNotes,
     } = getCharacterCardFields();
+    const serverPreparationSource = !dryRun ? getServerGenerationSource(type) : null;
 
     // Depth prompt (character-specific A/N)
     removeDepthPrompts();
@@ -10176,7 +10649,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         setExtensionPrompt(inject_ids.DEPTH_PROMPT, depthPromptText, extension_prompt_types.IN_CHAT, depthPromptDepth, extension_settings.note.allowWIScan, depthPromptRole);
     }
 
-    const logicalChat = getLogicalChatForPromptAssembly();
+    const logicalChat = serverPreparationSource ? [] : getLogicalChatForPromptAssembly();
 
     // First message in fresh 1-on-1 chat reacts to user/character settings changes
     if (logicalChat.length) {
@@ -10248,16 +10721,19 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     // Determine token limit
     let this_max_context = getMaxContextSize();
 
-    if (!dryRun) {
+    if (!dryRun && !(serverPreparationSource && serverPreflightCompleted)) {
         console.debug('Running extension interceptors');
-        const aborted = await runGenerationInterceptors(coreChat, this_max_context, type);
+        const interceptorChat = serverPreparationSource ? [chat.at(-1)].filter(Boolean) : coreChat;
+        const aborted = await runGenerationInterceptors(interceptorChat, this_max_context, type, {
+            preflightOnly: Boolean(serverPreparationSource),
+        });
 
         if (aborted) {
             console.debug('Generation aborted by extension interceptors');
             unblockGeneration(type);
             return Promise.resolve();
         }
-    } else {
+    } else if (dryRun) {
         console.debug('Skipping extension interceptors for dry run');
     }
 
@@ -10266,7 +10742,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     const useCfgPrompt = cfgGuidanceScale && cfgGuidanceScale.value !== 1;
 
     // Adjust max context based on CFG prompt to prevent overfitting
-    if (useCfgPrompt) {
+    if (useCfgPrompt && !serverPreparationSource) {
         const negativePrompt = getCfgPrompt(cfgGuidanceScale, true, true)?.value || '';
         const positivePrompt = getCfgPrompt(cfgGuidanceScale, false, true)?.value || '';
         if (negativePrompt || positivePrompt) {
@@ -10295,13 +10771,13 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         console.warn(`[Generate] World Info generation is deprecated for "${main_api}" and will only be assembled for chat-completions.`);
     }
 
-    let mesExamplesArray = parseMesExamples(mesExamples);
+    let mesExamplesArray = serverPreparationSource ? [] : parseMesExamples(mesExamples);
 
     // Set non-WI AN
     setFloatingPrompt();
 
     const chatForWI = coreChat.map(x => world_info_include_names ? `${x.name}: ${x.mes}` : x.mes).reverse();
-    const preliminaryOaiMessages = main_api === 'openai' ? setOpenAIMessages(coreChat) : [];
+    const preliminaryOaiMessages = main_api === 'openai' && !serverPreparationSource ? setOpenAIMessages(coreChat) : [];
     /** @type {import('./scripts/world-info.js').WIGlobalScanData} */
     const globalScanData = {
         personaDescription: persona,
@@ -10392,7 +10868,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
     let examplesString = '';
     let chatString = addChatsPreamble(addChatsSeparator(''));
-    let cyclePrompt = '';
+    let cyclePrompt = serverPreparationSource && isContinue ? String(chat.at(-1)?.mes || '') : '';
     const addUserAlignment = false;
     const userAlignmentMessage = '';
 
@@ -10425,7 +10901,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
     // Collect enough messages to fill the context
     let arrMes = new Array(chat2.length);
-    let tokenCount = await getMessagesTokenCount();
+    let tokenCount = serverPreparationSource ? 0 : await getMessagesTokenCount();
     let lastAddedIndex = 0;
 
     // Pre-allocate all injections first.
@@ -10513,7 +10989,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     // Estimate how many unpinned example messages fit in the context
-    tokenCount = await getMessagesTokenCount();
+    tokenCount = serverPreparationSource ? 0 : await getMessagesTokenCount();
     let count_exm_add = 0;
     if (!power_user.pin_examples) {
         for (let example of mesExamplesArray) {
@@ -10778,7 +11254,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
             const activeCharacter = globalThis.promptManager?.activeCharacter ?? characters[this_chid];
             const promptSnapshotTarget = getPromptSnapshotTarget(type, swipeTarget);
             const promptContext = await buildServerAssemblyPayload({
-                coreChat: getCoreChatPayloadForAssembly(coreChat),
+                coreChat: getCoreChatPayloadForAssembly(coreChat, serverPreparationSource),
                 name2: name2,
                 charDescription: description,
                 charPersonality: personality,
@@ -10796,8 +11272,16 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 jailbreakPromptOverride: jailbreak,
                 messages: oaiMessages,
                 messageExamples: oaiMessageExamples,
+                toolBudgetData: serverPreparationSource && preparedOpenAIRequest
+                    ? (Array.isArray(preparedOpenAIRequest.generateData?.tools)
+                        ? {
+                            tools: structuredClone(preparedOpenAIRequest.generateData.tools),
+                            tool_choice: structuredClone(preparedOpenAIRequest.generateData?.tool_choice),
+                        }
+                        : null)
+                    : undefined,
                 worldInfoRequest: {
-                    chat: chatForWI,
+                    chat: serverPreparationSource ? [] : chatForWI,
                     includeNames: world_info_include_names,
                     maxContext: this_max_context,
                     isDryRun: dryRun,
@@ -10816,7 +11300,10 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                     },
                     currentCharacterFilename: getCharaFilename(),
                     currentCharacterTags: Array.isArray(tag_map?.[tagKey]) ? tag_map[tagKey] : [],
-                    forcedActivations: getForcedActivationEntriesSnapshot(),
+                    forcedActivations: getForcedActivationEntriesSnapshot().map(entry => ({
+                        world: entry?.world,
+                        uid: entry?.uid,
+                    })),
                     timedWorldInfo: structuredClone(chat_metadata.timedWorldInfo || {}),
                     settings: {
                         world_info_depth,
@@ -10835,6 +11322,10 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                     tokenizerModel: getTokenizerModel(),
                 },
             });
+            if (serverPreparationSource) {
+                promptContext.generationSource = serverPreparationSource;
+                promptContext.promptRegexScripts = structuredClone(getRegexScripts({ allowedOnly: true }));
+            }
             if (!['quiet', 'impersonate'].includes(type)) {
                 promptContext.promptInspection = {
                     chatScope: getPromptSnapshotChatScope(),
@@ -10855,6 +11346,14 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         return Promise.resolve();
     }
 
+    const generationRecoveryContext = type === 'quiet'
+        ? null
+        : generationRecovery || createGenerationRecoveryContext(type, swipeTarget);
+    const onForegroundGenerationReady = generationId => {
+        foregroundGenerationId = generationId;
+        foregroundGenerationReadiness.notify();
+    };
+
     /**
      * Saves itemized prompt bits and calls streaming or non-streaming generation API.
      * @returns {Promise<void|*|Awaited<*>|String|{fromStream}|string|undefined|Object>}
@@ -10868,7 +11367,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         //set array object for prompt token itemization of this message
         let currentArrayEntry = Number(thisPromptBits.length - 1);
         const isServerAssembledOpenAI = main_api === 'openai' && !generate_data.prompt && !generate_data.input;
-        const canPersistPromptInspectorContent = isAdmin();
+        const canPersistPromptInspectorContent = isAdmin() && !serverPreparationSource;
         const canPersistPromptInspectorText = canPersistPromptInspectorContent || !isServerAssembledOpenAI;
         const promptSnapshotTarget = getPromptSnapshotTarget(type, swipeTarget);
         let additionalPromptStuff = {
@@ -10922,16 +11421,22 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
             }
 
             streamingProcessor.generator = await sendStreamingRequest(type, generate_data, {
-                generationRecovery: generationRecovery || createGenerationRecoveryContext(type, swipeTarget),
+                generationRecovery: generationRecoveryContext,
+                preparedRequest: serverPreparationSource ? preparedOpenAIRequest : null,
+                onGenerationReady: onForegroundGenerationReady,
             });
+            foregroundGenerationReadiness.notify();
 
             hideSwipeButtons();
             let getMessage = await streamingProcessor.generate();
             if (streamingProcessor?.detachedRecoveryPending) {
                 deferTemporaryGenerationAttempt(temporaryGenerationAttempt, streamingProcessor.generator?.generationId);
+                const parkedDetachedGeneration = streamingProcessor.detachedRecoveryParked;
                 streamingProcessor = null;
-                setTimeout(() => { void resumePendingGenerationForCurrentChat(); }, 0);
-                return;
+                if (!parkedDetachedGeneration) {
+                    setTimeout(() => { void resumePendingGenerationForCurrentChat(); }, 0);
+                }
+                return parkedDetachedGeneration ? { generationParked: true } : undefined;
             }
             let messageChunk = cleanUpMessage({
                 getMessage: getMessage,
@@ -10996,7 +11501,12 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 });
             }
         } else {
-            return await sendGenerationRequest(type, generate_data, { jsonSchema });
+            return await sendGenerationRequest(type, generate_data, {
+                jsonSchema,
+                generationRecovery: generationRecoveryContext,
+                preparedRequest: serverPreparationSource ? preparedOpenAIRequest : null,
+                onGenerationReady: onForegroundGenerationReady,
+            });
         }
     }
 
@@ -11010,6 +11520,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
      */
     async function onSuccess(data) {
         const openAIRequestId = data?.openAIRequestId ?? streamingProcessor?.generator?.openAIRequestId ?? null;
+        const generationId = data?.generationId ?? streamingProcessor?.generator?.generationId ?? null;
 
         if (!data) {
             consumeOpenAIResponseData(openAIRequestId);
@@ -11091,9 +11602,14 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         else {
             // Without streaming we'll be having a full message on continuation. Treat it as a last chunk.
             replyResult = originalType !== 'continue'
-                ? await saveReply({ type, getMessage, title, swipes, swipeReasoning, reasoning, reasoningSignature, imageUrls, openAIRequestId, swipeTarget })
+                ? await saveReply({ type, getMessage, title, swipes, swipeReasoning, reasoning, reasoningSignature, imageUrls, openAIRequestId, swipeTarget, messageUuid: generationRecoveryContext?.outputMessageUuid })
                 : await saveReply({ type: 'appendFinal', getMessage, title, swipes, swipeReasoning, reasoning, reasoningSignature, imageUrls, openAIRequestId });
             ({ type, getMessage } = replyResult);
+            if (originalType === 'continue' && isValidAikobotsUuid(generationId)) {
+                const targetMessage = chat[replyResult.messageId];
+                targetMessage.extra = targetMessage.extra || {};
+                targetMessage.extra[GENERATION_RECOVERY_MARKER_KEY] = generationId;
+            }
             if (temporaryGenerationAttempt && (String(getMessage || '').trim() || reasoning || imageUrls.length > 0)) {
                 temporaryGenerationAttempt.producedContent = true;
             }
@@ -11134,6 +11650,9 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 unblockGeneration(type);
                 streamingProcessor = null;
                 return Promise.resolve();
+            }
+            if (generationId) {
+                await acknowledgeGenerationRecovery(generationId);
             }
         }
 
@@ -11253,6 +11772,7 @@ async function getServerGenerationRecoveries() {
                 ...job?.recovery,
                 generationId: job?.generation_id,
                 serverRequestId: job?.request_id || '',
+                state: job?.state || '',
             })).filter(Boolean)
             : [];
     } catch {
@@ -11279,8 +11799,8 @@ function isGenerationRecoveryApplied(record) {
 /** Selects the local fast path or the oldest server recovery for the active chat. */
 async function findGenerationRecoveryForCurrentChat() {
     const currentIdentity = getGenerationRecoveryChatIdentity();
-    const local = getPendingGeneration();
-    if (local && isSameChatIdentity(local.chatIdentity, currentIdentity)) {
+    const local = listPendingGenerations().find(record => isSameChatIdentity(record.chatIdentity, currentIdentity));
+    if (local) {
         return local;
     }
 
@@ -11375,17 +11895,33 @@ export async function Generate(type, options = {}, dryRun = false) {
 
     const isForegroundGeneration = type !== 'quiet';
     if (isForegroundGeneration) {
+        foregroundGenerationId = '';
         is_send_press = true;
         setGenerationPreflightIndicator(true);
     }
 
     const stopBackgroundAudio = beginMobileBackgroundAudioGeneration();
+    const generationTask = generateInternal(type, options, dryRun, temporaryGenerationAttempt);
+    if (isForegroundGeneration) {
+        foregroundGenerationPromise = generationTask;
+    }
     try {
-        return await generateInternal(type, options, dryRun, temporaryGenerationAttempt);
+        return await generationTask;
+    } catch (error) {
+        if (error?.generationParked === true) {
+            deferTemporaryGenerationAttempt(temporaryGenerationAttempt, foregroundGenerationId);
+            return { generationParked: true };
+        }
+        throw error;
     } finally {
         await finalizeTemporaryGenerationAttempt(temporaryGenerationAttempt);
         if (isForegroundGeneration) {
             setGenerationPreflightIndicator(false);
+            foregroundGenerationReadiness.notify();
+            if (foregroundGenerationPromise === generationTask) {
+                foregroundGenerationPromise = null;
+                foregroundGenerationId = '';
+            }
         }
         stopBackgroundAudio();
     }
@@ -11847,6 +12383,8 @@ export function setInContextMessageId(firstIncludedMessageId) {
  * @typedef {object} AdditionalRequestOptions
  * @property {JsonSchema} [jsonSchema]
  * @property {object?} [generationRecovery]
+ * @property {object?} [preparedRequest] Provider options and tool schemas frozen before chat mutation.
+ * @property {(generationId: string) => void} [onGenerationReady] Called after detached job admission is durable.
  */
 
 /**
@@ -13915,7 +14453,7 @@ export async function refreshPristineFirstMessage() {
     return true;
 }
 
-export async function openCharacterChat(file_name) {
+export async function openCharacterChat(file_name, { skipClear = false, flushPendingSave = true } = {}) {
     if (blockMessageEditNavigation()) {
         return;
     }
@@ -13924,7 +14462,9 @@ export async function openCharacterChat(file_name) {
     const deferredLoader = deferLoader();
 
     try {
-        await clearChat();
+        if (!skipClear) {
+            await clearChat({ flushPendingSave });
+        }
         discardTemporaryCharacterChat();
         const previousChatFileName = String(characters[this_chid]?.chat || '');
         characters[this_chid]['chat'] = file_name;
@@ -16018,7 +16558,7 @@ function initManageChatsOwnerSelect() {
     manageChatsOwnerSelectorInitialized = true;
 }
 
-async function switchToManageChatsOwner(ownerContext) {
+async function switchToManageChatsOwner(ownerContext, { loadChat = true, flushPendingSave = true } = {}) {
     const normalizedOwner = normalizeManageChatsOwner(ownerContext);
     if (!normalizedOwner) {
         return false;
@@ -16029,32 +16569,44 @@ async function switchToManageChatsOwner(ownerContext) {
             return true;
         }
 
-        return await openGroupById(String(normalizedOwner.id));
+        return await openGroupById(String(normalizedOwner.id), { loadChat, flushPendingSave });
     }
 
     if (!selected_group && String(this_chid) === String(normalizedOwner.id)) {
         return true;
     }
 
-    await selectCharacterById(Number(normalizedOwner.id), { switchMenu: false });
+    await selectCharacterById(Number(normalizedOwner.id), { switchMenu: false, loadChat, flushPendingSave });
     return !selected_group && String(this_chid) === String(normalizedOwner.id);
 }
 
-export async function openManageChatsOwnerChat(ownerContext, fileName) {
+export async function openManageChatsOwnerChat(ownerContext, fileName, { discardCurrentChat = false } = {}) {
     const normalizedOwner = normalizeManageChatsOwner(ownerContext);
     if (!normalizedOwner || !fileName) {
         return;
     }
 
-    const switched = await switchToManageChatsOwner(normalizedOwner);
+    const ownerAlreadyActive = normalizedOwner.type === 'group'
+        ? String(selected_group) === String(normalizedOwner.id)
+        : !selected_group && String(this_chid) === String(normalizedOwner.id);
+    const switched = await switchToManageChatsOwner(normalizedOwner, {
+        loadChat: false,
+        flushPendingSave: !discardCurrentChat,
+    });
     if (!switched) {
         return;
     }
 
     if (normalizedOwner.type === 'group') {
-        await openGroupChat(String(normalizedOwner.id), fileName);
+        await openGroupChat(String(normalizedOwner.id), fileName, {
+            skipClear: !ownerAlreadyActive,
+            flushPendingSave: !discardCurrentChat,
+        });
     } else {
-        await openCharacterChat(fileName);
+        await openCharacterChat(fileName, {
+            skipClear: !ownerAlreadyActive,
+            flushPendingSave: !discardCurrentChat,
+        });
     }
 }
 
@@ -20195,14 +20747,14 @@ export async function renameChat(oldFileName, newName) {
  * If a message generation is in progress, it prompts the user to stop it first.
  * @returns {Promise<boolean>} True if the chat was successfully closed, false otherwise.
  */
-export async function closeCurrentChat() {
+export async function closeCurrentChat({ discardPending = false } = {}) {
     if (blockMessageEditNavigation()) {
         return false;
     }
 
     if (is_send_press == false) {
         await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
-        await clearChat();
+        await clearChat({ flushPendingSave: !discardPending });
         discardTemporaryCharacterChat();
         chat.length = 0;
         resetSelectedGroup();

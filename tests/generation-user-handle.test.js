@@ -12,9 +12,12 @@ const CONFIG_PATH = fs.existsSync(path.resolve(process.cwd(), 'config.yaml'))
 setConfigFilePath(CONFIG_PATH);
 
 let requireGenerationUserHandle;
+let getGenerationJobLimits;
 
 beforeAll(async () => {
-    const { router } = await import('../src/endpoints/backends/chat-completions.js');
+    const module = await import('../src/endpoints/backends/chat-completions.js');
+    const { router } = module;
+    getGenerationJobLimits = module.getGenerationJobLimits;
     requireGenerationUserHandle = router.stack.find(layer =>
         layer.handle?.name === 'requireGenerationUserHandle',
     ).handle;
@@ -47,5 +50,27 @@ describe('generation user ownership', () => {
         requireGenerationUserHandle({ user: { profile: { handle: 'alice' } } }, {}, next);
 
         expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses one slot for standard users and configured slots for entitled accounts', () => {
+        const readConfig = (key, fallback) => ({
+            enableUserAccounts: true,
+            'generationJobs.maxConcurrentPerUser': 3,
+            'generationJobs.maxQueuedPerUser': 4,
+        })[key] ?? fallback;
+
+        expect(getGenerationJobLimits({ user: { profile: { handle: 'standard' } } }, readConfig).maxConcurrentPerUser).toBe(1);
+        expect(getGenerationJobLimits({ user: { profile: { handle: 'patron', patron: true } } }, readConfig).maxConcurrentPerUser).toBe(3);
+        expect(getGenerationJobLimits({ user: { profile: { handle: 'admin', admin: true } } }, readConfig).maxConcurrentPerUser).toBe(3);
+        expect(getGenerationJobLimits({ user: { profile: { handle: 'standard' } } }, readConfig).maxQueuedPerUser).toBe(4);
+    });
+
+    it('entitles accounts-disabled local installations without requiring PM2', () => {
+        const readConfig = (key, fallback) => ({
+            enableUserAccounts: false,
+            'generationJobs.maxConcurrentPerUser': 2,
+        })[key] ?? fallback;
+
+        expect(getGenerationJobLimits({ user: { profile: { handle: 'default-user' } } }, readConfig).maxConcurrentPerUser).toBe(2);
     });
 });

@@ -748,6 +748,14 @@ The main Memory Books popup places `.stmb-help-drawer` below its title. Its two 
 
 The World Info drawer header owns the core `.world-info-locks-bar`, its preset selector, and its standard `.menu_button` actions. The bar uses smart-theme text, border, and UI-background colors from `public/style.css`, fades in on hover or keyboard focus, wraps its actions as space narrows, and stacks the selector above the actions below 600px. Layouts may adjust spacing but should preserve the selector's available width, visible keyboard focus, accessible button labels, and mobile stacking behavior.
 
+## 25. Patron chat tabs
+
+`#top_chat_bar_tabs_toggle` switches the existing Top Chat Bar into the patron workspace. The workspace keeps `#top_chat_bar_tabs` mounted in the same bar and scrolls `#top_chat_bar_tabs_list` horizontally. `#top_chat_bar_tabs_add` waits for the current generation's durable server admission, parks its delivery, and returns to the ordinary navigation controls so another character, group, or chat can be opened and automatically added. This readiness handoff is event-driven and has no fixed preparation timeout. The workspace does not mount another chat runtime: selecting a tab parks any detached stream delivery, discards its unsaved browser placeholder, and loads the selected authoritative chat directly through the owner-checked Manage Chats path without first loading that owner's previous chat.
+
+Each compact `.top_chat_tab` contains the character or group avatar, an accessible `.top_chat_tab_status`, and a close button. Its native hover title and accessible tab name contain the full `Botname: Chatname` label without widening the tab. Queued and generating jobs use the spinner state, completed jobs use the smart-theme green state, and failures use the smart-theme red state. The horizontal overflow remains scrollable but has no visible scrollbar. Layouts may adjust dimensions and spacing, but must preserve horizontal overflow, keyboard-operable buttons, visible focus, status text for assistive technology, and the close confirmation for active generation.
+
+Standard users see the same top-bar entry in its locked state. The explanation is local UI only and does not include a billing link. Tab identities and labels are content-free and session-scoped; generated content never belongs in layout state.
+
 ## Frontend production bundles
 
 The v5 client serves committed production bundles from `public/dist`; server and PM2 startup never compile frontend assets. After changing frontend JavaScript, static CSS, built-in extension manifests/resources, or startup templates, run `npm run build:frontend` and commit the generated files. CI and release checks should run `npm run check:frontend-build` to rebuild in a temporary directory and verify that the committed output is current.

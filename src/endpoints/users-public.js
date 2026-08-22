@@ -5,7 +5,7 @@ import express from 'express';
 import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import { getIpAddress } from '../express-common.js';
 import { color, getConfigValue } from '../util.js';
-import { KEY_PREFIX, getUserAvatar, toKey, getPasswordHash, getPasswordSalt, getUserDirectories } from '../users.js';
+import { KEY_PREFIX, getUserAvatar, toKey, getPasswordHash, getPasswordSalt, getUserDirectories, updateUserRecord } from '../users.js';
 import { cleanupDeadLorebookSettingsReferences } from '../dead-lorebook-cleanup.js';
 import { clearUserFlowState, getUserFlowState, setUserFlowState } from './user-flow-state.js';
 
@@ -182,15 +182,25 @@ router.post('/recover-step2', async (request, response) => {
             return response.status(403).json({ error: 'Incorrect code' });
         }
 
-        if (request.body.newPassword) {
-            const salt = getPasswordSalt();
-            user.password = getPasswordHash(request.body.newPassword, salt);
-            user.salt = salt;
-            await storage.setItem(toKey(user.handle), user);
-        } else {
-            user.password = '';
-            user.salt = '';
-            await storage.setItem(toKey(user.handle), user);
+        const updatedUser = await updateUserRecord(user.handle, current => {
+            if (!current.enabled) {
+                return current;
+            }
+            if (request.body.newPassword) {
+                const salt = getPasswordSalt();
+                current.password = getPasswordHash(request.body.newPassword, salt);
+                current.salt = salt;
+            } else {
+                current.password = '';
+                current.salt = '';
+            }
+            return current;
+        });
+        if (!updatedUser) {
+            return response.status(404).json({ error: 'User not found' });
+        }
+        if (!updatedUser.enabled) {
+            return response.status(403).json({ error: 'User is disabled' });
         }
 
         await recoverLimiter.delete(ip);

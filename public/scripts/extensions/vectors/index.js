@@ -35,6 +35,7 @@ import { SlashCommandEnumValue, enumTypes } from '../../slash-commands/SlashComm
 import { slashCommandReturnHelper } from '../../slash-commands/SlashCommandReturnHelper.js';
 import { generateWebLlmChatPrompt, isWebLlmSupported } from '../shared.js';
 import { WebLlmVectorProvider } from './webllm.js';
+import { canUseVectorServerGenerationPreparation } from './capability.js';
 import { removeReasoningFromString } from '../../reasoning.js';
 import { oai_settings } from '../../openai.js';
 
@@ -742,6 +743,7 @@ function overlapChunks(chunk, index, chunks, overlapSize) {
 }
 
 window['vectors_rearrangeChat'] = rearrangeChat;
+window['vectors_canUseServerGenerationPreparation'] = () => canUseVectorServerGenerationPreparation(settings);
 
 const onChatEvent = debounce(async () => await moduleWorker.update(), debounce_timeout.relaxed);
 

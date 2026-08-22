@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import storage from 'node-persist';
 import express from 'express';
 
-import { getUserAvatar, toKey, getPasswordHash, getPasswordSalt, createBackupArchive, ensurePublicDirectoriesExist, toAvatarKey } from '../users.js';
+import { getUserAvatar, toKey, getPasswordHash, getPasswordSalt, createBackupArchive, ensurePublicDirectoriesExist, toAvatarKey, updateUserRecord } from '../users.js';
 import { SETTINGS_FILE } from '../constants.js';
 import { getPersonasPath } from '../persona-repository.js';
 import { checkForNewContent, CONTENT_TYPES } from './content-manager.js';
@@ -48,6 +48,7 @@ router.get('/me', async (request, response) => {
             name: user.name,
             avatar: await getUserAvatar(user.handle),
             admin: user.admin,
+            patron: Boolean(user.patron),
             password: !!user.password,
             created: user.created,
         };
@@ -119,12 +120,31 @@ router.post('/change-password', async (request, response) => {
             return response.status(403).json({ error: 'Unauthorized' });
         }
 
-        /** @type {import('../users.js').User} */
-        const user = await storage.getItem(toKey(request.body.handle));
-
+        const existingUser = await storage.getItem(toKey(request.body.handle));
+        const user = existingUser && await updateUserRecord(request.body.handle, current => {
+            if (!current.enabled) {
+                return current;
+            }
+            if (!request.user.profile.admin && current.password && current.password !== getPasswordHash(request.body.oldPassword, current.salt)) {
+                return null;
+            }
+            if (request.body.newPassword) {
+                const salt = getPasswordSalt();
+                current.password = getPasswordHash(request.body.newPassword, salt);
+                current.salt = salt;
+            } else {
+                current.password = '';
+                current.salt = '';
+            }
+            return current;
+        });
         if (!user) {
-            console.error('Change password failed: User not found');
-            return response.status(404).json({ error: 'User not found' });
+            if (!existingUser) {
+                console.error('Change password failed: User not found');
+                return response.status(404).json({ error: 'User not found' });
+            }
+            console.error('Change password failed: Incorrect password');
+            return response.status(403).json({ error: 'Incorrect password' });
         }
 
         if (!user.enabled) {
@@ -132,21 +152,6 @@ router.post('/change-password', async (request, response) => {
             return response.status(403).json({ error: 'User is disabled' });
         }
 
-        if (!request.user.profile.admin && user.password && user.password !== getPasswordHash(request.body.oldPassword, user.salt)) {
-            console.error('Change password failed: Incorrect password');
-            return response.status(403).json({ error: 'Incorrect password' });
-        }
-
-        if (request.body.newPassword) {
-            const salt = getPasswordSalt();
-            user.password = getPasswordHash(request.body.newPassword, salt);
-            user.salt = salt;
-        } else {
-            user.password = '';
-            user.salt = '';
-        }
-
-        await storage.setItem(toKey(request.body.handle), user);
         return response.sendStatus(204);
     } catch (error) {
         console.error(error);
@@ -213,17 +218,14 @@ router.post('/change-name', async (request, response) => {
             return response.status(403).json({ error: 'Unauthorized' });
         }
 
-        /** @type {import('../users.js').User} */
-        const user = await storage.getItem(toKey(request.body.handle));
-
+        const user = await updateUserRecord(request.body.handle, current => {
+            current.name = request.body.name;
+            return current;
+        });
         if (!user) {
             console.warn('Change name failed: User not found');
             return response.status(404).json({ error: 'User not found' });
         }
-
-        user.name = request.body.name;
-        await storage.setItem(toKey(request.body.handle), user);
-
         return response.sendStatus(204);
     } catch (error) {
         console.error('Change name failed', error);

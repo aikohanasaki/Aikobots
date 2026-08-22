@@ -1,11 +1,10 @@
 import fs from 'node:fs';
 import yaml from 'yaml';
-import storage from 'node-persist';
 import {
     initUserStorage,
     getPasswordSalt,
     getPasswordHash,
-    toKey,
+    updateUserRecord,
 } from './users.js';
 
 /**
@@ -21,6 +20,7 @@ async function initStorage(configPath) {
         process.exit(1);
     }
 
+    globalThis.DATA_ROOT = dataRoot;
     await initUserStorage(dataRoot);
 }
 
@@ -33,33 +33,27 @@ async function initStorage(configPath) {
 export async function recoverPassword(configPath, userAccount, userPassword) {
     await initStorage(configPath);
 
-    /**
-     * @type {import('./users').User}
-     */
-    const user = await storage.get(toKey(userAccount));
+    const user = await updateUserRecord(userAccount, current => {
+        if (!current.enabled) {
+            console.log('User is disabled. Enabling...');
+            current.enabled = true;
+        }
 
+        if (userPassword) {
+            console.log('Setting new password...');
+            const salt = getPasswordSalt();
+            current.password = getPasswordHash(userPassword, salt);
+            current.salt = salt;
+        } else {
+            console.log('Setting an empty password...');
+            current.password = '';
+            current.salt = '';
+        }
+        return current;
+    });
     if (!user) {
         console.error(`User "${userAccount}" not found.`);
         process.exit(1);
     }
-
-    if (!user.enabled) {
-        console.log('User is disabled. Enabling...');
-        user.enabled = true;
-    }
-
-    if (userPassword) {
-        console.log('Setting new password...');
-        const salt = getPasswordSalt();
-        const passwordHash = getPasswordHash(userPassword, salt);
-        user.password = passwordHash;
-        user.salt = salt;
-    } else {
-        console.log('Setting an empty password...');
-        user.password = '';
-        user.salt = '';
-    }
-
-    await storage.setItem(toKey(userAccount), user);
     console.log('User recovered. A program will exit now.');
 }

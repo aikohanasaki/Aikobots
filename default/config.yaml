@@ -84,6 +84,14 @@ requestProxy:
     - 127.0.0.1
 # Enable multi-user mode
 enableUserAccounts: true
+# Shared detached-generation scheduling. A single Node worker can use multiple slots.
+generationJobs:
+  maxConcurrentPerUser: 2
+  maxQueuedPerUser: 2
+  maxConcurrentGlobal: 20
+  reservedFirstGenerationSlots: 4
+  maxQueuedGlobal: 10
+  secondaryPriorityAgeSeconds: 60
 # Allow non-admin users to install, update, switch, and load their own third-party local extensions.
 # Leave this false on hosted or multi-user instances unless all users are trusted to run code.
 allowUserThirdPartyExtensions: false

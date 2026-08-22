@@ -1,4 +1,5 @@
-const STORAGE_KEY = 'aikobots.pending-generation.v1';
+const STORAGE_KEY = 'aikobots.pending-generations.v2';
+const LEGACY_STORAGE_KEY = 'aikobots.pending-generation.v1';
 const MAX_PENDING_AGE_MS = 7 * 24 * 60 * 60_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RECOVERABLE_TYPES = new Set(['normal', 'regenerate', 'continue', 'swipe']);
@@ -64,16 +65,51 @@ export function normalizePendingGeneration(value, now = Date.now()) {
         outputMessageUuid,
         createdAt,
         startedAt: Number.isFinite(Number(value.startedAt)) ? Number(value.startedAt) : createdAt,
+        stream: value.stream !== false,
         canMultiSwipe: Boolean(value.canMultiSwipe),
         serverRequestId: typeof value.serverRequestId === 'string' ? value.serverRequestId : '',
         forceChid: value.forceChid !== null && value.forceChid !== undefined && Number.isInteger(Number(value.forceChid))
             ? Number(value.forceChid)
             : null,
         swipeTarget,
+        ...(['queued', 'running', 'completed', 'failed', 'cancelled'].includes(value.state) ? { state: value.state } : {}),
     };
 }
 
-/** Stores the single page-reload-resumable generation owned by this browser tab. */
+/** Returns every valid pending generation, migrating the legacy single record once. */
+export function listPendingGenerations(storage = getDefaultStorage(), now = Date.now()) {
+    if (!storage) {
+        return [];
+    }
+
+    try {
+        let values = [];
+        const raw = storage.getItem(STORAGE_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            values = Array.isArray(parsed?.jobs) ? parsed.jobs : [];
+        } else {
+            const legacyRaw = storage.getItem(LEGACY_STORAGE_KEY);
+            if (legacyRaw) {
+                values = [JSON.parse(legacyRaw)];
+            }
+        }
+        const normalized = values.map(value => normalizePendingGeneration(value, now)).filter(Boolean);
+        storage.setItem(STORAGE_KEY, JSON.stringify({ version: 2, jobs: normalized }));
+        storage.removeItem(LEGACY_STORAGE_KEY);
+        return normalized;
+    } catch {
+        try {
+            storage.removeItem(STORAGE_KEY);
+            storage.removeItem(LEGACY_STORAGE_KEY);
+        } catch {
+            // Storage is unavailable; there is nothing recoverable to return.
+        }
+        return [];
+    }
+}
+
+/** Stores or updates one content-free page-reload-resumable generation. */
 export function savePendingGeneration(value, storage = getDefaultStorage()) {
     if (!storage) {
         return null;
@@ -85,37 +121,28 @@ export function savePendingGeneration(value, storage = getDefaultStorage()) {
     }
 
     try {
-        storage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+        const jobs = listPendingGenerations(storage).filter(job => job.generationId !== normalized.generationId);
+        jobs.push(normalized);
+        jobs.sort((left, right) => left.createdAt - right.createdAt || left.generationId.localeCompare(right.generationId));
+        storage.setItem(STORAGE_KEY, JSON.stringify({ version: 2, jobs }));
         return normalized;
     } catch {
         return null;
     }
 }
 
-/** Returns a valid pending generation, discarding malformed or expired state. */
-export function getPendingGeneration(storage = getDefaultStorage(), now = Date.now()) {
-    if (!storage) {
-        return null;
+/** Persists an admitted detached job before exposing it to foreground navigation. */
+export function recordGenerationAdmission(value, onGenerationReady, storage = getDefaultStorage()) {
+    const normalized = savePendingGeneration(value, storage);
+    if (normalized) {
+        onGenerationReady?.(normalized.generationId);
     }
+    return normalized;
+}
 
-    try {
-        const raw = storage.getItem(STORAGE_KEY);
-        if (!raw) {
-            return null;
-        }
-        const normalized = normalizePendingGeneration(JSON.parse(raw), now);
-        if (!normalized) {
-            storage.removeItem(STORAGE_KEY);
-        }
-        return normalized;
-    } catch {
-        try {
-            storage.removeItem(STORAGE_KEY);
-        } catch {
-            // Storage is unavailable; there is nothing recoverable to return.
-        }
-        return null;
-    }
+/** Returns the oldest valid pending generation for compatibility with single-job callers. */
+export function getPendingGeneration(storage = getDefaultStorage(), now = Date.now()) {
+    return listPendingGenerations(storage, now)[0] || null;
 }
 
 /** Clears the pending generation when it still belongs to the supplied job ID. */
@@ -126,12 +153,12 @@ export function clearPendingGeneration(generationId = null, storage = getDefault
 
     try {
         if (generationId) {
-            const current = getPendingGeneration(storage);
-            if (current?.generationId !== generationId) {
-                return;
-            }
+            const jobs = listPendingGenerations(storage).filter(job => job.generationId !== generationId);
+            storage.setItem(STORAGE_KEY, JSON.stringify({ version: 2, jobs }));
+        } else {
+            storage.removeItem(STORAGE_KEY);
+            storage.removeItem(LEGACY_STORAGE_KEY);
         }
-        storage.removeItem(STORAGE_KEY);
     } catch {
         // Storage is best-effort; generation cancellation and chat writes remain authoritative.
     }

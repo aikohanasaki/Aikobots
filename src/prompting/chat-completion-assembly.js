@@ -2329,6 +2329,14 @@ export async function assembleChatCompletionPrompt(payload = {}) {
         activeCharacter: payload.activeCharacter || null,
         env,
     });
+    const messageExamples = Array.isArray(payload.messageExamples) && payload.messageExamples.length
+        ? structuredClone(payload.messageExamples)
+        : normalizedMesExamples
+            .split(/<START>/gi)
+            .slice(1)
+            .map(block => `<START>\n${block.trim()}\n`.replace(/<START>/i, '{Example Dialogue:}'))
+            .map(block => parseExampleIntoIndividual(block, env.user, env.char, groupNames, true, Boolean(payload.selectedGroup)))
+            .filter(block => block.length > 0);
 
     const context = {
         ...payload,
@@ -2341,7 +2349,7 @@ export async function assembleChatCompletionPrompt(payload = {}) {
         powerUser: payload.powerUser || {},
         extensionPrompts: resolvedExtensionPrompts,
         messages: Array.isArray(payload.messages) ? structuredClone(payload.messages) : [],
-        messageExamples: Array.isArray(payload.messageExamples) ? structuredClone(payload.messageExamples) : [],
+        messageExamples,
         canUseTools: Boolean(payload.canUseTools),
         toolBudgetData: payload.toolBudgetData || null,
         personaDescriptionPosition: payload.personaDescriptionPosition || { IN_PROMPT: 0 },

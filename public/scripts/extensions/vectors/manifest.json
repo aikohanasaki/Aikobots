@@ -6,6 +6,9 @@
         "embeddings"
     ],
     "generate_interceptor": "vectors_rearrangeChat",
+    "generation_interceptor_mode": "server-prompt",
+    "generation_interceptor_capability_check": "vectors_canUseServerGenerationPreparation",
+    "server_js": "server.js",
     "js": "index.js",
     "css": "style.css",
     "author": "Cohee#1207",

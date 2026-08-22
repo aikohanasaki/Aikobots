@@ -51,6 +51,10 @@
                         <span class="userStatus">&nbsp;</span>
                     </span>
                     <span>
+                        <span data-i18n="Patron access:">Patron access:</span>
+                        <span class="userPatronStatus">&nbsp;</span>
+                    </span>
+                    <span>
                         <span data-i18n="Created:">Created:</span>
                         <span class="userCreated">&nbsp;</span>
                     </span>
@@ -80,6 +84,9 @@
                     </div>
                     <div class="userDemoteButton menu_button" title="Demote user to regular user." data-i18n="[title]Demote user to regular user.">
                         <i class="fa-fw fa-solid fa-arrow-down"></i>
+                    </div>
+                    <div class="userPatronButton menu_button" title="Grant patron access" data-i18n="[title]Grant patron access">
+                        <i class="fa-fw fa-solid fa-crown"></i>
                     </div>
                 </div>
                 <div class="flex-container">
@@ -210,6 +217,10 @@
                 <span data-i18n="Confirm Password:">Confirm Password:</span>
                 <input name="confirm" class="createUserConfirmPassword text_pole" type="password" placeholder="[ No password ]" autocomplete="new-password" data-i18n="[placeholder][ No password ]">
             </div>
+            <label class="checkbox_label" for="create-user-patron">
+                <input id="create-user-patron" name="patron" type="checkbox">
+                <span data-i18n="Grant patron access">Grant patron access</span>
+            </label>
             <span data-i18n="This will create a new subfolder...">
                 This will create a new subfolder in the /data/ directory with the user's handle as the folder name.
             </span>

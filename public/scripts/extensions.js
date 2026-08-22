@@ -13,6 +13,7 @@ import { debounce_timeout } from './constants.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { SimpleMutex } from './util/SimpleMutex.js';
 import { isCoreWorldInfoLocksExtension } from './world-info-locks-policy.js';
+import { areGenerationInterceptorsServerCompatible } from './generation-interceptor-capability.js';
 
 export {
     getContext,
@@ -1439,7 +1440,7 @@ async function autoUpdateExtensions(forceAll) {
  * @param {string} type Generation type
  * @returns {Promise<boolean>} True if generation should be aborted
  */
-export async function runGenerationInterceptors(chat, contextSize, type) {
+export async function runGenerationInterceptors(chat, contextSize, type, { preflightOnly = false } = {}) {
     let aborted = false;
     let exitImmediately = false;
 
@@ -1448,7 +1449,11 @@ export async function runGenerationInterceptors(chat, contextSize, type) {
         exitImmediately = immediately;
     };
 
-    for (const manifest of Object.values(manifests).filter(x => x.generate_interceptor).sort((a, b) => sortManifestsByOrder(a, b))) {
+    const generationManifests = Object.values(manifests)
+        .filter(x => x.generate_interceptor)
+        .filter(x => !preflightOnly || x.generation_interceptor_mode === 'client-preflight')
+        .sort((a, b) => sortManifestsByOrder(a, b));
+    for (const manifest of generationManifests) {
         const interceptorKey = manifest.generate_interceptor;
         if (typeof globalThis[interceptorKey] === 'function') {
             try {
@@ -1464,6 +1469,11 @@ export async function runGenerationInterceptors(chat, contextSize, type) {
     }
 
     return aborted;
+}
+
+/** Returns whether every enabled prompt interceptor can be deferred without changing its behavior. */
+export function canUseServerGenerationPreparation() {
+    return areGenerationInterceptorsServerCompatible(Object.values(manifests), globalThis);
 }
 
 /**

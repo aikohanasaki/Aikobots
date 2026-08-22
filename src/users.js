@@ -21,6 +21,7 @@ import { allowKeysExposure, readSecret, SECRETS_FILE, writeSecret } from './endp
 import { buildPersonasDocumentFromLegacySettings, getPersonasPath, readPersonasDocument } from './persona-repository.js';
 import { serverDirectory } from './server-directory.js';
 import { migrateLegacyStorageCheckState } from './user-storage-check.js';
+import { withDirectoryLock } from './file-system-lock.js';
 
 export const KEY_PREFIX = 'user:';
 const AVATAR_PREFIX = 'avatar:';
@@ -39,6 +40,11 @@ const PUBLIC_USER_AVATAR = '/img/default-user.png';
 const COOKIE_SECRET_PATH = 'cookie-secret.txt';
 const STORAGE_DIRECTORY = '_storage';
 const STORAGE_CORRUPT_DIRECTORY = '_storage-corrupt';
+const USER_RECORD_LOCK_DIRECTORY = '_user-record-locks';
+const USER_RECORD_LOCK_RETRY_MS = 50;
+const USER_RECORD_LOCK_TIMEOUT_MS = 10_000;
+const USER_RECORD_LOCK_STALE_MS = 60_000;
+const USER_RECORD_LOCK_HEARTBEAT_MS = 15_000;
 
 const STORAGE_KEYS = {
     csrfSecret: 'csrfSecret',
@@ -130,6 +136,7 @@ async function quarantineInvalidStorageFiles(storageDir) {
  * @property {string} salt - Salt used for hashing the password
  * @property {boolean} enabled - Whether the user is enabled
  * @property {boolean} admin - Whether the user is an admin (can manage other users)
+ * @property {boolean} [patron] - Whether the user can use patron generation features
  */
 
 /**
@@ -138,6 +145,7 @@ async function quarantineInvalidStorageFiles(storageDir) {
  * @property {string} name - The user's name. Displayed in the UI
  * @property {string} avatar - The user's avatar image
  * @property {boolean} [admin] - Whether the user is an admin (can manage other users)
+ * @property {boolean} [patron] - Whether the user can use patron generation features
  * @property {boolean} password - Whether the user is password protected
  * @property {boolean} [enabled] - Whether the user is enabled
  * @property {number} [created] - The timestamp when the user was created
@@ -495,6 +503,36 @@ export function toAvatarKey(handle) {
     return `${AVATAR_PREFIX}${handle}`;
 }
 
+/** Runs one user-record operation under a cross-process lock. */
+export async function withUserRecordLock(handle, operation) {
+    const lockKey = crypto.createHash('sha256').update(String(handle || '')).digest('hex');
+    return await withDirectoryLock({
+        lockPath: path.join(globalThis.DATA_ROOT, USER_RECORD_LOCK_DIRECTORY, `${lockKey}.lock`),
+        retryMs: USER_RECORD_LOCK_RETRY_MS,
+        timeoutMs: USER_RECORD_LOCK_TIMEOUT_MS,
+        staleMs: USER_RECORD_LOCK_STALE_MS,
+        heartbeatMs: USER_RECORD_LOCK_HEARTBEAT_MS,
+        timeoutMessage: 'Timed out waiting to update the user account.',
+    }, operation);
+}
+
+/** Reads, mutates, and atomically replaces one user record across PM2 workers. */
+export async function updateUserRecord(handle, mutation) {
+    return await withUserRecordLock(handle, async () => {
+        const user = await storage.getItem(toKey(handle));
+        if (!user) {
+            return null;
+        }
+
+        const updated = await mutation(structuredClone(user));
+        if (!updated) {
+            return null;
+        }
+        await storage.setItem(toKey(handle), updated);
+        return updated;
+    });
+}
+
 /**
  * Initializes the user storage.
  * @param {string} dataRoot The root directory for user data
@@ -637,16 +675,11 @@ export async function touchUserActivity(handle, timestamp = Date.now()) {
         return false;
     }
 
-    /** @type {User} */
-    const user = await storage.getItem(toKey(handle));
-
-    if (!user) {
-        return false;
-    }
-
-    user.lastActivityAt = timestamp;
-    await storage.setItem(toKey(handle), user);
-    return true;
+    const user = await updateUserRecord(handle, current => {
+        current.lastActivityAt = timestamp;
+        return current;
+    });
+    return Boolean(user);
 }
 
 /**

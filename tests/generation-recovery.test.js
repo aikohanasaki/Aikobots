@@ -3,6 +3,8 @@ import { describe, expect, it } from '@jest/globals';
 import {
     clearPendingGeneration,
     getPendingGeneration,
+    listPendingGenerations,
+    recordGenerationAdmission,
     savePendingGeneration,
 } from '../public/scripts/generation-recovery.js';
 
@@ -24,6 +26,7 @@ function createRecord(createdAt = Date.now()) {
         outputMessageUuid: '33333333-3333-4333-8333-333333333333',
         createdAt,
         startedAt: createdAt - 100,
+        stream: true,
         canMultiSwipe: false,
         serverRequestId: 'request-1',
         forceChid: null,
@@ -67,5 +70,38 @@ describe('pending generation recovery', () => {
         expect(getPendingGeneration(storage)).toEqual(record);
         clearPendingGeneration(record.generationId, storage);
         expect(getPendingGeneration(storage)).toBeNull();
+    });
+
+    it('keeps multiple content-free jobs and clears only the requested generation', () => {
+        const storage = createStorage();
+        const first = createRecord(Date.now() - 100);
+        const second = {
+            ...createRecord(),
+            generationId: '44444444-4444-4444-8444-444444444444',
+            outputMessageUuid: '55555555-5555-4555-8555-555555555555',
+            chatIdentity: { groupId: '', characterId: '3', chatId: 'chat-2' },
+            state: 'queued',
+        };
+        savePendingGeneration(first, storage);
+        savePendingGeneration(second, storage);
+
+        expect(listPendingGenerations(storage)).toEqual([first, expect.objectContaining(second)]);
+        clearPendingGeneration(first.generationId, storage);
+        expect(listPendingGenerations(storage)).toEqual([expect.objectContaining(second)]);
+    });
+
+    it('publishes durable admission immediately after storing its content-free recovery route', () => {
+        const storage = createStorage();
+        const observed = [];
+        const record = { ...createRecord(), stream: false, state: 'running' };
+
+        recordGenerationAdmission(record, generationId => {
+            observed.push({ generationId, stored: getPendingGeneration(storage) });
+        }, storage);
+
+        expect(observed).toEqual([{
+            generationId: record.generationId,
+            stored: record,
+        }]);
     });
 });

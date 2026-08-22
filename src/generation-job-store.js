@@ -63,7 +63,8 @@ function openDatabase() {
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             finished_at INTEGER,
-            last_event_sequence INTEGER NOT NULL DEFAULT 0
+            last_event_sequence INTEGER NOT NULL DEFAULT 0,
+            slot_type TEXT
         );
         CREATE TABLE IF NOT EXISTS generation_events (
             job_id TEXT NOT NULL,
@@ -77,6 +78,7 @@ function openDatabase() {
     const migrate = database.transaction(() => {
         ensureGenerationJobColumn(database, 'recovery_json', 'recovery_json TEXT');
         ensureGenerationJobColumn(database, 'resolved_at', 'resolved_at INTEGER');
+        ensureGenerationJobColumn(database, 'slot_type', 'slot_type TEXT');
     });
     migrate.immediate();
     database.exec(`
@@ -85,6 +87,8 @@ function openDatabase() {
         CREATE INDEX IF NOT EXISTS idx_generation_jobs_user_recovery
             ON generation_jobs(user_key, resolved_at, created_at)
             WHERE recovery_json IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_generation_jobs_scheduler
+            ON generation_jobs(state, created_at);
     `);
     return database;
 }
@@ -119,6 +123,7 @@ function serializeJob(row) {
         updatedAt: row.updated_at,
         finishedAt: row.finished_at || null,
         lastEventSequence: row.last_event_sequence,
+        slotType: row.slot_type || null,
     };
 }
 
@@ -188,6 +193,7 @@ function normalizeGenerationRecovery(value) {
         outputMessageUuid,
         createdAt,
         startedAt,
+        stream: value.stream !== false,
         canMultiSwipe: Boolean(value.canMultiSwipe),
         forceChid,
         swipeTarget,
@@ -218,7 +224,7 @@ function pruneExpiredJobs(db, now = Date.now()) {
 /**
  * Creates an idempotent detached generation job without persisting prompt content.
  */
-export function createGenerationJob({ id, userHandle, requestFingerprint, requestId, recovery = null }) {
+export function createGenerationJob({ id, userHandle, requestFingerprint, requestId, recovery = null, limits = null }) {
     const db = openDatabase();
     const now = Date.now();
     const userKey = getUserKey(userHandle);
@@ -229,23 +235,58 @@ export function createGenerationJob({ id, userHandle, requestFingerprint, reques
         throw error;
     }
     const recoveryJson = normalizedRecovery ? JSON.stringify(normalizedRecovery) : null;
-    pruneExpiredJobs(db, now);
+    const admit = db.transaction(() => {
+        pruneExpiredJobs(db, now);
+        const existing = db.prepare('SELECT * FROM generation_jobs WHERE id = ?').get(id);
+        if (existing) {
+            if (existing.user_key !== userKey || existing.request_fingerprint !== requestFingerprint || existing.recovery_json !== recoveryJson) {
+                const error = new Error(existing.user_key === userKey
+                    ? 'Generation ID was already used for a different request or recovery target.'
+                    : 'Generation ID is not available.');
+                error.status = 409;
+                throw error;
+            }
+            return { created: false, job: serializeJob(existing) };
+        }
 
-    const inserted = db.prepare(`
-        INSERT OR IGNORE INTO generation_jobs (
-            id, user_key, request_fingerprint, state, request_id, recovery_json, created_at, updated_at
-        ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)
-    `).run(id, userKey, requestFingerprint, requestId, recoveryJson, now, now);
-    const row = db.prepare('SELECT * FROM generation_jobs WHERE id = ?').get(id);
-    if (row?.user_key !== userKey || row?.request_fingerprint !== requestFingerprint || row?.recovery_json !== recoveryJson) {
-        const error = new Error(row?.user_key === userKey
-            ? 'Generation ID was already used for a different request or recovery target.'
-            : 'Generation ID is not available.');
-        error.status = 409;
-        throw error;
-    }
+        const maxConcurrentPerUser = Number(limits?.maxConcurrentPerUser);
+        const configuredQueuedPerUser = Number(limits?.maxQueuedPerUser);
+        const maxQueuedPerUser = Number.isInteger(configuredQueuedPerUser) && configuredQueuedPerUser >= 0
+            ? configuredQueuedPerUser
+            : 0;
+        if (Number.isInteger(maxConcurrentPerUser) && maxConcurrentPerUser > 0
+            && maxQueuedPerUser >= 0) {
+            const userActive = db.prepare(`
+                SELECT COUNT(*) AS count FROM generation_jobs
+                WHERE user_key = ? AND state IN ('queued', 'running', 'cancel_requested')
+            `).get(userKey).count;
+            if (userActive >= maxConcurrentPerUser + maxQueuedPerUser) {
+                const error = new Error('Per-user generation queue is full.');
+                error.status = 429;
+                error.code = 'generation_user_limit_reached';
+                throw error;
+            }
+        }
 
-    return { created: inserted.changes === 1, job: serializeJob(row) };
+        const maxQueuedGlobal = Number(limits?.maxQueuedGlobal);
+        if (Number.isInteger(maxQueuedGlobal) && maxQueuedGlobal >= 0) {
+            const queued = db.prepare('SELECT COUNT(*) AS count FROM generation_jobs WHERE state = ?').get('queued').count;
+            if (queued >= maxQueuedGlobal) {
+                const error = new Error('Generation queue is full.');
+                error.status = 503;
+                error.code = 'generation_queue_full';
+                throw error;
+            }
+        }
+
+        db.prepare(`
+            INSERT INTO generation_jobs (
+                id, user_key, request_fingerprint, state, request_id, recovery_json, created_at, updated_at
+            ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)
+        `).run(id, userKey, requestFingerprint, requestId, recoveryJson, now, now);
+        return { created: true, job: serializeJob(db.prepare('SELECT * FROM generation_jobs WHERE id = ?').get(id)) };
+    });
+    return admit.immediate();
 }
 
 /** Returns a generation job only when it belongs to the authenticated user. */
@@ -286,6 +327,111 @@ export function markGenerationJobRunning(id, userHandle) {
         WHERE id = ? AND user_key = ? AND state = 'queued'
     `).run(now, id, getUserKey(userHandle));
     return { claimed: result.changes === 1, job: serializeJob(getAuthorizedRow(db, id, userHandle)) };
+}
+
+/**
+ * Atomically selects the next fair job and claims the requested job only when it wins.
+ */
+export function claimScheduledGenerationJob(id, userHandle, limits) {
+    const db = openDatabase();
+    const now = Date.now();
+    const userKey = getUserKey(userHandle);
+    const maxConcurrentGlobal = Math.max(1, Number(limits?.maxConcurrentGlobal) || 1);
+    const reservedFirstGenerationSlots = Math.min(
+        maxConcurrentGlobal,
+        Math.max(0, Number(limits?.reservedFirstGenerationSlots) || 0),
+    );
+    const generalCapacity = maxConcurrentGlobal - reservedFirstGenerationSlots;
+    const maxConcurrentPerUser = Math.max(1, Number(limits?.maxConcurrentPerUser) || 1);
+    const secondaryPriorityAgeMs = Math.max(0, Number(limits?.secondaryPriorityAgeMs) || 0);
+    const staleOwnerMs = Math.max(1, Number(limits?.staleOwnerMs) || 45_000);
+
+    finalizeStaleGenerationJobs(now - staleOwnerMs);
+
+    const claim = db.transaction(() => {
+        const requested = db.prepare(`
+            SELECT * FROM generation_jobs WHERE id = ? AND user_key = ?
+        `).get(id, userKey);
+        if (!requested || requested.state !== 'queued') {
+            return { claimed: false, job: serializeJob(requested) };
+        }
+
+        const runningRows = db.prepare(`
+            SELECT user_key, slot_type FROM generation_jobs
+            WHERE state IN ('running', 'cancel_requested')
+        `).all();
+        if (runningRows.length >= maxConcurrentGlobal) {
+            return { claimed: false, job: serializeJob(requested) };
+        }
+
+        const runningByUser = new Map();
+        let reservedUsed = 0;
+        let generalUsed = 0;
+        for (const row of runningRows) {
+            runningByUser.set(row.user_key, (runningByUser.get(row.user_key) || 0) + 1);
+            if (row.slot_type === 'reserved') {
+                reservedUsed++;
+            } else {
+                generalUsed++;
+            }
+        }
+
+        if ((runningByUser.get(userKey) || 0) >= maxConcurrentPerUser) {
+            return { claimed: false, job: serializeJob(requested) };
+        }
+
+        const queuedRows = db.prepare(`
+            SELECT id, user_key, created_at FROM generation_jobs
+            WHERE state = 'queued'
+            ORDER BY created_at, id
+        `).all();
+        const oldestQueuedByUser = new Map();
+        for (const row of queuedRows) {
+            if (!oldestQueuedByUser.has(row.user_key)) {
+                oldestQueuedByUser.set(row.user_key, row.id);
+            }
+        }
+        const candidates = queuedRows
+            .filter(row => (runningByUser.get(row.user_key) || 0) < maxConcurrentPerUser)
+            .map(row => ({
+                ...row,
+                first: !runningByUser.has(row.user_key) && oldestQueuedByUser.get(row.user_key) === row.id,
+                aged: now - row.created_at >= secondaryPriorityAgeMs,
+            }));
+
+        let reservedWinner = null;
+        if (reservedUsed < reservedFirstGenerationSlots) {
+            reservedWinner = candidates.find(candidate => candidate.first) || null;
+        }
+        if (reservedWinner?.id === id) {
+            const updated = db.prepare(`
+                UPDATE generation_jobs SET state = 'running', slot_type = 'reserved', updated_at = ?
+                WHERE id = ? AND user_key = ? AND state = 'queued'
+            `).run(now, id, userKey);
+            return { claimed: updated.changes === 1, job: serializeJob(getAuthorizedRow(db, id, userHandle)) };
+        }
+
+        if (generalUsed >= generalCapacity) {
+            return { claimed: false, job: serializeJob(requested) };
+        }
+        const generalWinner = candidates
+            .filter(candidate => candidate.id !== reservedWinner?.id)
+            .sort((left, right) => {
+                const leftPriority = left.first || left.aged ? 0 : 1;
+                const rightPriority = right.first || right.aged ? 0 : 1;
+                return leftPriority - rightPriority || left.created_at - right.created_at || left.id.localeCompare(right.id);
+            })[0];
+        if (generalWinner?.id !== id) {
+            return { claimed: false, job: serializeJob(requested) };
+        }
+
+        const updated = db.prepare(`
+            UPDATE generation_jobs SET state = 'running', slot_type = 'general', updated_at = ?
+            WHERE id = ? AND user_key = ? AND state = 'queued'
+        `).run(now, id, userKey);
+        return { claimed: updated.changes === 1, job: serializeJob(getAuthorizedRow(db, id, userHandle)) };
+    });
+    return claim.immediate();
 }
 
 /** Refreshes the owner heartbeat without changing externally visible state. */
@@ -330,36 +476,52 @@ export function appendGenerationEvent(id, userHandle, eventBlock) {
     return append.immediate();
 }
 
+function finalizeStaleRow(db, row) {
+    const cancelled = Boolean(row.cancel_requested_at) || row.state === 'cancel_requested';
+    const eventBlocks = cancelled
+        ? ['data: {"error":{"message":"Generation was cancelled."}}', 'data: [DONE]']
+        : ['data: {"error":{"message":"Generation worker stopped before completion."}}', 'data: [DONE]'];
+    const now = Date.now();
+    let sequence = Number(row.last_event_sequence);
+    const insertEvent = db.prepare(`
+        INSERT INTO generation_events (job_id, sequence, event_block, created_at)
+        VALUES (?, ?, ?, ?)
+    `);
+    for (const eventBlock of eventBlocks) {
+        insertEvent.run(row.id, ++sequence, eventBlock, now);
+    }
+    db.prepare(`
+        UPDATE generation_jobs
+        SET state = ?, last_event_sequence = ?,
+            resolved_at = CASE WHEN ? = 'cancelled' AND recovery_json IS NOT NULL
+                THEN COALESCE(resolved_at, ?) ELSE resolved_at END,
+            updated_at = ?, finished_at = ?
+        WHERE id = ? AND user_key = ?
+    `).run(cancelled ? 'cancelled' : 'failed', sequence, cancelled ? 'cancelled' : 'failed', now, now, now, row.id, row.user_key);
+    return serializeJob(db.prepare('SELECT * FROM generation_jobs WHERE id = ?').get(row.id));
+}
+
+/** Marks every abandoned queued or running owner failed so its slots cannot remain stuck. */
+export function finalizeStaleGenerationJobs(staleBefore) {
+    const db = openDatabase();
+    const finalize = db.transaction(() => db.prepare(`
+        SELECT * FROM generation_jobs
+        WHERE state IN ('queued', 'running', 'cancel_requested') AND updated_at <= ?
+        ORDER BY created_at, id
+    `).all(staleBefore).map(row => finalizeStaleRow(db, row)));
+    return finalize.immediate();
+}
+
 /** Atomically turns an abandoned owner into a replayable terminal failure. */
 export function finalizeStaleGenerationJob(id, userHandle, staleBefore) {
     const db = openDatabase();
-    const userKey = getUserKey(userHandle);
     const finalize = db.transaction(() => {
         const row = getAuthorizedRow(db, id, userHandle);
         if (!row || TERMINAL_STATES.has(row.state) || row.updated_at > staleBefore) {
             return serializeJob(row);
         }
 
-        const cancelled = Boolean(row.cancel_requested_at) || row.state === 'cancel_requested';
-        const eventBlocks = cancelled
-            ? ['data: {"error":{"message":"Generation was cancelled."}}', 'data: [DONE]']
-            : ['data: {"error":{"message":"Generation worker stopped before completion."}}', 'data: [DONE]'];
-        const now = Date.now();
-        let sequence = Number(row.last_event_sequence);
-        const insertEvent = db.prepare(`
-            INSERT INTO generation_events (job_id, sequence, event_block, created_at)
-            VALUES (?, ?, ?, ?)
-        `);
-        for (const eventBlock of eventBlocks) {
-            insertEvent.run(id, ++sequence, eventBlock, now);
-        }
-        db.prepare(`
-            UPDATE generation_jobs
-            SET state = ?, last_event_sequence = ?, resolved_at = COALESCE(resolved_at, ?),
-                updated_at = ?, finished_at = ?
-            WHERE id = ? AND user_key = ?
-        `).run(cancelled ? 'cancelled' : 'failed', sequence, row.recovery_json ? now : null, now, now, id, userKey);
-        return serializeJob(getAuthorizedRow(db, id, userHandle));
+        return finalizeStaleRow(db, row);
     });
     return finalize.immediate();
 }
@@ -445,9 +607,7 @@ export function finishGenerationJob(id, userHandle, state) {
     const now = Date.now();
     const terminalUpdate = state !== 'cancelled' ? db.prepare(`
         UPDATE generation_jobs
-        SET state = ?, resolved_at = CASE WHEN ? = 'failed' AND recovery_json IS NOT NULL
-                THEN COALESCE(resolved_at, ?) ELSE resolved_at END,
-            updated_at = ?, finished_at = ?
+        SET state = ?, updated_at = ?, finished_at = ?
         WHERE id = ? AND user_key = ?
           AND state IN ('queued', 'running')
     `) : db.prepare(`
@@ -461,7 +621,7 @@ export function finishGenerationJob(id, userHandle, state) {
     if (state === 'cancelled') {
         terminalUpdate.run(state, now, now, now, id, getUserKey(userHandle));
     } else {
-        terminalUpdate.run(state, state, now, now, now, id, getUserKey(userHandle));
+        terminalUpdate.run(state, now, now, id, getUserKey(userHandle));
     }
     return serializeJob(getAuthorizedRow(db, id, userHandle));
 }

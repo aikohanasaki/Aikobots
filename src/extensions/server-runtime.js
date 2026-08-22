@@ -31,6 +31,15 @@ const moduleCache = new Map();
 const moduleLoadPromises = new Map();
 const MAX_MODULE_CACHE_SIZE = 100;
 
+/** Reduces extension failures to non-content-bearing diagnostics. */
+function getSafeExtensionError(error) {
+    return {
+        name: String(error?.name || 'Error'),
+        code: typeof error?.code === 'string' || typeof error?.code === 'number' ? String(error.code) : undefined,
+        status: Number.isInteger(Number(error?.status)) ? Number(error.status) : undefined,
+    };
+}
+
 function isDirectory(filePath) {
     try {
         return fs.statSync(filePath).isDirectory();
@@ -246,7 +255,7 @@ async function loadServerExtension(entry) {
                 }
             }
         } catch (error) {
-            console.error(`[server-runtime] Failed to load extension ${entry.id}:`, error);
+            console.error(`[server-runtime] Failed to load extension ${entry.id}:`, getSafeExtensionError(error));
         }
 
         moduleCache.set(cacheKey, definition);
@@ -327,6 +336,19 @@ function buildOpenAIMessagesFromCoreChat(promptContext) {
         const mediaIndex = Array.isArray(media) && Number.isInteger(mediaIndexValue) && mediaIndexValue >= 0 && mediaIndexValue < media.length
             ? mediaIndexValue
             : 0;
+        const originApi = item.extra?.api;
+        const originModel = item.extra?.model;
+        const sameModel = originApi === promptContext.chatCompletionSource && originModel === promptContext.model;
+        const invocations = Array.isArray(item.extra?.tool_invocations)
+            ? structuredClone(item.extra.tool_invocations)
+            : item.extra?.tool_invocations;
+        if (Array.isArray(invocations) && !sameModel) {
+            for (const invocation of invocations) {
+                if (invocation && typeof invocation === 'object') {
+                    delete invocation.signature;
+                }
+            }
+        }
 
         messages.push({
             role,
@@ -335,7 +357,8 @@ function buildOpenAIMessagesFromCoreChat(promptContext) {
             media,
             mediaDisplay,
             mediaIndex,
-            invocations: item.extra?.tool_invocations,
+            invocations,
+            signature: sameModel ? item.extra?.reasoning_signature : null,
         });
     }
 
@@ -446,6 +469,7 @@ export async function runServerGenerationExtensions(directories, promptContext, 
     const extensionSettings = promptContext.extensionSettings || {};
     const manifestEntries = discoverServerExtensions(directories, extensionSettings, user);
     if (!manifestEntries.length) {
+        rebuildPromptContextFromCoreChat(promptContext);
         return { aborted: false, executedExtensions: [] };
     }
 
@@ -536,7 +560,7 @@ export async function runServerGenerationExtensions(directories, promptContext, 
                     const result = await provider(context);
                     applyMacroProviderResult(macroState, result);
                 } catch (error) {
-                    console.error(`[server-runtime] Macro provider failed for ${entry.id}:`, error);
+                    console.error(`[server-runtime] Macro provider failed for ${entry.id}:`, getSafeExtensionError(error));
                 }
                 if (exitImmediately) {
                     break;
@@ -548,7 +572,7 @@ export async function runServerGenerationExtensions(directories, promptContext, 
                     try {
                         await provider(context);
                     } catch (error) {
-                        console.error(`[server-runtime] Prompt provider failed for ${entry.id}:`, error);
+                        console.error(`[server-runtime] Prompt provider failed for ${entry.id}:`, getSafeExtensionError(error));
                     }
                     if (exitImmediately) {
                         break;
@@ -561,7 +585,7 @@ export async function runServerGenerationExtensions(directories, promptContext, 
                     try {
                         await interceptor(context);
                     } catch (error) {
-                        console.error(`[server-runtime] Generation interceptor failed for ${entry.id}:`, error);
+                        console.error(`[server-runtime] Generation interceptor failed for ${entry.id}:`, getSafeExtensionError(error));
                     }
                     if (exitImmediately) {
                         break;

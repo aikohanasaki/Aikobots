@@ -335,7 +335,7 @@ async function deleteVectorItems(directories, collectionId, source, sourceSettin
  * @param {number} threshold - The threshold for the search
  * @returns {Promise<{hashes: number[], metadata: object[]}>} - The metadata of the items that match the search text
  */
-async function queryCollection(directories, collectionId, source, sourceSettings, searchText, topK, threshold) {
+export async function queryCollection(directories, collectionId, source, sourceSettings, searchText, topK, threshold) {
     const store = await getIndex(directories, collectionId, source, sourceSettings);
     const vector = await getVector(source, sourceSettings, searchText, true, directories);
 

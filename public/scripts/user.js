@@ -55,6 +55,11 @@ export function isAdmin() {
     return Boolean(currentUser.admin);
 }
 
+/** Returns whether the current account can use patron features. */
+export function isPatron() {
+    return isAdmin() || Boolean(currentUser?.patron);
+}
+
 /**
  * Gets the handle string of the current user.
  * @returns {string} User handle
@@ -1201,6 +1206,25 @@ async function demoteUser(handle, callback) {
     }
 }
 
+/** Updates patron access for one user from the admin panel. */
+async function setPatron(handle, patron, callback) {
+    try {
+        const response = await fetch('/api/users/patron', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ handle, patron }),
+        });
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.error || 'Failed to update patron access');
+        }
+        callback();
+    } catch (error) {
+        console.error('Error updating patron access:', error);
+        toastr.error(error.message || 'Unknown error', translate('Failed to update patron access'));
+    }
+}
+
 /**
  * Create a new user.
  * @param {HTMLFormElement} form Form element
@@ -1232,6 +1256,7 @@ async function createUser(form, callback) {
         }
         body[key] = value;
     });
+    body.patron = formData.has('patron');
 
     try {
         const response = await fetch('/api/users/create', {
@@ -1684,7 +1709,7 @@ async function openUserProfile() {
     template.find('.userName').text(currentUser.name);
     template.find('.userHandle').text(currentUser.handle);
     template.find('.avatar img').attr('src', currentUser.avatar);
-    template.find('.userRole').text(currentUser.admin ? 'Admin' : 'User');
+    template.find('.userRole').text(translate(currentUser.admin ? 'Admin' : currentUser.patron ? 'Patron' : 'User'));
     template.find('.userCreated').text(new Date(currentUser.created).toLocaleString());
     template.find('.hasPassword').toggle(currentUser.password);
     template.find('.noPassword').toggle(!currentUser.password);
@@ -1880,8 +1905,9 @@ async function openAdminPanel(initialTab = 'usersList') {
             const userBlock = template.find('.userAccountTemplate .userAccount').clone();
             userBlock.find('.userName').text(user.name);
             userBlock.find('.userHandle').text(user.handle);
-            userBlock.find('.userStatus').text(user.enabled ? 'Enabled' : 'Disabled');
-            userBlock.find('.userRole').text(user.admin ? 'Admin' : 'User');
+            userBlock.find('.userStatus').text(translate(user.enabled ? 'Enabled' : 'Disabled'));
+            userBlock.find('.userRole').text(translate(user.admin ? 'Admin' : user.patron ? 'Patron' : 'User'));
+            userBlock.find('.userPatronStatus').text(translate(user.admin || user.patron ? 'Enabled' : 'Disabled'));
             userBlock.find('.avatar img').attr('src', user.avatar);
             userBlock.find('.hasPassword').toggle(user.password);
             userBlock.find('.noPassword').toggle(!user.password);
@@ -1892,6 +1918,8 @@ async function openAdminPanel(initialTab = 'usersList') {
             userBlock.find('.userDisableButton').toggle(user.enabled).on('click', () => disableUser(user.handle, renderUsers));
             userBlock.find('.userPromoteButton').toggle(!user.admin).on('click', () => promoteUser(user.handle, renderUsers));
             userBlock.find('.userDemoteButton').toggle(user.admin).on('click', () => demoteUser(user.handle, renderUsers));
+            userBlock.find('.userPatronButton').toggle(!user.admin).on('click', () => setPatron(user.handle, !user.patron, renderUsers));
+            userBlock.find('.userPatronButton').attr('title', user.patron ? translate('Remove patron access') : translate('Grant patron access'));
             userBlock.find('.userChangePasswordButton').on('click', () => changePassword(user.handle, renderUsers));
             userBlock.find('.userDelete').on('click', () => deleteUser(user.handle, renderUsers));
             userBlock.find('.userChangeNameButton').on('click', async () => changeName(user.handle, user.name, renderUsers));

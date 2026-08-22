@@ -1483,6 +1483,9 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
             // Wait for generation to finish
             const generateType = ['swipe', 'impersonate', 'quiet', 'continue'].includes(type) ? type : 'normal';
             textResult = await Generate(generateType, { automatic_trigger: by_auto_mode, ...(params || {}) });
+            if (textResult?.generationParked) {
+                break;
+            }
             let messageChunk = textResult?.messageChunk;
 
             if (messageChunk) {
@@ -2331,7 +2334,7 @@ function updateFavButtonState(state) {
     $('#group_favorite_button').toggleClass('fav_off', !fav_grp_checked);
 }
 
-export async function openGroupById(groupId) {
+export async function openGroupById(groupId, { loadChat = true, flushPendingSave = true } = {}) {
     if (isChatSaving) {
         toastr.info(t`Please wait until the chat is saved before switching characters.`, t`Your chat is still saving...`);
         return false;
@@ -2351,7 +2354,7 @@ export async function openGroupById(groupId) {
 
         if (selected_group !== groupId) {
             clearManualSpeakerQueue({ forceDisplayReset: true });
-            await clearChat();
+            await clearChat({ flushPendingSave });
             discardTemporaryCharacterChat();
             cancelTtsPlay();
             selected_group = groupId;
@@ -2360,7 +2363,9 @@ export async function openGroupById(groupId) {
             setEditedMessageId(undefined);
             updateChatMetadata({}, true);
             chat.length = 0;
-            await getGroupChat(groupId);
+            if (loadChat) {
+                await getGroupChat(groupId);
+            }
             return true;
         }
     }
@@ -2510,7 +2515,7 @@ export async function getGroupPastChats(groupId) {
     }
 }
 
-export async function openGroupChat(groupId, chatId) {
+export async function openGroupChat(groupId, chatId, { skipClear = false, flushPendingSave = true } = {}) {
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
     const group = groups.find(x => x.id === groupId);
 
@@ -2522,16 +2527,22 @@ export async function openGroupChat(groupId, chatId) {
         return;
     }
 
-    const pendingSaveResult = await flushDebouncedChatSave();
-    if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
-        return;
+    if (flushPendingSave) {
+        const pendingSaveResult = await flushDebouncedChatSave();
+        if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+            return;
+        }
     }
 
     const deferredLoader = deferLoader();
 
     try {
-        await persistActiveGroupChat(groupId);
-        await clearChat();
+        if (flushPendingSave) {
+            await persistActiveGroupChat(groupId);
+        }
+        if (!skipClear) {
+            await clearChat({ flushPendingSave });
+        }
         discardTemporaryCharacterChat();
         chat.length = 0;
         group.chat_id = chatId;

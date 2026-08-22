@@ -6,6 +6,7 @@
         "sd"
     ],
     "generate_interceptor": "SD_ProcessTriggers",
+    "generation_interceptor_mode": "client-preflight",
     "js": "index.js",
     "css": "style.css",
     "author": "Cohee#1207",

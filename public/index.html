@@ -2757,6 +2757,14 @@
                                     <input id="auto-load-chat-checkbox" type="checkbox" />
                                     <small data-i18n="Auto-load Last Chat">Auto-load Last Chat</small>
                                 </label>
+                                <label id="patron-tab-close-behavior-block" for="patron-tab-close-behavior" class="flex-container alignItemsCenter displayNone">
+                                    <small data-i18n="When closing a generating chat tab">When closing a generating chat tab</small>
+                                    <select id="patron-tab-close-behavior" class="text_pole widthUnset">
+                                        <option value="ask" data-i18n="Ask every time">Ask every time</option>
+                                        <option value="keep" data-i18n="Keep generating">Keep generating</option>
+                                        <option value="cancel" data-i18n="Cancel generation">Cancel generation</option>
+                                    </select>
+                                </label>
                                 <label class="checkbox_label" for="delete-current-chat-to-welcome">
                                     <input id="delete-current-chat-to-welcome" type="checkbox" />
                                     <small data-i18n="Return to welcome after deleting current chat">Return to welcome after deleting current chat</small>
@@ -5677,6 +5685,10 @@
                     <span id="stmb-jobs-topbar-badge" class="stmb-jobs-badge" style="display:none;"></span>
                 </button>
             </div>
+            <button id="top_chat_bar_tabs_toggle" type="button" class="top_chat_bar_button" title="Open chat tabs" aria-label="Open chat tabs" data-i18n="[title]Open chat tabs;[aria-label]Open chat tabs">
+                <i class="fa-fw fa-solid fa-folder-tree" aria-hidden="true"></i>
+                <span id="top_chat_bar_tabs_badge" class="top_chat_tabs_badge" hidden></span>
+            </button>
             <select id="top_chat_bar_chat_name" title="Current chat" disabled data-i18n="[title]Current chat">
                 <option selected data-i18n="No chat selected">No chat selected</option>
             </select>
@@ -5695,6 +5707,15 @@
             <button id="top_chat_bar_close_chat" type="button" class="top_chat_bar_button" title="Close chat" aria-label="Close chat" data-i18n="[title]Close chat;[aria-label]Close chat">
                 <i class="fa-fw fa-solid fa-times" aria-hidden="true"></i>
             </button>
+            <div id="top_chat_bar_tabs" hidden>
+                <button id="top_chat_bar_tabs_back" type="button" class="top_chat_bar_button" title="Back to chat controls" aria-label="Back to chat controls" data-i18n="[title]Back to chat controls;[aria-label]Back to chat controls">
+                    <i class="fa-fw fa-solid fa-arrow-left" aria-hidden="true"></i>
+                </button>
+                <button id="top_chat_bar_tabs_add" type="button" class="top_chat_bar_button" title="Open another chat" aria-label="Open another chat" data-i18n="[title]Open another chat;[aria-label]Open another chat">
+                    <i class="fa-fw fa-solid fa-plus" aria-hidden="true"></i>
+                </button>
+                <div id="top_chat_bar_tabs_list" role="tablist" aria-label="Open chats" data-i18n="[aria-label]Open chats"></div>
+            </div>
         </div>
         <div id="top_chat_connection_profiles">
             <div id="top_chat_connection_profiles_icon" class="fa-fw fa-solid fa-network-wired"></div>

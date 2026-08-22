@@ -15,6 +15,8 @@ import {
     getPasswordHash,
     getUserDirectories,
     ensurePublicDirectoriesExist,
+    updateUserRecord,
+    withUserRecordLock,
 } from '../users.js';
 import { DEFAULT_USER, SETTINGS_FILE } from '../constants.js';
 import { parse as parseCharacterCard } from '../character-card-parser.js';
@@ -128,6 +130,7 @@ router.post('/get', requireAdminMiddleware, async (_request, response) => {
                     name: user.name,
                     avatar: avatar,
                     admin: user.admin,
+                    patron: Boolean(user.patron),
                     enabled: user.enabled,
                     created: user.created,
                     lastActivityAt: user.lastActivityAt,
@@ -157,16 +160,14 @@ router.post('/disable', requireAdminMiddleware, async (request, response) => {
             return response.status(400).json({ error: 'Cannot disable yourself' });
         }
 
-        /** @type {import('../users.js').User} */
-        const user = await storage.getItem(toKey(request.body.handle));
-
+        const user = await updateUserRecord(request.body.handle, current => {
+            current.enabled = false;
+            return current;
+        });
         if (!user) {
             console.error('Disable user failed: User not found');
             return response.status(404).json({ error: 'User not found' });
         }
-
-        user.enabled = false;
-        await storage.setItem(toKey(request.body.handle), user);
         return response.sendStatus(204);
     } catch (error) {
         console.error('User disable failed:', error);
@@ -181,16 +182,14 @@ router.post('/enable', requireAdminMiddleware, async (request, response) => {
             return response.status(400).json({ error: 'Missing required fields' });
         }
 
-        /** @type {import('../users.js').User} */
-        const user = await storage.getItem(toKey(request.body.handle));
-
+        const user = await updateUserRecord(request.body.handle, current => {
+            current.enabled = true;
+            return current;
+        });
         if (!user) {
             console.error('Enable user failed: User not found');
             return response.status(404).json({ error: 'User not found' });
         }
-
-        user.enabled = true;
-        await storage.setItem(toKey(request.body.handle), user);
         return response.sendStatus(204);
     } catch (error) {
         console.error('User enable failed:', error);
@@ -205,16 +204,14 @@ router.post('/promote', requireAdminMiddleware, async (request, response) => {
             return response.status(400).json({ error: 'Missing required fields' });
         }
 
-        /** @type {import('../users.js').User} */
-        const user = await storage.getItem(toKey(request.body.handle));
-
+        const user = await updateUserRecord(request.body.handle, current => {
+            current.admin = true;
+            return current;
+        });
         if (!user) {
             console.error('Promote user failed: User not found');
             return response.status(404).json({ error: 'User not found' });
         }
-
-        user.admin = true;
-        await storage.setItem(toKey(request.body.handle), user);
         return response.sendStatus(204);
     } catch (error) {
         console.error('User promote failed:', error);
@@ -234,19 +231,37 @@ router.post('/demote', requireAdminMiddleware, async (request, response) => {
             return response.status(400).json({ error: 'Cannot demote yourself' });
         }
 
-        /** @type {import('../users.js').User} */
-        const user = await storage.getItem(toKey(request.body.handle));
-
+        const user = await updateUserRecord(request.body.handle, current => {
+            current.admin = false;
+            return current;
+        });
         if (!user) {
             console.error('Demote user failed: User not found');
             return response.status(404).json({ error: 'User not found' });
         }
-
-        user.admin = false;
-        await storage.setItem(toKey(request.body.handle), user);
         return response.sendStatus(204);
     } catch (error) {
         console.error('User demote failed:', error);
+        return response.sendStatus(500);
+    }
+});
+
+router.post('/patron', requireAdminMiddleware, async (request, response) => {
+    try {
+        if (!request.body.handle || typeof request.body.patron !== 'boolean') {
+            return response.status(400).json({ error: 'A user handle and patron boolean are required' });
+        }
+
+        const user = await updateUserRecord(request.body.handle, current => {
+            current.patron = request.body.patron;
+            return current;
+        });
+        if (!user) {
+            return response.status(404).json({ error: 'User not found' });
+        }
+        return response.sendStatus(204);
+    } catch (error) {
+        console.error('Patron update failed:', error);
         return response.sendStatus(500);
     }
 });
@@ -256,6 +271,9 @@ router.post('/create', requireAdminMiddleware, async (request, response) => {
         if (!request.body.handle || !request.body.name) {
             console.warn('Create user failed: Missing required fields');
             return response.status(400).json({ error: 'Missing required fields' });
+        }
+        if (request.body.patron !== undefined && typeof request.body.patron !== 'boolean') {
+            return response.status(400).json({ error: 'Patron must be a boolean' });
         }
 
         const handles = await getAllUserHandles();
@@ -281,12 +299,22 @@ router.post('/create', requireAdminMiddleware, async (request, response) => {
             password: password,
             salt: salt,
             admin: !!request.body.admin,
+            patron: request.body.patron === true,
             enabled: true,
         };
 
         const directories = getUserDirectories(newUser.handle);
         await ensureDefaultSettingsForUser(directories);
-        await storage.setItem(toKey(handle), newUser);
+        const created = await withUserRecordLock(handle, async () => {
+            if (await storage.getItem(toKey(handle))) {
+                return false;
+            }
+            await storage.setItem(toKey(handle), newUser);
+            return true;
+        });
+        if (!created) {
+            return response.status(409).json({ error: 'User already exists' });
+        }
 
         // Create user directories
         console.info('Creating data directories for', newUser.handle);
@@ -316,7 +344,9 @@ router.post('/delete', requireAdminMiddleware, async (request, response) => {
             return response.status(400).json({ error: 'Sorry, but the default user cannot be deleted. It is required as a fallback.' });
         }
 
-        await storage.removeItem(toKey(request.body.handle));
+        await withUserRecordLock(request.body.handle, async () => {
+            await storage.removeItem(toKey(request.body.handle));
+        });
 
         if (request.body.purge) {
             const directories = getUserDirectories(request.body.handle);

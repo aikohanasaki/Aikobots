@@ -464,6 +464,7 @@ export const power_user = {
     bring_back_truck_kun: false,
     auto_connect: false,
     auto_load_chat: false,
+    patron_tab_close_behavior: 'ask',
     delete_current_chat_to_welcome: false,
     forbid_external_media: true,
     external_media_allowed_overrides: [],
@@ -2624,6 +2625,10 @@ export async function loadPowerUserSettings(settings, data) {
     $('#bring_back_truck_kun').prop('checked', power_user.bring_back_truck_kun);
     $('#auto-connect-checkbox').prop('checked', power_user.auto_connect);
     $('#auto-load-chat-checkbox').prop('checked', power_user.auto_load_chat);
+    power_user.patron_tab_close_behavior = ['ask', 'keep', 'cancel'].includes(power_user.patron_tab_close_behavior)
+        ? power_user.patron_tab_close_behavior
+        : 'ask';
+    $('#patron-tab-close-behavior').val(power_user.patron_tab_close_behavior);
     $('#delete-current-chat-to-welcome').prop('checked', power_user.delete_current_chat_to_welcome);
     $('#forbid_external_media').prop('checked', power_user.forbid_external_media);
     $('#pin_styles').prop('checked', power_user.pin_styles);
@@ -4778,6 +4783,12 @@ jQuery(() => {
 
     $('#auto-load-chat-checkbox').on('input', function () {
         power_user.auto_load_chat = !!$(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
+    $('#patron-tab-close-behavior').on('change', function () {
+        const value = String($(this).val());
+        power_user.patron_tab_close_behavior = ['keep', 'cancel'].includes(value) ? value : 'ask';
         saveSettingsDebounced();
     });
 
