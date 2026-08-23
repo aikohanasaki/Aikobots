@@ -4883,6 +4883,7 @@
     "Connection profile is not available": "接続プロファイルを利用できません",
     "API request failed": "APIリクエストに失敗しました",
     "Could not find connection profile.": "接続プロファイルが見つかりませんでした。",
+    "Connection profile could not be applied. Check its settings and try again.": "接続プロファイルを適用できませんでした。設定を確認して、もう一度お試しください。",
     "Select a connection profile that has an API.": "APIが設定された接続プロファイルを選択してください。",
     "Enter a model ID or select a connection profile with a saved model ID.": "モデルIDを入力するか、モデルIDが保存された接続プロファイルを選択してください。",
     "This saved profile uses the currently active SillyTavern connection. Select a connection profile to rebind it.": "この保存済みプロファイルは現在有効なSillyTavern接続を使用します。再バインドするには接続プロファイルを選択してください。",

@@ -19,6 +19,7 @@ import { power_user } from './power-user.js';
 import { getPresetManager } from './preset-manager.js';
 import { SECRET_KEYS, secret_state } from './secrets.js';
 import { delay } from './utils.js';
+import { isConnectionProfileSettled } from './connection-profile-transition.js';
 
 export const GENERATION_LOCKS_METADATA_KEY = 'aikobots_generation_locks';
 
@@ -372,6 +373,10 @@ function isConnectionProfileActive(profileId) {
         return false;
     }
 
+    if (!isConnectionProfileSettled(profileId)) {
+        return false;
+    }
+
     const profile = getProfileById(profileId);
     if (profile?.mode === 'cc' && profile.api === chat_completion_sources.CUSTOM && profile['secret-id']) {
         return secret_state[SECRET_KEYS.CUSTOM]?.some(secret => secret.id === profile['secret-id'] && secret.active) ?? false;
@@ -456,7 +461,10 @@ export async function applyResolvedGenerationLock(resolved, options = {}) {
         if (shouldApplyOverrides || options.force) {
             applyOverrides(resolved.lock.overrides);
         }
-        if ((shouldApplyProfile || shouldApplyPreset || shouldApplyModel || options.force) && main_api === 'openai') {
+        const needsPostProfileConnectionWait = shouldApplyPreset
+            || shouldApplyModel
+            || (options.force && Boolean(resolved.lock.presetName || resolved.lock.modelId));
+        if (needsPostProfileConnectionWait && main_api === 'openai') {
             await waitForCurrentOpenAIConnection();
             if (online_status === 'no_connection') {
                 await checkOpenAIStatus();

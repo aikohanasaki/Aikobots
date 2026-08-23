@@ -4879,6 +4879,7 @@
     "Connection profile is not available": "Verbindungsprofil ist nicht verfügbar",
     "API request failed": "API-Anfrage fehlgeschlagen",
     "Could not find connection profile.": "Verbindungsprofil wurde nicht gefunden.",
+    "Connection profile could not be applied. Check its settings and try again.": "Das Verbindungsprofil konnte nicht angewendet werden. Überprüfe die Einstellungen und versuche es erneut.",
     "Select a connection profile that has an API.": "Wähle ein Verbindungsprofil mit einer API aus.",
     "Enter a model ID or select a connection profile with a saved model ID.": "Gib eine Modell-ID ein oder wähle ein Verbindungsprofil mit gespeicherter Modell-ID aus.",
     "This saved profile uses the currently active SillyTavern connection. Select a connection profile to rebind it.": "Dieses gespeicherte Profil verwendet die derzeit aktive SillyTavern-Verbindung. Wähle ein Verbindungsprofil aus, um es neu zu binden.",

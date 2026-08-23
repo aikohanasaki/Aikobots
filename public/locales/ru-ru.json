@@ -3398,6 +3398,7 @@
     "Enter a model ID or select a connection profile with a saved model ID.": "Введите идентификатор модели или выберите профиль подключения с сохраненным идентификатором модели.",
     "Select a connection profile that has an API.": "Выберите профиль подключения с API.",
     "Could not find connection profile.": "Не удалось найти профиль подключения.",
+    "Connection profile could not be applied. Check its settings and try again.": "Не удалось применить профиль подключения. Проверьте его настройки и повторите попытку.",
     "An error has occurred. Check the console for details.": "Произошла ошибка. Подробности проверьте в консоли.",
     "A lorebook is now in use or could not be checked safely. Nothing was deleted; rescan and try again.": "Лорбук сейчас используется или его невозможно безопасно проверить. Ничего не было удалено; повторно отсканируйте и повторите попытку.",
     "This will permanently delete the selected files. THIS CANNOT BE UNDONE!": "Это приведет к безвозвратному удалению выбранных файлов. ЭТО НЕЛЬЗЯ ОТМЕНИТЬ!",

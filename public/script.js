@@ -274,6 +274,7 @@ import { initAccessibility } from './scripts/a11y.js';
 import { applyStreamFadeIn } from './scripts/util/stream-fadein.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
+import { waitForCurrentConnectionProfileTransition } from './scripts/connection-profile-transition.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
@@ -10459,6 +10460,15 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     // OpenAI prompt preview/dry-run is disabled so WI and prompt assembly stay server-side.
     if (main_api === 'openai' && dryRun) {
         return Promise.resolve();
+    }
+
+    if (!dryRun) {
+        try {
+            await waitForCurrentConnectionProfileTransition();
+        } catch (error) {
+            unblockGeneration(type);
+            throw new Error(t`Connection profile could not be applied. Check its settings and try again.`, { cause: error });
+        }
     }
 
     const pendingSaveResult = await flushDebouncedChatSave();

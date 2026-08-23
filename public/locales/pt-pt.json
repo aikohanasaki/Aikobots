@@ -1754,4 +1754,5 @@
   ,"Chat tabs require patron access": "Os separadores de chat requerem acesso de patrono"
   ,"Chat tabs and background generations require patron access.": "Os separadores de chat e as gerações em segundo plano requerem acesso de patrono."
   ,"Please wait for the current generation to complete.": "Aguarde até que a geração atual seja concluída."
+  ,"Connection profile could not be applied. Check its settings and try again.": "Não foi possível aplicar o perfil de ligação. Verifique as respetivas definições e tente novamente."
 }

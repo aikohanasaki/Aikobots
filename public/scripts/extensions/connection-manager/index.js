@@ -1,6 +1,6 @@
 import { DOMPurify, Fuse } from '../../../lib.js';
 
-import { event_types, eventSource, main_api, online_status, saveSettingsDebounced } from '../../../script.js';
+import { event_types, eventSource, main_api, online_status, saveSettingsDebounced, setOnlineStatus } from '../../../script.js';
 import { CONNECTION_PROFILE_REQUEST_OVERRIDE_KEYS as REQUEST_OVERRIDE_KEYS } from '../../connection-profile-request.js';
 import { extension_settings, renderExtensionTemplateAsync } from '../../extensions.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from '../../popup.js';
@@ -16,6 +16,7 @@ import { collapseSpaces, getUniqueName, isFalseBoolean, uuidv4, waitUntilConditi
 import { t, translate } from '../../i18n.js';
 import { getSecretLabelById } from '../../secrets.js';
 import { checkOpenAIStatus, oai_settings, waitForCurrentOpenAIConnection } from '../../openai.js';
+import { isConnectionProfileTransitionPending, runConnectionProfileTransition, waitForCurrentConnectionProfileTransition } from '../../connection-profile-transition.js';
 
 const MODULE_NAME = 'connection-manager';
 const NONE = '<None>';
@@ -130,7 +131,13 @@ class ConnectionManagerSpinner {
     }
 
     stop() {
-        this.spinnerElement.classList.add('hidden');
+        const index = ConnectionManagerSpinner.abortControllers.indexOf(this.abortController);
+        if (index !== -1) {
+            ConnectionManagerSpinner.abortControllers.splice(index, 1);
+        }
+        if (ConnectionManagerSpinner.abortControllers.length === 0) {
+            this.spinnerElement.classList.add('hidden');
+        }
     }
 
     isAborted() {
@@ -142,6 +149,7 @@ class ConnectionManagerSpinner {
             controller.abort();
         }
         ConnectionManagerSpinner.abortControllers = [];
+        document.getElementById('connection_profile_spinner')?.classList.add('hidden');
     }
 }
 
@@ -169,6 +177,30 @@ const profilesProvider = () => [
     new SlashCommandEnumValue(NONE),
     ...extension_settings.connectionManager.profiles.map(p => new SlashCommandEnumValue(p.name, null, enumTypes.name, enumIcons.server)),
 ];
+
+/** Keeps both connection-profile selectors aligned with the active transition. */
+function setConnectionProfileBusy(busy) {
+    for (const id of ['connection_profiles', 'top_chat_connection_profiles_select']) {
+        const select = document.getElementById(id);
+        if (!(select instanceof HTMLSelectElement)) {
+            continue;
+        }
+        select.disabled = busy;
+        if (busy) {
+            select.setAttribute('aria-busy', 'true');
+        } else {
+            select.removeAttribute('aria-busy');
+        }
+    }
+}
+
+/** Reports a profile failure without exposing profile fields in the client message. */
+function reportConnectionProfileFailure(error) {
+    console.error('Connection profile application failed', error);
+    toastr.error(t`Connection profile could not be applied. Check its settings and try again.`, '', {
+        preventDuplicates: true,
+    });
+}
 
 /**
  * Removes profile fields that connection manager no longer owns.
@@ -373,17 +405,17 @@ async function createConnectionProfile(forceName = null) {
 
 /**
  * Deletes the selected connection profile.
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} Whether a profile was deleted
  */
 async function deleteConnectionProfile() {
     const selectedProfile = extension_settings.connectionManager.selectedProfile;
     if (!selectedProfile) {
-        return;
+        return false;
     }
 
     const index = extension_settings.connectionManager.profiles.findIndex(p => p.id === selectedProfile);
     if (index === -1) {
-        return;
+        return false;
     }
 
     const profile = extension_settings.connectionManager.profiles[index];
@@ -391,7 +423,7 @@ async function deleteConnectionProfile() {
     const confirm = await Popup.show.confirm(t`Are you sure you want to delete the selected profile?`, name);
 
     if (!confirm) {
-        return;
+        return false;
     }
 
     extension_settings.connectionManager.profiles.splice(index, 1);
@@ -399,6 +431,7 @@ async function deleteConnectionProfile() {
     saveSettingsDebounced();
 
     await eventSource.emit(event_types.CONNECTION_PROFILE_DELETED, profile);
+    return true;
 }
 
 /**
@@ -467,13 +500,17 @@ export async function applyConnectionProfile(profile) {
                 const args = getNamedArguments(allowEmpty ? { force: 'true' } : {});
                 await SlashCommandParser.commands[command].callback(args, argument);
             } catch (error) {
-                console.error(`Failed to execute command: ${command} ${argument}`, error);
+                console.error(`Failed to execute connection profile command: ${command}`, error);
+                throw new Error(`Connection profile command failed: ${command}`, { cause: error });
             }
         }
 
         await waitForCurrentOpenAIConnection();
         if (mode === 'cc' && online_status === 'no_connection') {
             await checkOpenAIStatus();
+            if (online_status === 'no_connection') {
+                throw new Error('Connection profile did not establish a connection.');
+            }
         }
     } finally {
         spinner.stop();
@@ -496,24 +533,48 @@ export function findConnectionProfileById(profileId) {
 /**
  * Applies a connection profile by id.
  * @param {string} profileId Profile id
- * @returns {Promise<ConnectionProfile|null>} Applied profile or null
+ * @returns {Promise<ConnectionProfile|null>} Applied profile, or null when cleared or superseded
  */
-export async function applyConnectionProfileById(profileId) {
-    const profile = findConnectionProfileById(profileId);
-    if (!profile) {
-        return null;
+export function applyConnectionProfileById(profileId) {
+    const normalizedProfileId = String(profileId || '');
+    const profile = normalizedProfileId ? findConnectionProfileById(normalizedProfileId) : null;
+    if (normalizedProfileId && !profile) {
+        return Promise.resolve(null);
     }
 
-    extension_settings.connectionManager.selectedProfile = profile.id;
-    const profiles = document.getElementById('connection_profiles');
-    if (profiles instanceof HTMLSelectElement) {
-        profiles.value = profile.id;
+    extension_settings.connectionManager.selectedProfile = profile?.id || null;
+    for (const id of ['connection_profiles', 'top_chat_connection_profiles_select']) {
+        const select = document.getElementById(id);
+        if (select instanceof HTMLSelectElement) {
+            select.value = normalizedProfileId;
+        }
     }
     saveSettingsDebounced();
+    setConnectionProfileBusy(true);
+    ConnectionManagerSpinner.abort();
 
-    await applyConnectionProfile(profile);
-    await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, profile.name);
-    return profile;
+    const transition = runConnectionProfileTransition(normalizedProfileId, async isLatest => {
+        if (!profile) {
+            return null;
+        }
+        try {
+            await applyConnectionProfile(profile);
+        } catch (error) {
+            if (isLatest()) {
+                setOnlineStatus('no_connection');
+            }
+            throw error;
+        }
+        return profile;
+    }, async appliedProfile => {
+        await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, appliedProfile?.name || NONE);
+    });
+
+    return transition.finally(() => {
+        if (!isConnectionProfileTransitionPending()) {
+            setConnectionProfileBusy(false);
+        }
+    });
 }
 
 /**
@@ -654,27 +715,13 @@ async function renderDetailsContent(detailsContent) {
         }
 
         const profileId = selectedProfile.value;
-        extension_settings.connectionManager.selectedProfile = profileId;
-        saveSettingsDebounced();
-        await renderDetailsContent(detailsContent);
-
+        const transition = applyConnectionProfileById(profileId).catch(error => {
+            reportConnectionProfileFailure(error);
+            return null;
+        });
         toggleProfileSpecificButtons();
-
-        // None option selected
-        if (!profileId) {
-            await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, NONE);
-            return;
-        }
-
-        const profile = extension_settings.connectionManager.profiles.find(p => p.id === profileId);
-
-        if (!profile) {
-            console.log(`Profile not found: ${profileId}`);
-            return;
-        }
-
-        await applyConnectionProfile(profile);
-        await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, profile.name);
+        await renderDetailsContent(detailsContent);
+        await transition;
     });
 
     const reloadButton = document.getElementById('reload_connection_profile');
@@ -685,10 +732,13 @@ async function renderDetailsContent(detailsContent) {
             console.log('No profile selected');
             return;
         }
-        await applyConnectionProfile(profile);
-        await renderDetailsContent(detailsContent);
-        await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, profile.name);
-        toastr.success(translate('Connection profile reloaded'), '', { timeOut: 1500 });
+        try {
+            await applyConnectionProfileById(profile.id);
+            await renderDetailsContent(detailsContent);
+            toastr.success(translate('Connection profile reloaded'), '', { timeOut: 1500 });
+        } catch (error) {
+            reportConnectionProfileFailure(error);
+        }
     });
 
     const createButton = document.getElementById('create_connection_profile');
@@ -725,10 +775,12 @@ async function renderDetailsContent(detailsContent) {
 
     const deleteButton = document.getElementById('delete_connection_profile');
     deleteButton.addEventListener('click', async () => {
-        await deleteConnectionProfile();
+        if (!await deleteConnectionProfile()) {
+            return;
+        }
         renderConnectionProfiles(profiles);
         await renderDetailsContent(detailsContent);
-        await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, NONE);
+        await applyConnectionProfileById('');
     });
 
     const editButton = document.getElementById('edit_connection_profile');
@@ -867,15 +919,14 @@ async function renderDetailsContent(detailsContent) {
             }
 
             const shouldAwait = !isFalseBoolean(String(args?.await));
-            const awaitPromise = new Promise((resolve) => eventSource.once(event_types.CONNECTION_PROFILE_LOADED, resolve));
 
             profiles.selectedIndex = Array.from(profiles.options).findIndex(o => o.value === profile.id);
             profiles.dispatchEvent(new Event('change'));
 
             if (shouldAwait) {
-                await awaitPromise;
+                await waitForCurrentConnectionProfileTransition();
 
-                // We should also await the connection to be established
+                // Retain the command's timeout option for compatibility; a settled profile is already connected.
                 const parsedTimeout = parseInt(args?.timeout?.toString());
                 const timeout = !isNaN(parsedTimeout) ? Math.max(0, parsedTimeout) : 2000;
                 if (timeout > 0) {
