@@ -1,4 +1,4 @@
-# Aikobots v5 and v5.1: Bundled Frontend and Detached Generation Workspaces
+# Aikobots v5: Bundled Frontend and Detached Generation Workspaces
 
 Aikobots v5 began by changing how the browser application is delivered. Earlier versions served roughly 200 or more individual JavaScript and CSS files during startup. v5 builds those sources ahead of time into a small, deterministic set of production bundles committed under `public/dist`.
 
@@ -110,6 +110,16 @@ The shared scheduler enforces configurable global, per-user, and queued limits. 
 
 Disconnecting or parking a browser delivery does not cancel the provider call. Recovery metadata is content-free: the browser copy is session-scoped, while the authenticated server copy is durable and user-scoped. Durable output can be replayed, and final chat persistence still uses the existing revision-checked SQLite mutation path. Graceful worker shutdown stops new ownership and drains work already held by that process; an ungraceful owner loss becomes a safe terminal failure instead of transferring an in-memory sensitive request to another worker.
 
+### Model-aware World Info scanning became request-scoped core behavior
+
+Model-aware World Info activation originated in Aiko Hanasaki's standalone `SillyTavern-ModelInjection` extension. It exposed the selected model to lorebook keyword scanning as a hidden `MODEL=<model ID>` marker with scanning enabled and prompt insertion disabled. This allowed model-specific lorebook entries to activate without sending the marker to the model.
+
+The first core integration retained the extension's browser event and `/inject` pipeline. Because generic script injections are chat-scoped, refreshing the model also wrote `core-model-tag` into chat metadata. That persistence was useful for the extension's `/listinjects` installation check but was not part of World Info activation itself.
+
+Detached generation preparation introduced a stricter invariant: after the client captures a chat revision and tail identity, incidental metadata writes must not change that source before the worker validates it. A model change made the old injection refresh update metadata during generation startup, so the first request could fail its source snapshot while a second request succeeded after the stored tag already matched.
+
+v5.1 removes the integrated Model Injection client module, startup and generation hooks, slash-command execution, and metadata save. Prompt assembly now derives the scan marker from the model frozen into the provider request and installs it only in that request's in-memory extension-prompt map. The existing scan-only semantics remain authoritative: World Info can match `MODEL=<model ID>`, while the `NONE` position keeps the marker out of assembled model messages. The stable legacy key is overwritten in memory so an older persisted tag cannot activate entries for a stale model; unknown model selections do not reuse the old value.
+
 ### Patron chat tabs reuse the authoritative chat runtime
 
 v5.1 adds a patron workspace to the existing Top Chat Bar. It does not mount parallel chat runtimes. Opening or selecting a tab parks any admitted detached delivery, discards an unsaved streaming placeholder, and loads the selected direct or group chat through the existing owner-checked Manage Chats path.
@@ -152,7 +162,7 @@ The Selenium harness remains explicit because it requires a running server, a de
 
 ## Summary
 
-v5 turns Aikobots from a source-file-heavy browser startup into a prebuilt application release. v5.1 extends that release with content-restricted detached generation jobs, fair shared scheduling, server-authoritative prompt preparation, and a patron tab workspace that reuses the existing chat runtime.
+v5 turns Aikobots from a source-file-heavy browser startup into a prebuilt application release. v5.1 extends that release with content-restricted detached generation jobs, fair shared scheduling, server-authoritative prompt preparation, request-scoped model-aware World Info scanning, and a patron tab workspace that reuses the existing chat runtime.
 
 The practical result is fewer startup round trips and the ability to park, queue, resume, and safely commit generation work across chats without replacing the v4 chat format or widening secure lorebook access. The same line also strengthens pristine-chat persistence, account/session concurrency, lorebook cleanup, localization, and verification.
 

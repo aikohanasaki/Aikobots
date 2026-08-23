@@ -92,6 +92,11 @@ export function isSameGenerationRecoveryChatIdentity(recoveryIdentity, currentId
         : recoveryIdentity.characterId === currentIdentity.characterId;
 }
 
+/** Returns whether a recovery job has reached a terminal state with no output left to apply. */
+export function isTerminalGenerationRecovery(record) {
+    return record?.state === 'failed' || record?.state === 'cancelled';
+}
+
 /** Finds older failed recoveries superseded by a successful chat mutation. */
 export function getSupersededFailedGenerationIds(successfulRecovery, recoveries = []) {
     if (!successfulRecovery?.chatIdentity) {

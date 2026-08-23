@@ -188,6 +188,14 @@ Before deletion, the server repeats the scan and validates every selected target
 
 Aikobots maintains German, French, Japanese, Portuguese, and Russian UI locales. The localization audit checks tagged UI coverage for those five non-English locales and intentionally ignores other locale files. The German, French, Japanese, and Portuguese Memory Assistance translations retain their specific provenance from the referenced SillyTavern-MemoryBooks commit; later Russian Aikobots UI coverage is separate integration work.
 
+### 26. Model-Aware World Info Scanning
+
+Aikobots preserves the model-aware World Info behavior originally developed by Aiko Hanasaki as the standalone `SillyTavern-ModelInjection` extension. The original extension obtained the selected model through SillyTavern's `/model` command and registered a hidden, scan-only `/inject` value so lorebook keywords such as `MODEL=gpt-5` could activate model-specific entries without placing that marker in the final model prompt.
+
+After integration into Aikobots, the feature initially retained the extension lifecycle: a browser generation event refreshed a stable `core-model-tag` injection, and the generic `/inject` command also persisted that value in chat metadata. The persistence supported extension-era `/listinjects` diagnostics but was not required for World Info matching.
+
+The current v5.1 implementation removes the integrated Model Injection client module, slash-command pipeline, generation event hook, and metadata write. Core server prompt assembly now derives `MODEL=<model ID>` from the model frozen for that generation request and adds it directly as a request-scoped World Info scan input. It remains hidden from assembled model messages, is never written to chat storage, and overrides any legacy persisted `core-model-tag` value in memory so stale metadata cannot select the wrong model-specific lorebook entry.
+
 ## Forked or Integrated Third-Party Work
 
 Aikobots credits upstream and third-party work where used. Relevant examples include:
@@ -197,6 +205,7 @@ Aikobots credits upstream and third-party work where used. Relevant examples inc
 * WorldInfoPresets by Len Anderson.
 * Chat Top Bar / Top Info Bar by Cohee1207.
 * Favorites Carousel by subzero5544.
+* SillyTavern-ModelInjection by Aiko Hanasaki, subsequently integrated and refactored into request-scoped core World Info scanning.
 * Other credited extensions, UI components, or features listed in the main README License and Credits section.
 
 Where Aikobots forks or modifies third-party extensions, the relevant extension repository should identify the upstream project and summarize Aikobots-specific changes.
@@ -224,6 +233,10 @@ For WorldInfoInfo-derived work:
 For WorldInfoPresets/WorldInfoLocks-derived work:
 
 > SillyTavern-WorldInfoPresets originally by Len Anderson, forked as WorldInfoLocks with additional features by Aiko Hanasaki.
+
+For Model Injection-derived work:
+
+> Model-aware World Info scanning is derived from SillyTavern-ModelInjection by Aiko Hanasaki and is now maintained as request-scoped Aikobots core prompt-assembly behavior.
 
 ## Notes on Scope
 

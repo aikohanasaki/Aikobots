@@ -5,6 +5,7 @@ import {
     getSupersededFailedGenerationIds,
     getPendingGeneration,
     isSameGenerationRecoveryChatIdentity,
+    isTerminalGenerationRecovery,
     listPendingGenerations,
     recordGenerationAdmission,
     savePendingGeneration,
@@ -67,6 +68,13 @@ describe('pending generation recovery', () => {
             { groupId: '', characterId: '7', chatId: 'chat-1' },
             current,
         )).toBe(true);
+    });
+
+    it('treats failed and cancelled jobs as terminal, but keeps completed output recoverable', () => {
+        expect(isTerminalGenerationRecovery({ state: 'failed' })).toBe(true);
+        expect(isTerminalGenerationRecovery({ state: 'cancelled' })).toBe(true);
+        expect(isTerminalGenerationRecovery({ state: 'completed' })).toBe(false);
+        expect(isTerminalGenerationRecovery({ state: 'running' })).toBe(false);
     });
 
     it('supersedes only older failures for the successfully saved chat', () => {

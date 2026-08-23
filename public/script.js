@@ -283,7 +283,7 @@ import { shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
-import { clearPendingGeneration, getSupersededFailedGenerationIds, isSameGenerationRecoveryChatIdentity, listPendingGenerations, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
+import { clearPendingGeneration, getSupersededFailedGenerationIds, isSameGenerationRecoveryChatIdentity, isTerminalGenerationRecovery, listPendingGenerations, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
 import { createGenerationReadinessSignal, waitForGenerationReadiness, waitForGenerationSettlement } from './scripts/generation-readiness.js';
 import { captureChatWorkspaceTabFocus, getChatWorkspaceRecoveryRefreshDelay, getLatestChatWorkspaceRecovery, listChatWorkspaceTabs, removeChatWorkspaceTab, restoreChatWorkspaceTabFocus, upsertChatWorkspaceTab } from './scripts/chat-workspace-tabs.js';
 import { initWorldInfoLocks, loadWorldInfoLocksSettings } from './scripts/world-info-locks.js';
@@ -9520,7 +9520,7 @@ class StreamingProcessor {
         }
     }
 
-    /** Acknowledges that this processor's durable stream was committed to the chat. */
+    /** Acknowledges that this processor's durable stream no longer needs recovery. */
     async resolveGenerationRecovery({ supersedeFailures = false } = {}) {
         const generationId = this.generator?.generationId;
         return generationId ? acknowledgeGenerationRecovery(generationId, { supersedeFailures }) : true;
@@ -9807,7 +9807,11 @@ class StreamingProcessor {
             exhaustedGenerationRecoveries.add(this.generator.generationId);
         }
         if (!preserveDetachedGeneration) {
+            const generationId = this.generator?.generationId;
             this.clearGenerationRecovery();
+            if (generationId) {
+                void acknowledgeGenerationRecovery(generationId).catch(() => null);
+            }
             this.abortController.abort();
         }
         this.isStopped = true;
@@ -11935,20 +11939,17 @@ function isGenerationRecoveryApplied(record) {
     return false;
 }
 
-/** Selects the local fast path or the oldest server recovery for the active chat. */
+/** Selects the authoritative server recovery or falls back to the local record when unavailable. */
 async function findGenerationRecoveryForCurrentChat() {
     const currentIdentity = getGenerationRecoveryChatIdentity();
     const local = listPendingGenerations().find(record => isSameGenerationRecoveryChatIdentity(record.chatIdentity, currentIdentity));
-    if (local) {
-        return local;
-    }
-
     const recoveries = await getServerGenerationRecoveries();
     const discovered = recoveries.find(record => isSameGenerationRecoveryChatIdentity(record.chatIdentity, currentIdentity)) || null;
     if (discovered) {
         savePendingGeneration(discovered);
+        return discovered;
     }
-    return discovered;
+    return local || null;
 }
 
 /** Cancels a pending job whose saved chat target is no longer safe to mutate. */
@@ -11975,6 +11976,10 @@ async function resumePendingGenerationForCurrentChat() {
     const recoveryTask = (async () => {
         const pending = await findGenerationRecoveryForCurrentChat();
         if (!pending) {
+            return;
+        }
+        if (isTerminalGenerationRecovery(pending)) {
+            await acknowledgeGenerationRecovery(pending.generationId);
             return;
         }
         if (exhaustedGenerationRecoveries.has(pending.generationId)) {
