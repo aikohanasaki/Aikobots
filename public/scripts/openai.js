@@ -6619,6 +6619,7 @@ export function loadProxyPresets(settings) {
 }
 
 function setProxyPreset(name, url, password) {
+    const connectionChanged = oai_settings.reverse_proxy !== url || oai_settings.proxy_password !== password;
     const preset = proxies.find(p => p.name === name);
     if (preset) {
         preset.url = url;
@@ -6635,7 +6636,9 @@ function setProxyPreset(name, url, password) {
     $('#openai_reverse_proxy').val(oai_settings.reverse_proxy);
     oai_settings.proxy_password = password;
     $('#openai_proxy_password').val(oai_settings.proxy_password);
-    reconnectOpenAi();
+    if (connectionChanged) {
+        reconnectOpenAi();
+    }
 }
 
 function onProxyPresetChange() {

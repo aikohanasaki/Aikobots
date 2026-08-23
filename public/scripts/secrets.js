@@ -741,6 +741,10 @@ function registerSecretSlashCommands() {
                 return '';
             }
 
+            if (savedSecret.active) {
+                return savedSecret.id;
+            }
+
             // Set the secret as active
             await rotateSecret(key, savedSecret.id);
             if (!quiet) {
