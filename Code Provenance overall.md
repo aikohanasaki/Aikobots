@@ -20,7 +20,7 @@ Some Aikobots implementation work may have involved AI-assisted coding tools und
 
 Aikobots adds Memory Books workflows for long-running roleplay and structured memory management. This includes Aikobots-specific prompt behavior, memory organization patterns, and supporting UI/workflow conventions.
 
-Current code includes STMB scene capture, memory generation, summary/consolidation tiers, Topical Clips, SidePrompts, tracker/scoreboard-style side prompt behavior, queued Memory Books jobs, processed-message boundary controls, catch-up commands for long chats, profile-specific provider settings, and lorebook order defaults for auto-created memory books.
+Current code includes STMB scene capture, memory generation, summary/consolidation tiers, Topical Clips, SidePrompts, tracker/scoreboard-style side prompt behavior, queued Memory Books jobs, processed-message boundary controls, catch-up commands for long chats, profile-specific provider settings, and lorebook order defaults for auto-created memory books. Later v5 work adds message-range-aware Memory Assistance suggestions, background Topical Clip generation and auto-accept, stricter dependent-job serialization, raw provider-error display in the job UI, and locale-matched AI Reference Manual downloads.
 
 ### 2. Lorebook Ordering / STLO
 
@@ -76,9 +76,9 @@ The initial move from JSONL/split-tail behavior to SQLite-backed chat storage in
 
 Repository history confirms LeRobber authored key early SQLite retrieval and migration commits. Subsequent branch history shows substantial integration, migration, locking, STMB compatibility, native SQLite conversion, transactional mutation, and bugfix work by Aiko Hanasaki around the same chat-storage area.
 
-Fact-check update for the current v4 workspace: SQLite-backed chat storage is the current architecture. New chat paths default to `.sqlite`, legacy `.jsonl` remains a migration or import input, v2's split-tail runtime storage remains unsupported, chat imports/exports include SQLite, and migration tooling verifies SQLite integrity and logical equivalence before retiring legacy JSONL sources.
+Fact-check update for the current v5.1 workspace: SQLite-backed chat storage is the current architecture. New chat paths default to `.sqlite`, legacy `.jsonl` remains a migration or import input, v2's split-tail runtime storage remains unsupported, chat imports/exports include SQLite, and migration tooling verifies SQLite integrity and logical equivalence before retiring legacy JSONL sources.
 
-The current chat system uses native SQLite through `better-sqlite3`, bounded SQL reads, WAL-backed transactions, durable message and swipe UUIDs, revision checks, idempotent operation receipts, active-session checks, application-level coordination locks, STMB sparse range resolution, WAL-consistent raw export, message cloning, and prompt snapshot invalidation for affected cloned messages.
+The current chat system uses native SQLite through `better-sqlite3`, bounded SQL reads, WAL-backed transactions, durable message and swipe UUIDs, revision checks, idempotent operation receipts, active-session checks, application-level coordination locks, STMB sparse range resolution, WAL-consistent raw export, message cloning, and prompt snapshot invalidation for affected cloned messages. v5.1 also treats foreground generation as a persistence barrier, keeps pristine greetings client-only until qualifying activity occurs, and reads completed generation mutations back as canonical SQLite rows before releasing the send cycle.
 
 ### 8. Layout and UI Systems
 
@@ -86,7 +86,7 @@ Aikobots includes custom layout and interface work, including additional visual 
 
 Examples include custom layout modules, top information display behavior, and roleplay-oriented interface changes.
 
-Current code includes a modular layout system with built-in layouts, a layout variable contract, custom CSS upload, layout asset upload with image conversion/storage limits, and route-level validation that rejects unsafe filenames, unsafe CSS markers, and arbitrary remote asset URLs.
+Current code includes a modular layout system with built-in layouts, a layout variable contract, custom CSS upload, layout asset upload with image conversion/storage limits, and route-level validation that rejects unsafe filenames, unsafe CSS markers, and arbitrary remote asset URLs. v5.1 adds an accessible, horizontally scrollable patron chat workspace to the existing Top Chat Bar without creating another chat runtime.
 
 ### 9. Session and Safety Guards
 
@@ -94,19 +94,19 @@ Aikobots includes session-handling and write-safety behavior intended to reduce 
 
 This includes single-tab/session-lock concepts and related frontend/backend coordination.
 
-Current code implements active-session leases with claim, take-over, heartbeat, verify, and release endpoints, plus middleware that attaches active-session operations to protected requests. Chat writes combine this with revision checks and save locks.
+Current code implements active-session leases with claim, take-over, heartbeat, verify, and release endpoints, plus middleware that attaches active-session operations to protected requests. Chat writes combine this with revision checks and save locks. Administrative session reset rotates a persisted session epoch, removes the shared active-tab lease, and cancels the target user's in-flight protected operations across workers without mutating chat storage.
 
 ### 10. Provider, Token, and Prompt Workflow Changes
 
 Aikobots includes provider registry work, token dry-run behavior, redacted prompt inspection/support workflows, and related utilities used to improve reliability and transparency for generation setup.
 
-Current code includes character token dry-run metadata, redacted itemized prompt display, server-side prompt inspection snapshots, prompt snapshot maintenance, connection profiles, and provider-specific prompt conversion/dispatch paths. Prompt inspection responses are sanitized before they are returned to the client.
+Current code includes character token dry-run metadata, redacted itemized prompt display, server-side prompt inspection snapshots, prompt snapshot maintenance, connection profiles, and provider-specific prompt conversion/dispatch paths. Prompt inspection responses are sanitized before they are returned to the client. Compatible ordinary SQLite chat generation can now send a content-restricted preparation envelope so the owning worker reads the revision-checked chat, resolves secure lorebooks only in memory, assembles the prompt server-side, and dispatches the provider request without returning protected inputs to the browser. JSONL compatibility and generation paths that require client-only interceptors retain the direct route.
 
 ### 11. Multi-User Hosted Architecture
 
 Aikobots is a multi-user fork designed for hosted/community deployments. The project README explicitly describes Aikobots as a multi-user fork built around chat completion APIs and notes that it does not include support for legacy text generation APIs.
 
-Current code includes user/admin endpoints, public/private user routes, admin-gated extension installation controls, character and lorebook ownership metadata, shared asset repositories, and hosted-environment safeguards around concurrent writes.
+Current code includes user/admin endpoints, public/private user routes, admin-gated extension installation controls, character and lorebook ownership metadata, shared asset repositories, and hosted-environment safeguards around concurrent writes. User-record mutations now use per-handle cross-worker locks, and the account model includes an administratively managed patron capability used by the detached-generation scheduler and chat workspace.
 
 ### 12. Character Sharing, Ownership, and Submissions
 
@@ -136,7 +136,7 @@ The migration tool supports legacy JSONL migration, verifies `PRAGMA integrity_c
 
 Aikobots includes server-side extension runtime plumbing and policy checks for hosted environments. Third-party extension installation can be admin-restricted, and server-side extension hooks support generation interceptors, prompt providers, and macro providers.
 
-This supports an integrated Aikobots deployment model while keeping extension behavior behind explicit policy boundaries.
+This supports an integrated Aikobots deployment model while keeping extension behavior behind explicit policy boundaries. The bundled v5 browser does not discover or execute third-party client extensions; existing files and server endpoints remain only for recovery or a future deliberate migration. Core built-ins use a compiled registry and one conditional asynchronous bundle.
 
 ### 17. Transactional Chat Identity and Mutation Model
 
@@ -154,9 +154,39 @@ Aikobots v4 adds Recent Chats using explicit SQLite activity metadata with a leg
 
 Lorebook sort order can now be saved per lorebook through a normalized client/server path, while temporary search sorting remains a UI-only mode.
 
-### 20. Browser End-to-End Test Harness
+### 20. Browser and Repository Test Harness
 
-Aikobots v4 adds an initial Selenium harness contributed by LeRobber. Its first scenarios cover chat creation and rename, edit cancellation, import/export round trips, long-chat swipe behavior, and connection-profile setup, complementing the repository's focused storage and feature tests.
+Aikobots v4 adds an initial Selenium harness contributed by LeRobber. Its first scenarios cover chat creation and rename, edit cancellation, import/export round trips, long-chat swipe behavior, and connection-profile setup.
+
+v5.1 adds a pinned, offline-capable repository test contract around Node.js 24.18.0 and npm 12.0.1. It separates `node:test` and Jest suites, validates the environment and install-script policy with a read-only doctor, checks committed frontend reproducibility, runs a self-contained Chromium smoke test, and expands the explicit Selenium scenarios with dirty new-chat persistence and send/edit-cycle coverage.
+
+### 21. Committed Frontend Production Bundles
+
+Aikobots v5 compiles the browser sources into deterministic, source-map-free artifacts committed under `public/dist`. Ordered classic scripts, the Webpack runtime, shared vendor code, the main application, the eager 28-module STMB graph, static CSS, and one conditional built-ins chunk replace roughly 200 or more startup source requests with 10 application JavaScript/CSS requests.
+
+Production, Docker, and PM2 workers serve those artifacts directly and do not compile frontend code at startup. Build validation checks artifact hashes, request and compressed-size budgets, built-in registry count, STMB chunk isolation, embedded templates, retained dynamic layout styles, and exclusion of third-party client extensions.
+
+### 22. Detached Generation Jobs and Fair Scheduling
+
+Aikobots v5.1 stores detached generation state, safe scheduling metadata, recovery routes, and replayable response events in a separate WAL-mode SQLite database under shared `DATA_ROOT`. Admission is idempotent and authenticated; client-supplied user handles are not trusted. Prompts, provider request bodies, credentials, secure lorebook entries, bindings, keys, and hidden metadata remain in the owning worker's memory rather than durable job metadata.
+
+The scheduler coordinates all PM2 workers with transactional global, per-user, and queue limits. Reserved first-generation slots protect users without running work, secondary jobs age into general-pool priority, standard accounts receive one running generation, and patrons/admins may use the configured higher concurrency. Cancellation is durable, stale ownership releases capacity safely, and graceful shutdown drains work already owned by that worker.
+
+### 23. Resumable Patron Chat Workspace
+
+The v5.1 patron workspace reuses the existing Top Chat Bar and authoritative direct/group chat loader. Once generation admission is durable, a user can park delivery, open another chat, and later resume the recorded job. Selecting a tab discards only the unsaved browser placeholder and loads the authoritative chat before replay and revision-checked commit.
+
+Session tab records are content-free identities and labels, not alternate chat storage. They expose accessible queued/running, completed, and failed states; closing active work requires confirmation. Standard users see the feature entry locked, while patrons and admins can use the configured multi-generation capacity.
+
+### 24. Safe Data Maid Lorebook Cleanup
+
+Data Maid now supports multi-select deletion and can identify ordinary user lorebooks with no known durable references. The scan covers settings, personas, characters, chats, groups, STMB configuration, side prompts, World Info presets, hidden bindings, and hidden templates.
+
+Before deletion, the server repeats the scan and validates every selected target inside the cross-worker lorebook-management transaction. Any changed or unreadable source causes a typed conflict instead of a partial deletion. Secure, shared-secure, reserved, and other ineligible lorebooks are excluded from candidates.
+
+### 25. Supported Localization
+
+Aikobots maintains German, French, Japanese, Portuguese, and Russian UI locales. The localization audit checks tagged UI coverage for those five non-English locales and intentionally ignores other locale files. The German, French, Japanese, and Portuguese Memory Assistance translations retain their specific provenance from the referenced SillyTavern-MemoryBooks commit; later Russian Aikobots UI coverage is separate integration work.
 
 ## Forked or Integrated Third-Party Work
 
