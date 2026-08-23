@@ -92,6 +92,19 @@ export function isSameGenerationRecoveryChatIdentity(recoveryIdentity, currentId
         : recoveryIdentity.characterId === currentIdentity.characterId;
 }
 
+/** Finds older failed recoveries superseded by a successful chat mutation. */
+export function getSupersededFailedGenerationIds(successfulRecovery, recoveries = []) {
+    if (!successfulRecovery?.chatIdentity) {
+        return [];
+    }
+    return recoveries
+        .filter(recovery => recovery?.state === 'failed'
+            && recovery.generationId !== successfulRecovery.generationId
+            && Number(recovery.createdAt) <= Number(successfulRecovery.createdAt)
+            && isSameGenerationRecoveryChatIdentity(recovery.chatIdentity, successfulRecovery.chatIdentity))
+        .map(recovery => recovery.generationId);
+}
+
 /** Returns every valid pending generation, migrating the legacy single record once. */
 export function listPendingGenerations(storage = getDefaultStorage(), now = Date.now()) {
     if (!storage) {

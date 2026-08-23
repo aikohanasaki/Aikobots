@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
     clearPendingGeneration,
+    getSupersededFailedGenerationIds,
     getPendingGeneration,
     isSameGenerationRecoveryChatIdentity,
     listPendingGenerations,
@@ -66,6 +67,21 @@ describe('pending generation recovery', () => {
             { groupId: '', characterId: '7', chatId: 'chat-1' },
             current,
         )).toBe(true);
+    });
+
+    it('supersedes only older failures for the successfully saved chat', () => {
+        const success = { ...createRecord(20), generationId: 'success' };
+        const sameChatFailure = { ...createRecord(10), generationId: 'old-failure', state: 'failed' };
+        const newerFailure = { ...createRecord(30), generationId: 'new-failure', state: 'failed' };
+        const otherChatFailure = {
+            ...createRecord(10),
+            generationId: 'other-failure',
+            state: 'failed',
+            chatIdentity: { ...success.chatIdentity, chatId: 'chat-2' },
+        };
+
+        expect(getSupersededFailedGenerationIds(success, [sameChatFailure, newerFailure, otherChatFailure]))
+            .toEqual(['old-failure']);
     });
 
     it('discards expired and malformed recovery records', () => {

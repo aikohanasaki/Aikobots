@@ -3,6 +3,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import {
     captureChatWorkspaceTabFocus,
     getChatWorkspaceRecoveryRefreshDelay,
+    getLatestChatWorkspaceRecovery,
     listChatWorkspaceTabs,
     removeChatWorkspaceTab,
     restoreChatWorkspaceTabFocus,
@@ -28,6 +29,13 @@ describe('chat workspace tabs', () => {
         [{}, 30_000],
     ])('selects the recovery refresh cadence from workspace activity', (state, expected) => {
         expect(getChatWorkspaceRecoveryRefreshDelay(state, 3_000, 30_000)).toBe(expected);
+    });
+
+    it('shows a retry instead of an older retained failure', () => {
+        const failed = { generationId: 'failed', state: 'failed', createdAt: 1 };
+        const retry = { generationId: 'retry', state: 'running', createdAt: 2 };
+
+        expect(getLatestChatWorkspaceRecovery([failed, retry])).toBe(retry);
     });
 
     it.each(['open', 'close'])('restores focus to the same tab %s control after a rebuild', action => {

@@ -284,9 +284,9 @@ import { shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
-import { clearPendingGeneration, isSameGenerationRecoveryChatIdentity, listPendingGenerations, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
+import { clearPendingGeneration, getSupersededFailedGenerationIds, isSameGenerationRecoveryChatIdentity, listPendingGenerations, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
 import { createGenerationReadinessSignal, waitForGenerationReadiness, waitForGenerationSettlement } from './scripts/generation-readiness.js';
-import { captureChatWorkspaceTabFocus, getChatWorkspaceRecoveryRefreshDelay, listChatWorkspaceTabs, removeChatWorkspaceTab, restoreChatWorkspaceTabFocus, upsertChatWorkspaceTab } from './scripts/chat-workspace-tabs.js';
+import { captureChatWorkspaceTabFocus, getChatWorkspaceRecoveryRefreshDelay, getLatestChatWorkspaceRecovery, listChatWorkspaceTabs, removeChatWorkspaceTab, restoreChatWorkspaceTabFocus, upsertChatWorkspaceTab } from './scripts/chat-workspace-tabs.js';
 import { initWorldInfoLocks, loadWorldInfoLocksSettings } from './scripts/world-info-locks.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
@@ -2901,9 +2901,10 @@ function recoveryMatchesWorkspaceTab(recovery, tab) {
 }
 
 function getWorkspaceTabRecovery(tab) {
-    return latestGenerationRecoveries.find(recovery => recoveryMatchesWorkspaceTab(recovery, tab))
-        || listPendingGenerations().find(recovery => recoveryMatchesWorkspaceTab(recovery, tab))
-        || null;
+    return getLatestChatWorkspaceRecovery([
+        ...latestGenerationRecoveries,
+        ...listPendingGenerations(),
+    ].filter(recovery => recoveryMatchesWorkspaceTab(recovery, tab)));
 }
 
 function isCurrentWorkspaceTab(tab) {
@@ -9522,9 +9523,9 @@ class StreamingProcessor {
     }
 
     /** Acknowledges that this processor's durable stream was committed to the chat. */
-    async resolveGenerationRecovery() {
+    async resolveGenerationRecovery({ supersedeFailures = false } = {}) {
         const generationId = this.generator?.generationId;
-        return generationId ? acknowledgeGenerationRecovery(generationId) : true;
+        return generationId ? acknowledgeGenerationRecovery(generationId, { supersedeFailures }) : true;
     }
 
     async onStartStreaming(text) {
@@ -9770,7 +9771,7 @@ class StreamingProcessor {
             unblockGeneration();
             return false;
         }
-        await this.resolveGenerationRecovery();
+        await this.resolveGenerationRecovery({ supersedeFailures: true });
 
         if (this.type !== 'impersonate') {
             await eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
@@ -11767,7 +11768,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 return Promise.resolve();
             }
             if (generationId) {
-                await acknowledgeGenerationRecovery(generationId);
+                await acknowledgeGenerationRecovery(generationId, { supersedeFailures: true });
             }
         }
 
@@ -11857,24 +11858,42 @@ function createGenerationRecoveryContext(type, swipeTarget = null) {
 }
 
 /** Marks a durable generation handled only after its chat mutation is authoritative. */
-async function acknowledgeGenerationRecovery(generationId) {
+async function acknowledgeGenerationRecovery(generationId, { supersedeFailures = false } = {}) {
     if (!isValidAikobotsUuid(generationId)) {
         return false;
     }
 
-    try {
-        const response = await fetch(`/api/backends/chat-completions/generations/${generationId}/resolve`, {
-            method: 'POST',
-            headers: getRequestHeaders(),
-        });
-        if (response.ok || response.status === 404) {
-            clearPendingGeneration(generationId);
-            return true;
+    const recoveries = [...latestGenerationRecoveries, ...listPendingGenerations()];
+    const successfulRecovery = recoveries.find(recovery => recovery.generationId === generationId);
+    const supersededIds = supersedeFailures
+        ? [...new Set(getSupersededFailedGenerationIds(successfulRecovery, recoveries))]
+        : [];
+    const resolveRecovery = async id => {
+        try {
+            const response = await fetch(`/api/backends/chat-completions/generations/${id}/resolve`, {
+                method: 'POST',
+                headers: getRequestHeaders(),
+            });
+            if (response.ok || response.status === 404) {
+                clearPendingGeneration(id);
+                return true;
+            }
+        } catch {
+            // The persisted chat marker makes a later discovery safe to acknowledge.
         }
-    } catch {
-        // The persisted chat marker makes a later discovery safe to acknowledge.
+        return false;
+    };
+
+    if (!await resolveRecovery(generationId)) {
+        return false;
     }
-    return false;
+
+    const supersededResults = await Promise.all(supersededIds.map(resolveRecovery));
+    const resolvedIds = new Set([generationId]);
+    supersededIds.forEach((id, index) => supersededResults[index] && resolvedIds.add(id));
+    latestGenerationRecoveries = latestGenerationRecoveries.filter(recovery => !resolvedIds.has(recovery.generationId));
+    renderChatWorkspaceTabs();
+    return true;
 }
 
 /** Reads the authenticated user's content-free unresolved generation index. */
@@ -11963,7 +11982,7 @@ async function resumePendingGenerationForCurrentChat() {
             return;
         }
         if (isGenerationRecoveryApplied(pending)) {
-            await acknowledgeGenerationRecovery(pending.generationId);
+            await acknowledgeGenerationRecovery(pending.generationId, { supersedeFailures: true });
             return;
         }
 

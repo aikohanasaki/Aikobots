@@ -7,6 +7,11 @@ export function getChatWorkspaceRecoveryRefreshDelay({ panelOpen = false, genera
     return panelOpen || generationActive || hasActiveRecovery ? fastMs : idleMs;
 }
 
+/** Selects the newest recovery state for one workspace tab. */
+export function getLatestChatWorkspaceRecovery(recoveries = []) {
+    return recoveries.reduce((latest, recovery) => !latest || Number(recovery?.createdAt) > Number(latest.createdAt) ? recovery : latest, null);
+}
+
 /** Captures the stable identity of a focused workspace-tab control. */
 export function captureChatWorkspaceTabFocus(container, activeElement = globalThis.document?.activeElement) {
     if (!container?.contains(activeElement)) {
