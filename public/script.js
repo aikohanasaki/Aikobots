@@ -269,7 +269,6 @@ import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMess
 import { event_types, eventSource } from './scripts/events.js';
 import { isAdmin, isPatron } from './scripts/user.js';
 import { initializeHiddenTemplates } from './scripts/hidden-templates.js';
-import { initializeModelTagInjection } from './scripts/model-tag-injection.js';
 import { initAccessibility } from './scripts/a11y.js';
 import { applyStreamFadeIn } from './scripts/util/stream-fadein.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
@@ -4627,7 +4626,6 @@ async function firstLoadInit() {
     doDailyExtensionUpdatesCheck();
     await hideLoader();
     await fixViewport();
-    initializeModelTagInjection();
     await initializeHiddenTemplates();
     eventSource.once(event_types.APP_READY, () => {
         runStorageCheckOnAppReady();
@@ -11364,6 +11362,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
             const activeCharacter = globalThis.promptManager?.activeCharacter ?? characters[this_chid];
             const promptSnapshotTarget = getPromptSnapshotTarget(type, swipeTarget);
             const promptContext = await buildServerAssemblyPayload({
+                model: serverPreparationSource ? preparedOpenAIRequest?.generateData?.model : undefined,
                 coreChat: getCoreChatPayloadForAssembly(coreChat, serverPreparationSource),
                 name2: name2,
                 charDescription: description,

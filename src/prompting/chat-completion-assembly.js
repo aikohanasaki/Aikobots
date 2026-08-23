@@ -31,6 +31,8 @@ const extension_prompt_roles = {
     ASSISTANT: 2,
 };
 
+const CORE_MODEL_SCAN_PROMPT_KEY = 'script_inject_core-model-tag';
+
 const wi_anchor_position = {
     before: 0,
     after: 1,
@@ -117,6 +119,30 @@ function resolvePromptValues(extensionPrompts = {}, env = {}) {
             scanText: prompt?.scan ? resolvedValue : undefined,
         }];
     }));
+}
+
+/** Adds the request model as a hidden World Info scan input and replaces any legacy persisted value. */
+function addCoreModelScanPrompt(extensionPrompts = {}, model = '') {
+    const prompts = { ...extensionPrompts };
+    const modelId = String(model ?? '').trim();
+
+    if (!modelId) {
+        delete prompts[CORE_MODEL_SCAN_PROMPT_KEY];
+        return prompts;
+    }
+
+    const value = `MODEL=${modelId}`;
+    prompts[CORE_MODEL_SCAN_PROMPT_KEY] = {
+        key: CORE_MODEL_SCAN_PROMPT_KEY,
+        value,
+        resolvedValue: value,
+        scanText: value,
+        position: extension_prompt_types.NONE,
+        depth: 4,
+        scan: true,
+        role: extension_prompt_roles.SYSTEM,
+    };
+    return prompts;
 }
 
 function mergeExtensionPromptSources(promptState = {}, runtimePrompts = {}, quietPrompt = '') {
@@ -2321,7 +2347,7 @@ export async function assembleChatCompletionPrompt(payload = {}) {
         payload.extensionPrompts || {},
         payload.quietPrompt,
     );
-    const resolvedExtensionPrompts = resolvePromptValues(rawExtensionPrompts, env);
+    const resolvedExtensionPrompts = addCoreModelScanPrompt(resolvePromptValues(rawExtensionPrompts, env), model);
 
     const tokenHandler = new TokenHandler(model);
     const promptManager = new PromptManagerCore({

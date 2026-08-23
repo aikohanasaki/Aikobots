@@ -1505,6 +1505,7 @@ export function consumeOpenAIResponseData(requestId = null) {
 }
 
 export async function buildServerAssemblyPayload({
+    model: requestedModel,
     coreChat,
     name2,
     charDescription,
@@ -1534,6 +1535,7 @@ export async function buildServerAssemblyPayload({
         await backfillImageMediaIdsForMessages(coreChat, { persist: true });
     }
 
+    const model = requestedModel === undefined ? getChatCompletionModel() : requestedModel;
     const resolvedPromptState = promptState && typeof promptState === 'object'
         ? structuredClone(promptState)
         : await getClientPromptInjectionSnapshot();
@@ -1567,7 +1569,7 @@ export async function buildServerAssemblyPayload({
     }
 
     return {
-        model: getChatCompletionModel(),
+        model,
         chatCompletionSource: oai_settings.chat_completion_source,
         clientOrigin: window.location.origin,
         userName: name1,
@@ -2691,6 +2693,7 @@ function getVerbosity() {
 
 async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {}) {
     const promptContext = !Array.isArray(messages) && messages && typeof messages === 'object' ? messages.promptContext : null;
+    const model = promptContext && Object.hasOwn(promptContext, 'model') ? promptContext.model : getChatCompletionModel();
     const requestId = beginOpenAIResponseMetadata(type);
     storeServerAssemblyPromptContext(promptContext);
 
@@ -2727,7 +2730,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
     const isQuiet = type === 'quiet';
     const isImpersonate = type === 'impersonate';
     const isContinue = type === 'continue';
-    const stream = oai_settings.stream_openai && !isQuiet && !((isOAI || isAzureOpenAI) && ['o1-2024-12-17', 'o1'].includes(getChatCompletionModel()));
+    const stream = oai_settings.stream_openai && !isQuiet && !((isOAI || isAzureOpenAI) && ['o1-2024-12-17', 'o1'].includes(model));
     const useLogprobs = !!power_user.request_token_probabilities;
     const canMultiSwipe = oai_settings.n > 1 && !isContinue && !isImpersonate && !isQuiet && (isOAI || isAzureOpenAI || isCustom || isXAI || isAimlapi || isMoonshot);
 
@@ -2753,7 +2756,6 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
         logit_bias = undefined;
     }
 
-    const model = getChatCompletionModel();
     const generate_data = {
         'type': type,
         'messages': promptContext ? undefined : messages,
@@ -3037,6 +3039,10 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
 
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data);
 
+    if (promptContext && Object.hasOwn(generate_data, 'model')) {
+        promptContext.model = generate_data.model;
+    }
+
     return {
         generateData: generate_data,
         stream,
@@ -3070,6 +3076,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
         requestId = preparedRequest.requestId;
         if (promptContext) {
             delete generate_data.messages;
+            promptContext.model = generate_data.model;
             generate_data.prompt_context = promptContext;
             storeServerAssemblyPromptContext(promptContext);
             hasForcedActivations = Array.isArray(promptContext.worldInfoRequest?.forcedActivations)
