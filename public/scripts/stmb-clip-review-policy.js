@@ -66,14 +66,6 @@ export function isTopicalClipEntry(entry) {
     return Boolean(entry?.data?.extensions?.aikobots?.topical_clip);
 }
 
-/** Projects an STMB profile to the recursion flags safe to persist on a Topical Clip entry. */
-export function getTopicalClipRecursionOverrides(profile) {
-    return {
-        preventRecursion: Boolean(profile?.preventRecursion),
-        delayUntilRecursion: Boolean(profile?.delayUntilRecursion),
-    };
-}
-
 /** Checks the shared approximate-token threshold used for long Clip warnings. */
 export function isLongClipEntryContent(content) {
     return Math.ceil(String(content || '').length / 4) > CLIP_LONG_ENTRY_TOKEN_THRESHOLD;

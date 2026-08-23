@@ -4,13 +4,12 @@ import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { stableHashString } from './hashing.js';
 import { getCurrentLocale, translate } from './i18n.js';
 import { createStmbEntry, generateStmbText, updateStmbEntryByUid } from './stmb-api.js';
-import { compiledSceneToText, STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
+import { buildLorebookEntryProfileOverrides, compiledSceneToText, STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
 import { syncStmbLocalizedPromptFields } from './stmb-prompt-default-migration.js';
 import {
     CLIP_LONG_ENTRY_TOKEN_THRESHOLD,
     CLIP_REVIEW_REQUIRES_REVIEW,
-    getTopicalClipRecursionOverrides,
     isLongClipEntryContent,
     matchesClipReviewTargetIdentity,
     resolveTopicalClipSaveResult,
@@ -474,7 +473,7 @@ async function afterLorebookWrite(lorebookName, lorebookData, entry) {
     }
 }
 
-async function createClipLorebookEntry(lorebookName, lorebookData, { title, content, activation, keywords, metadataUpdates = {}, recursionOverrides = {} }) {
+async function createClipLorebookEntry(lorebookName, lorebookData, { title, content, activation, keywords, metadataUpdates = {}, profileOverrides = {} }) {
     if (getClipEntryByFinalTitle(lorebookData, title)) {
         throw new Error(tr('A clip entry with this title already exists.'));
     }
@@ -500,7 +499,7 @@ async function createClipLorebookEntry(lorebookName, lorebookData, { title, cont
             disable: false,
             position: 0,
             order: 100,
-            ...recursionOverrides,
+            ...profileOverrides,
         },
     });
     await afterLorebookWrite(lorebookName, lorebookData, result?.entry);
@@ -1839,7 +1838,7 @@ async function saveTopicalClipDraft(context, draft, options = {}) {
         targetContentHash,
         sourceSnapshot,
         messageSource,
-        recursionOverrides,
+        profileOverrides,
     } = context || {};
     const contentDraft = String(draft || '').trim();
     if (!contentDraft) throw new Error(tr('Generated draft is empty.'));
@@ -1873,7 +1872,7 @@ async function saveTopicalClipDraft(context, draft, options = {}) {
                 vectorized: true,
                 selective: true,
                 disable: false,
-                ...recursionOverrides,
+                ...profileOverrides,
             },
         });
         return { mode: 'update', lorebookData: freshLorebook, entry: updated };
@@ -1901,7 +1900,7 @@ async function saveTopicalClipDraft(context, draft, options = {}) {
         metadataUpdates: {
             data: buildEntryDataWithTopicalMetadata(null, metadata),
         },
-        recursionOverrides,
+        profileOverrides,
     });
     if (lorebookData && entry?.uid !== undefined) {
         lorebookData.entries = lorebookData.entries && typeof lorebookData.entries === 'object' ? lorebookData.entries : {};
@@ -2491,7 +2490,10 @@ export async function showTopicalClipPopup(options = {}) {
                         ? snapshotTopicalSourceEntries(allEligibleSources)
                         : (getTopicalClipMetadata(target)?.last_source_snapshot || []),
                 messageSource,
-                recursionOverrides: getTopicalClipRecursionOverrides(profile),
+                profileOverrides: buildLorebookEntryProfileOverrides(profile, {
+                    orderNumber: 1,
+                    orderNumberLabel: 'Topical Clip',
+                }),
             };
             if (draftTextarea) draftTextarea.value = normalizedDraft;
             if (autoAccept) {

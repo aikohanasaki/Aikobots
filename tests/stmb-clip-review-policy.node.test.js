@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { buildLorebookEntryProfileOverrides } from '../public/scripts/stmb-core.js';
 import {
     CLIP_REVIEW_REQUIRES_REVIEW,
     applyAutomaticClipReviewCandidates,
     classifyMemoryAssistanceOutcome,
     getDefaultClipReviewLorebookName,
     getSelectedClipReviewUids,
-    getTopicalClipRecursionOverrides,
     isLongClipEntryContent,
     makeClipReviewRecord,
     matchesClipReviewTargetIdentity,
@@ -60,18 +60,25 @@ test('normalizes and filters Topical Clip suggestions', () => {
     assert.equal(result[0].sceneEnd, 24);
 });
 
-test('projects Topical Clip recursion flags from the selected profile', () => {
-    assert.deepEqual(getTopicalClipRecursionOverrides({
+test('projects popup-selected STMB profile settings onto a Topical Clip entry', () => {
+    assert.deepEqual(buildLorebookEntryProfileOverrides({
+        constVectMode: 'blue',
+        position: 7,
+        outletName: 'memories',
+        orderMode: 'manual',
+        orderValue: 321,
         preventRecursion: true,
         delayUntilRecursion: true,
         connection: { apiKey: 'must not be persisted' },
     }), {
+        constant: true,
+        vectorized: false,
+        position: 7,
+        outletName: 'memories',
+        order: 321,
         preventRecursion: true,
         delayUntilRecursion: true,
-    });
-    assert.deepEqual(getTopicalClipRecursionOverrides(null), {
-        preventRecursion: false,
-        delayUntilRecursion: false,
+        ignoreBudget: false,
     });
 });
 

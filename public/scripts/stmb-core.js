@@ -2340,6 +2340,21 @@ export function applyLorebookSettings(entry, profile, options = {}) {
     return target;
 }
 
+/** Builds the entry overrides controlled by an STMB profile. */
+export function buildLorebookEntryProfileOverrides(profile, options = {}) {
+    const entry = applyLorebookSettings({}, profile, options);
+    return {
+        constant: entry.constant,
+        vectorized: entry.vectorized,
+        position: entry.position,
+        outletName: entry.outletName || '',
+        order: entry.order,
+        preventRecursion: entry.preventRecursion,
+        delayUntilRecursion: entry.delayUntilRecursion,
+        ignoreBudget: entry.ignoreBudget,
+    };
+}
+
 function sanitizeTitle(title) {
     return String(title ?? '').replace(/[\u0000-\u001F\u007F-\u009F]/g, '').trim() || 'Auto Memory';
 }
