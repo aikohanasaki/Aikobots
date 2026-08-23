@@ -1244,6 +1244,27 @@ function parseExampleIntoIndividual(messageExampleString, userName, charName, gr
     return result;
 }
 
+/**
+ * Splits an example dialogue string into canonical `<START>` blocks.
+ * @param {*} examples Example dialogue source.
+ * @returns {string[]} Canonical example blocks.
+ */
+function splitMessageExampleBlocks(examples) {
+    let examplesString = String(examples || '');
+    if (!examplesString || examplesString === '<START>') {
+        return [];
+    }
+
+    if (!examplesString.startsWith('<START>')) {
+        examplesString = `<START>\n${examplesString.trim()}`;
+    }
+
+    return examplesString
+        .split(/<START>/gi)
+        .slice(1)
+        .map(block => `<START>\n${block.trim()}\n`);
+}
+
 function parseWorldInfoExampleBlocks(exampleEntry, context) {
     const sourceEntry = exampleEntry && typeof exampleEntry === 'object' && !Array.isArray(exampleEntry)
         ? exampleEntry
@@ -1253,15 +1274,7 @@ function parseWorldInfoExampleBlocks(exampleEntry, context) {
         return [];
     }
 
-    const normalizedExamples = exampleString.startsWith('<START>')
-        ? exampleString
-        : `<START>\n${exampleString.trim()}`;
-    const exampleBlocks = normalizedExamples
-        .split(/<START>/gi)
-        .slice(1)
-        .map(block => `<START>\n${block.trim()}\n`);
-
-    return exampleBlocks
+    return splitMessageExampleBlocks(exampleString)
         .map(block => block.replace(/<START>/i, '{Example Dialogue:}'))
         .map(block => parseExampleIntoIndividual(block, context.userName, context.charName, context.groupNames, true, context.selectedGroup))
         .map(block => block.map(message => ({
@@ -1272,20 +1285,7 @@ function parseWorldInfoExampleBlocks(exampleEntry, context) {
 }
 
 function normalizeMessageExamples(examples) {
-    let examplesString = String(examples || '');
-    if (!examplesString || examplesString === '<START>') {
-        return '';
-    }
-
-    if (!examplesString.startsWith('<START>')) {
-        examplesString = `<START>\n${examplesString.trim()}`;
-    }
-
-    return examplesString
-        .split(/<START>/gi)
-        .slice(1)
-        .map(block => `<START>\n${block.trim()}\n`)
-        .join('');
+    return splitMessageExampleBlocks(examples).join('');
 }
 
 function substituteParams(content, env = {}, additional = {}) {
@@ -2331,10 +2331,8 @@ export async function assembleChatCompletionPrompt(payload = {}) {
     });
     const messageExamples = Array.isArray(payload.messageExamples) && payload.messageExamples.length
         ? structuredClone(payload.messageExamples)
-        : normalizedMesExamples
-            .split(/<START>/gi)
-            .slice(1)
-            .map(block => `<START>\n${block.trim()}\n`.replace(/<START>/i, '{Example Dialogue:}'))
+        : splitMessageExampleBlocks(normalizedMesExamples)
+            .map(block => block.replace(/<START>/i, '{Example Dialogue:}'))
             .map(block => parseExampleIntoIndividual(block, env.user, env.char, groupNames, true, Boolean(payload.selectedGroup)))
             .filter(block => block.length > 0);
 

@@ -1747,4 +1747,5 @@
   ,"Close chat tab": "Fechar separador de chat"
   ,"Chat tabs require patron access": "Os separadores de chat requerem acesso de patrono"
   ,"Chat tabs and background generations require patron access.": "Os separadores de chat e as gerações em segundo plano requerem acesso de patrono."
+  ,"Please wait for the current generation to complete.": "Aguarde até que a geração atual seja concluída."
 }

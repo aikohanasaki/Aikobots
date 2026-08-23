@@ -124,7 +124,7 @@ describe('generation job store', () => {
             requestId: 'request-stale',
             recovery: {
                 type: 'normal',
-                chatIdentity: { groupId: '', characterId: '2', chatId: 'chat-1' },
+                chatIdentity: { groupId: '', characterId: '2', characterAvatar: 'alice.png', chatId: 'chat-1' },
                 anchorMessageUuid: '13131313-1313-4131-8131-131313131313',
                 outputMessageUuid: '14141414-1414-4141-8141-141414141414',
                 createdAt: 10,
@@ -159,7 +159,7 @@ describe('generation job store', () => {
             requestId: 'request-6',
             recovery: {
                 type: 'normal',
-                chatIdentity: { groupId: '', characterId: '2', chatId: 'chat-1' },
+                chatIdentity: { groupId: '', characterId: '2', characterAvatar: 'alice.png', chatId: 'chat-1' },
                 anchorMessageUuid: '77777777-7777-4777-8777-777777777777',
                 outputMessageUuid: '88888888-8888-4888-8888-888888888888',
                 createdAt: now,
@@ -181,6 +181,7 @@ describe('generation job store', () => {
             }),
         ]);
         expect(listGenerationRecoveries('alice')[0].recovery).not.toHaveProperty('prompt');
+        expect(listGenerationRecoveries('alice')[0].recovery.chatIdentity.characterAvatar).toBe('alice.png');
         expect(readGenerationDatabaseBytes().includes(Buffer.from('unexpected-field-sentinel'))).toBe(false);
 
         expect(resolveGenerationRecovery(id, 'alice').resolvedAt).toEqual(expect.any(Number));

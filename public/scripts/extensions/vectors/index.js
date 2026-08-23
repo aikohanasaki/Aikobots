@@ -25,7 +25,7 @@ import {
 import { collapseNewlines, registerDebugFunction } from '../../power-user.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
 import { getDataBankAttachments, getDataBankAttachmentsForSource, getFileAttachment } from '../../chats.js';
-import { appendErrorCode, debounce, getStringHash as calculateHash, waitUntilCondition, onlyUnique, splitRecursive, trimToStartSentence, trimToEndSentence, escapeHtml } from '../../utils.js';
+import { appendErrorCode, debounce, waitUntilCondition, onlyUnique, splitRecursive, trimToStartSentence, trimToEndSentence, escapeHtml } from '../../utils.js';
 import { debounce_timeout } from '../../constants.js';
 import { getSortedEntries } from '../../world-info.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
@@ -36,6 +36,7 @@ import { slashCommandReturnHelper } from '../../slash-commands/SlashCommandRetur
 import { generateWebLlmChatPrompt, isWebLlmSupported } from '../shared.js';
 import { WebLlmVectorProvider } from './webllm.js';
 import { canUseVectorServerGenerationPreparation } from './capability.js';
+import { getVectorStringHash as calculateHash } from './hash.js';
 import { removeReasoningFromString } from '../../reasoning.js';
 import { oai_settings } from '../../openai.js';
 

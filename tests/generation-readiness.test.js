@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { createGenerationReadinessSignal, waitForGenerationReadiness } from '../public/scripts/generation-readiness.js';
+import { createGenerationReadinessSignal, waitForGenerationReadiness, waitForGenerationSettlement } from '../public/scripts/generation-readiness.js';
 
 describe('generation readiness', () => {
     it('waits for durable admission without a fixed timeout', async () => {
@@ -35,5 +35,45 @@ describe('generation readiness', () => {
         signal.notify();
 
         await expect(waiting).resolves.toBe('');
+    });
+
+    it('bounds readiness when generation preparation does not report a terminal state', async () => {
+        const signal = createGenerationReadinessSignal();
+        const waiting = waitForGenerationReadiness({
+            isActive: () => true,
+            getGenerationId: () => '',
+            signal,
+            timeout: 10,
+        });
+
+        await expect(waiting).resolves.toBe('');
+    });
+
+    it('waits for foreground rejection and group cleanup under one deadline', async () => {
+        let finishForeground;
+        let groupActive = true;
+        const foregroundPromise = new Promise((_, reject) => { finishForeground = reject; });
+        const waiting = waitForGenerationSettlement({
+            foregroundPromise,
+            isGroupActive: () => groupActive,
+            timeout: 100,
+            interval: 1,
+        });
+
+        finishForeground(new Error('parked'));
+        groupActive = false;
+
+        await expect(waiting).resolves.toBe(true);
+    });
+
+    it('times out while group cleanup remains active', async () => {
+        const waiting = waitForGenerationSettlement({
+            foregroundPromise: Promise.resolve(),
+            isGroupActive: () => true,
+            timeout: 10,
+            interval: 1,
+        });
+
+        await expect(waiting).resolves.toBe(false);
     });
 });

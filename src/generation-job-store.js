@@ -149,6 +149,7 @@ function normalizeGenerationRecovery(value) {
         || !isValidRoutingValue(chatIdentity.chatId, true)
         || !isValidRoutingValue(chatIdentity.groupId)
         || !isValidRoutingValue(chatIdentity.characterId)
+        || !isValidRoutingValue(chatIdentity.characterAvatar)
         || !UUID_PATTERN.test(anchorMessageUuid)
         || !Number.isFinite(createdAt) || createdAt <= 0
         || !Number.isFinite(startedAt) || startedAt <= 0
@@ -187,6 +188,7 @@ function normalizeGenerationRecovery(value) {
         chatIdentity: {
             groupId: String(chatIdentity.groupId || ''),
             characterId: String(chatIdentity.characterId || ''),
+            characterAvatar: String(chatIdentity.characterAvatar || ''),
             chatId: String(chatIdentity.chatId),
         },
         anchorMessageUuid,

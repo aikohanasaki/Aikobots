@@ -283,9 +283,9 @@ import { shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
-import { clearPendingGeneration, listPendingGenerations, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
-import { createGenerationReadinessSignal, waitForGenerationReadiness } from './scripts/generation-readiness.js';
-import { listChatWorkspaceTabs, removeChatWorkspaceTab, upsertChatWorkspaceTab } from './scripts/chat-workspace-tabs.js';
+import { clearPendingGeneration, isSameGenerationRecoveryChatIdentity, listPendingGenerations, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
+import { createGenerationReadinessSignal, waitForGenerationReadiness, waitForGenerationSettlement } from './scripts/generation-readiness.js';
+import { captureChatWorkspaceTabFocus, getChatWorkspaceRecoveryRefreshDelay, listChatWorkspaceTabs, removeChatWorkspaceTab, restoreChatWorkspaceTabFocus, upsertChatWorkspaceTab } from './scripts/chat-workspace-tabs.js';
 import { initWorldInfoLocks, loadWorldInfoLocksSettings } from './scripts/world-info-locks.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
@@ -2891,7 +2891,12 @@ function recoveryMatchesWorkspaceTab(recovery, tab) {
         return recovery.chatIdentity.groupId === tab.ownerId;
     }
     const characterId = characters.findIndex(character => String(character?.avatar || '') === tab.ownerId);
-    return !recovery.chatIdentity.groupId && recovery.chatIdentity.characterId === String(characterId);
+    return isSameGenerationRecoveryChatIdentity(recovery.chatIdentity, {
+        groupId: '',
+        characterId: String(characterId),
+        characterAvatar: tab.ownerId,
+        chatId: tab.chatId,
+    });
 }
 
 function getWorkspaceTabRecovery(tab) {
@@ -2902,37 +2907,58 @@ function getWorkspaceTabRecovery(tab) {
 
 function isCurrentWorkspaceTab(tab) {
     const current = getCurrentChatWorkspaceTab();
-    return Boolean(current && `${current.ownerType}:${current.ownerId}:${current.chatId}` === tab.key);
+    return Boolean(current
+        && current.ownerType === tab.ownerType
+        && current.ownerId === tab.ownerId
+        && current.chatId === tab.chatId);
 }
 
 /** Disconnects foreground delivery while leaving the detached provider job running. */
 async function parkForegroundGeneration({ discardEphemeralMessage = false } = {}) {
-    if (!is_send_press) {
+    const deadline = Date.now() + 10_000;
+    if (!is_send_press && !is_group_generating) {
         return { ok: true, parked: false };
     }
-    const generationId = await waitForGenerationReadiness({
-        isActive: () => is_send_press,
-        getGenerationId: () => foregroundGenerationId || streamingProcessor?.generator?.generationId || '',
-        signal: foregroundGenerationReadiness,
-    });
-    if (!generationId) {
-        return { ok: !is_send_press, parked: false };
+
+    let parked = false;
+    if (is_send_press) {
+        const generationId = await waitForGenerationReadiness({
+            isActive: () => is_send_press,
+            getGenerationId: () => foregroundGenerationId || streamingProcessor?.generator?.generationId || '',
+            signal: foregroundGenerationReadiness,
+            timeout: deadline - Date.now(),
+        });
+        if (!generationId && is_send_press) {
+            console.warn('Foreground generation did not become ready while parking delivery.');
+            toastr.warning(t`Please wait for the current generation to complete.`);
+            return { ok: false, parked: false };
+        }
+
+        if (generationId) {
+            const parkedError = new Error('Generation delivery parked.');
+            parkedError.generationRecoveryAvailable = true;
+            parkedError.generationParked = true;
+            parkedError.discardEphemeralMessage = discardEphemeralMessage;
+            if (streamingProcessor) {
+                streamingProcessor.abortController.abort(parkedError);
+            } else {
+                abortController?.abort(parkedError);
+            }
+            parked = true;
+        }
     }
 
-    const parked = new Error('Generation delivery parked.');
-    parked.generationRecoveryAvailable = true;
-    parked.generationParked = true;
-    parked.discardEphemeralMessage = discardEphemeralMessage;
-    if (streamingProcessor) {
-        streamingProcessor.abortController.abort(parked);
-    } else {
-        abortController?.abort(parked);
+    const settled = await waitForGenerationSettlement({
+        foregroundPromise: foregroundGenerationPromise,
+        isGroupActive: () => is_group_generating,
+        timeout: deadline - Date.now(),
+    });
+    if (!settled) {
+        console.warn('Generation did not settle while parking foreground delivery.');
+        toastr.warning(t`Please wait for the current generation to complete.`);
+        return { ok: false, parked };
     }
-    await foregroundGenerationPromise?.catch(() => null);
-    while (is_group_generating) {
-        await delay(25);
-    }
-    return { ok: true, parked: true };
+    return { ok: true, parked };
 }
 
 async function openChatWorkspaceTab(tab, { discardCurrentChat = false } = {}) {
@@ -3124,6 +3150,7 @@ function renderChatWorkspaceTabs() {
     if (!topChatButtons.tabsToggle || !topChatTabsList) {
         return;
     }
+    const focusedControl = captureChatWorkspaceTabFocus(topChatTabsList);
     const entitled = isPatron();
     document.getElementById('patron-tab-close-behavior-block')?.classList.toggle('displayNone', !entitled);
     topChatButtons.tabsToggle.classList.toggle('locked', !entitled);
@@ -3151,6 +3178,8 @@ function renderChatWorkspaceTabs() {
         const open = document.createElement('button');
         open.type = 'button';
         open.className = 'top_chat_tab_open';
+        open.dataset.workspaceTabKey = tab.key;
+        open.dataset.workspaceTabAction = 'open';
         open.setAttribute('role', 'tab');
         open.setAttribute('aria-selected', String(isCurrentWorkspaceTab(tab)));
         const label = document.createElement('span');
@@ -3162,6 +3191,8 @@ function renderChatWorkspaceTabs() {
         const close = document.createElement('button');
         close.type = 'button';
         close.className = 'top_chat_tab_close';
+        close.dataset.workspaceTabKey = tab.key;
+        close.dataset.workspaceTabAction = 'close';
         close.title = translate('Close chat tab');
         close.setAttribute('aria-label', `${translate('Close chat tab')}: ${tab.label}`);
         close.innerHTML = '<i class="fa-solid fa-times" aria-hidden="true"></i>';
@@ -3169,9 +3200,10 @@ function renderChatWorkspaceTabs() {
         container.append(open, close);
         topChatTabsList.append(container);
     }
+    restoreChatWorkspaceTabFocus(topChatTabsList, focusedControl);
 }
 
-async function refreshWorkspaceGenerationStates() {
+async function refreshWorkspaceGenerationStatesNow() {
     if (!isPatron()) {
         latestGenerationRecoveries = [];
         renderChatWorkspaceTabs();
@@ -3190,7 +3222,13 @@ async function refreshWorkspaceGenerationStates() {
                 createdAt: recovery.createdAt,
             });
         } else {
-            const character = characters[Number(recovery.chatIdentity.characterId)];
+            const legacyCharacterId = Number(recovery.chatIdentity.characterId);
+            const character = recovery.chatIdentity.characterAvatar
+                ? characters.find(item => String(item?.avatar || '') === recovery.chatIdentity.characterAvatar)
+                : Number.isInteger(legacyCharacterId) && legacyCharacterId >= 0
+                    && String(legacyCharacterId) === recovery.chatIdentity.characterId
+                    ? characters[legacyCharacterId]
+                    : null;
             if (character?.avatar) {
                 upsertChatWorkspaceTab({
                     ownerType: 'character',
@@ -3203,6 +3241,58 @@ async function refreshWorkspaceGenerationStates() {
         }
     }
     renderChatWorkspaceTabs();
+}
+
+/** Shares an in-flight recovery refresh so lifecycle events cannot overlap database reads. */
+async function refreshWorkspaceGenerationStates() {
+    if (workspaceGenerationRefreshPromise) {
+        return await workspaceGenerationRefreshPromise;
+    }
+    const refresh = refreshWorkspaceGenerationStatesNow();
+    workspaceGenerationRefreshPromise = refresh;
+    try {
+        return await refresh;
+    } finally {
+        if (workspaceGenerationRefreshPromise === refresh) {
+            workspaceGenerationRefreshPromise = null;
+        }
+    }
+}
+
+function clearWorkspaceGenerationRefreshTimer() {
+    if (workspaceGenerationRefreshTimer !== null) {
+        window.clearTimeout(workspaceGenerationRefreshTimer);
+        workspaceGenerationRefreshTimer = null;
+    }
+}
+
+/** Schedules one adaptive recovery refresh after the previous request has settled. */
+function scheduleWorkspaceGenerationRefresh({ immediate = false } = {}) {
+    clearWorkspaceGenerationRefreshTimer();
+    if (workspaceGenerationRefreshPaused || document.hidden) {
+        return;
+    }
+    const delay = immediate ? 0 : getChatWorkspaceRecoveryRefreshDelay({
+        panelOpen: topChatTabs?.hidden === false,
+        generationActive: is_send_press || is_group_generating,
+        recoveries: [...latestGenerationRecoveries, ...listPendingGenerations()],
+    }, WORKSPACE_RECOVERY_FAST_REFRESH_MS, WORKSPACE_RECOVERY_IDLE_REFRESH_MS);
+    workspaceGenerationRefreshTimer = window.setTimeout(() => {
+        workspaceGenerationRefreshTimer = null;
+        void refreshWorkspaceGenerationStates()
+            .catch(() => console.error('Workspace generation state refresh failed.'))
+            .finally(scheduleWorkspaceGenerationRefresh);
+    }, delay);
+}
+
+function stopWorkspaceGenerationRefresh() {
+    workspaceGenerationRefreshPaused = true;
+    clearWorkspaceGenerationRefreshTimer();
+}
+
+function startWorkspaceGenerationRefresh({ immediate = false } = {}) {
+    workspaceGenerationRefreshPaused = false;
+    scheduleWorkspaceGenerationRefresh({ immediate });
 }
 
 function rememberCurrentChatWorkspaceTab() {
@@ -3233,6 +3323,7 @@ async function toggleChatWorkspaceTabs(show = undefined) {
         rememberCurrentChatWorkspaceTab();
         await refreshWorkspaceGenerationStates();
     }
+    scheduleWorkspaceGenerationRefresh();
 }
 
 function initTopChatUi() {
@@ -3318,13 +3409,16 @@ function initTopChatUi() {
         restoreTopChatPanelsState();
         void refreshTopChatConnectionProfiles();
         rememberCurrentChatWorkspaceTab();
-        void refreshWorkspaceGenerationStates();
-        const recoveryRefresh = setInterval(() => {
-            if (!document.hidden) {
-                void refreshWorkspaceGenerationStates();
+        startWorkspaceGenerationRefresh({ immediate: true });
+        window.addEventListener('pageshow', () => startWorkspaceGenerationRefresh({ immediate: true }));
+        window.addEventListener('pagehide', stopWorkspaceGenerationRefresh);
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopWorkspaceGenerationRefresh();
+            } else {
+                startWorkspaceGenerationRefresh({ immediate: true });
             }
-        }, 3000);
-        window.addEventListener('pagehide', () => clearInterval(recoveryRefresh), { once: true });
+        });
     });
 
     void refreshTopChatBarState();
@@ -3667,6 +3761,11 @@ let isTopChatConnectionProfilesBound = false;
 let topChatSidebarPopulateToken = '';
 let isManageChatsActionPending = false;
 let latestGenerationRecoveries = [];
+const WORKSPACE_RECOVERY_FAST_REFRESH_MS = 3_000;
+const WORKSPACE_RECOVERY_IDLE_REFRESH_MS = 30_000;
+let workspaceGenerationRefreshTimer = null;
+let workspaceGenerationRefreshPromise = null;
+let workspaceGenerationRefreshPaused = true;
 let foregroundGenerationPromise = null;
 let foregroundGenerationId = '';
 const foregroundGenerationReadiness = createGenerationReadinessSignal();
@@ -11352,6 +11451,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     const onForegroundGenerationReady = generationId => {
         foregroundGenerationId = generationId;
         foregroundGenerationReadiness.notify();
+        scheduleWorkspaceGenerationRefresh({ immediate: true });
     };
 
     /**
@@ -11525,6 +11625,11 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         if (!data) {
             consumeOpenAIResponseData(openAIRequestId);
             return;
+        }
+
+        if (data?.generationParked === true) {
+            consumeOpenAIResponseData(openAIRequestId);
+            return data;
         }
 
         if (data?.fromStream) {
@@ -11706,6 +11811,9 @@ function getGenerationRecoveryChatIdentity() {
     const identity = getActiveChatIdentity();
     if (identity.groupId) {
         identity.characterId = '';
+        identity.characterAvatar = '';
+    } else {
+        identity.characterAvatar = String(characters[this_chid]?.avatar || '');
     }
     return identity;
 }
@@ -11714,7 +11822,10 @@ function getGenerationRecoveryChatIdentity() {
 function createGenerationRecoveryContext(type, swipeTarget = null) {
     const anchorMessageUuid = chat.at(-1)?.[AIKOBOTS_MESSAGE_UUID_KEY];
     const chatIdentity = getGenerationRecoveryChatIdentity();
-    if (type === 'impersonate' || !isValidAikobotsUuid(anchorMessageUuid) || !chatIdentity.chatId) {
+    if (type === 'impersonate'
+        || !isValidAikobotsUuid(anchorMessageUuid)
+        || !chatIdentity.chatId
+        || (!chatIdentity.groupId && !chatIdentity.characterAvatar)) {
         return null;
     }
 
@@ -11799,13 +11910,13 @@ function isGenerationRecoveryApplied(record) {
 /** Selects the local fast path or the oldest server recovery for the active chat. */
 async function findGenerationRecoveryForCurrentChat() {
     const currentIdentity = getGenerationRecoveryChatIdentity();
-    const local = listPendingGenerations().find(record => isSameChatIdentity(record.chatIdentity, currentIdentity));
+    const local = listPendingGenerations().find(record => isSameGenerationRecoveryChatIdentity(record.chatIdentity, currentIdentity));
     if (local) {
         return local;
     }
 
     const recoveries = await getServerGenerationRecoveries();
-    const discovered = recoveries.find(record => isSameChatIdentity(record.chatIdentity, currentIdentity)) || null;
+    const discovered = recoveries.find(record => isSameGenerationRecoveryChatIdentity(record.chatIdentity, currentIdentity)) || null;
     if (discovered) {
         savePendingGeneration(discovered);
     }
@@ -11902,29 +12013,32 @@ export async function Generate(type, options = {}, dryRun = false) {
 
     const stopBackgroundAudio = beginMobileBackgroundAudioGeneration();
     const generationTask = generateInternal(type, options, dryRun, temporaryGenerationAttempt);
-    if (isForegroundGeneration) {
-        foregroundGenerationPromise = generationTask;
-    }
-    try {
-        return await generationTask;
-    } catch (error) {
-        if (error?.generationParked === true) {
-            deferTemporaryGenerationAttempt(temporaryGenerationAttempt, foregroundGenerationId);
-            return { generationParked: true };
-        }
-        throw error;
-    } finally {
-        await finalizeTemporaryGenerationAttempt(temporaryGenerationAttempt);
-        if (isForegroundGeneration) {
-            setGenerationPreflightIndicator(false);
-            foregroundGenerationReadiness.notify();
-            if (foregroundGenerationPromise === generationTask) {
-                foregroundGenerationPromise = null;
-                foregroundGenerationId = '';
+    const generationCompletion = (async () => {
+        try {
+            return await generationTask;
+        } catch (error) {
+            if (error?.generationParked === true) {
+                deferTemporaryGenerationAttempt(temporaryGenerationAttempt, foregroundGenerationId);
+                return { generationParked: true };
             }
+            throw error;
+        } finally {
+            await finalizeTemporaryGenerationAttempt(temporaryGenerationAttempt);
+            if (isForegroundGeneration) {
+                setGenerationPreflightIndicator(false);
+                foregroundGenerationReadiness.notify();
+                if (foregroundGenerationPromise === generationCompletion) {
+                    foregroundGenerationPromise = null;
+                    foregroundGenerationId = '';
+                }
+            }
+            stopBackgroundAudio();
         }
-        stopBackgroundAudio();
+    })();
+    if (isForegroundGeneration && !foregroundGenerationPromise) {
+        foregroundGenerationPromise = generationCompletion;
     }
+    return generationCompletion;
 }
 
 /**

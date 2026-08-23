@@ -3,6 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
     clearPendingGeneration,
     getPendingGeneration,
+    isSameGenerationRecoveryChatIdentity,
     listPendingGenerations,
     recordGenerationAdmission,
     savePendingGeneration,
@@ -21,7 +22,7 @@ function createRecord(createdAt = Date.now()) {
     return {
         generationId: '11111111-1111-4111-8111-111111111111',
         type: 'normal',
-        chatIdentity: { groupId: '', characterId: '2', chatId: 'chat-1' },
+        chatIdentity: { groupId: '', characterId: '2', characterAvatar: 'alice.png', chatId: 'chat-1' },
         anchorMessageUuid: '22222222-2222-4222-8222-222222222222',
         outputMessageUuid: '33333333-3333-4333-8333-333333333333',
         createdAt,
@@ -48,6 +49,23 @@ describe('pending generation recovery', () => {
         expect(getPendingGeneration(storage)).toEqual(saved);
         expect(JSON.stringify(saved)).not.toContain('unexpected-prompt-field-sentinel');
         expect(JSON.stringify(saved)).not.toContain('unexpected-output-field-sentinel');
+    });
+
+    it('matches new character recoveries by avatar and legacy recoveries by index', () => {
+        const current = { groupId: '', characterId: '7', characterAvatar: 'alice.png', chatId: 'chat-1' };
+
+        expect(isSameGenerationRecoveryChatIdentity(
+            { groupId: '', characterId: '2', characterAvatar: 'alice.png', chatId: 'chat-1' },
+            current,
+        )).toBe(true);
+        expect(isSameGenerationRecoveryChatIdentity(
+            { groupId: '', characterId: '7', characterAvatar: 'bob.png', chatId: 'chat-1' },
+            current,
+        )).toBe(false);
+        expect(isSameGenerationRecoveryChatIdentity(
+            { groupId: '', characterId: '7', chatId: 'chat-1' },
+            current,
+        )).toBe(true);
     });
 
     it('discards expired and malformed recovery records', () => {
@@ -79,7 +97,7 @@ describe('pending generation recovery', () => {
             ...createRecord(),
             generationId: '44444444-4444-4444-8444-444444444444',
             outputMessageUuid: '55555555-5555-4555-8555-555555555555',
-            chatIdentity: { groupId: '', characterId: '3', chatId: 'chat-2' },
+            chatIdentity: { groupId: '', characterId: '3', characterAvatar: 'bob.png', chatId: 'chat-2' },
             state: 'queued',
         };
         savePendingGeneration(first, storage);

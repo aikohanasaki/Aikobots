@@ -1,23 +1,8 @@
 import { queryCollection } from '../../../../src/endpoints/vectors.js';
 import { getConfigValue } from '../../../../src/util.js';
+import { getVectorStringHash } from './hash.js';
 
 const EXTENSION_PROMPT_TAG = '3_vectors';
-
-function getStringHash(str, seed = 0) {
-    if (typeof str !== 'string') {
-        return 0;
-    }
-    let h1 = 0xdeadbeef ^ seed;
-    let h2 = 0x41c6ce57 ^ seed;
-    for (let index = 0; index < str.length; index++) {
-        const char = str.charCodeAt(index);
-        h1 = Math.imul(h1 ^ char, 2654435761);
-        h2 = Math.imul(h2 ^ char, 1597334677);
-    }
-    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-    return 4294967296 * (2097151 & h2) + (h1 >>> 0);
-}
 
 function getSourceSettings(context, settings) {
     const source = String(settings.source || 'transformers');
@@ -92,30 +77,35 @@ async function rearrangeChat(context) {
     const queryHashes = Array.from(new Set(Array.isArray(result.hashes) ? result.hashes : []));
     const retained = new Set(protect > 0 ? context.chat.slice(-protect) : []);
     const insertedHashes = new Set();
-    const queriedMessages = context.chat.filter(message => {
+    const queriedMessages = [];
+    for (const message of context.chat) {
         if (retained.has(message) || !message?.mes) {
-            return false;
+            continue;
         }
-        const hash = getStringHash(context.substituteParams(String(message.mes)));
+        const hash = getVectorStringHash(context.substituteParams(String(message.mes)));
         if (!queryHashes.includes(hash) || insertedHashes.has(hash)) {
-            return false;
+            continue;
         }
         insertedHashes.add(hash);
-        return true;
-    });
-    queriedMessages.sort((left, right) => {
-        const leftHash = getStringHash(context.substituteParams(String(left.mes)));
-        const rightHash = getStringHash(context.substituteParams(String(right.mes)));
-        return queryHashes.indexOf(rightHash) - queryHashes.indexOf(leftHash);
-    });
+        queriedMessages.push({ message, hash });
+    }
+    queriedMessages.sort((left, right) => queryHashes.indexOf(right.hash) - queryHashes.indexOf(left.hash));
     if (!queriedMessages.length) {
         return;
     }
-    const queriedMessageIds = new Set(queriedMessages.map(message => Number(message.messageId)));
-    context.promptContext.coreChat = context.promptContext.coreChat
-        .filter(message => !queriedMessageIds.has(Number(message.messageId)));
+    const queriedMessageIds = new Set(queriedMessages
+        .map(entry => Number(entry.message.messageId))
+        .filter(messageId => Number.isInteger(messageId)));
+    const queriedMessageSet = new Set(queriedMessages.map(entry => entry.message));
+    context.promptContext.coreChat = context.promptContext.coreChat.filter((message) => {
+        const messageId = Number(message.messageId);
+        if (Number.isInteger(messageId)) {
+            return !queriedMessageIds.has(messageId);
+        }
+        return !queriedMessageSet.has(message);
+    });
     context.chat = context.promptContext.coreChat;
-    const text = queriedMessages.map(message => collapseNewlines(`${message.name}: ${message.mes}`).trim()).join('\n\n');
+    const text = queriedMessages.map(entry => collapseNewlines(`${entry.message.name}: ${entry.message.mes}`).trim()).join('\n\n');
     const value = context.substituteParams(String(settings.template || 'Past events:\n{{text}}'), { text });
     context.setExtensionPrompt(
         EXTENSION_PROMPT_TAG,

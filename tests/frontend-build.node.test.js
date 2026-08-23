@@ -94,7 +94,7 @@ test('application and provenance identify the release as v5', async () => {
         fs.readFile(path.join(path.dirname(publicDirectory), 'package.json'), 'utf8'),
         fs.readFile(path.join(path.dirname(publicDirectory), 'Code Provenance v5.md'), 'utf8'),
     ]);
-    assert.equal(JSON.parse(packageSource).version, '5.0.0');
+    assert.equal(JSON.parse(packageSource).version, '5.1.0');
     assert.match(provenance, /^# Aikobots v5:/u);
     assert.match(provenance, /All 28 `stmb\.js` and `stmb-\*\.js` modules/u);
     assert.match(provenance, /13 built-in extensions/u);

@@ -59,6 +59,7 @@ export function normalizePendingGeneration(value, now = Date.now()) {
         chatIdentity: {
             groupId: String(chatIdentity.groupId || ''),
             characterId: String(chatIdentity.characterId || ''),
+            characterAvatar: String(chatIdentity.characterAvatar || ''),
             chatId: String(chatIdentity.chatId),
         },
         anchorMessageUuid,
@@ -74,6 +75,21 @@ export function normalizePendingGeneration(value, now = Date.now()) {
         swipeTarget,
         ...(['queued', 'running', 'completed', 'failed', 'cancelled'].includes(value.state) ? { state: value.state } : {}),
     };
+}
+
+/** Matches a recovery route by stable character avatar, with index fallback for legacy records only. */
+export function isSameGenerationRecoveryChatIdentity(recoveryIdentity, currentIdentity) {
+    if (!recoveryIdentity || !currentIdentity
+        || recoveryIdentity.groupId !== currentIdentity.groupId
+        || recoveryIdentity.chatId !== currentIdentity.chatId) {
+        return false;
+    }
+    if (recoveryIdentity.groupId) {
+        return true;
+    }
+    return recoveryIdentity.characterAvatar
+        ? recoveryIdentity.characterAvatar === currentIdentity.characterAvatar
+        : recoveryIdentity.characterId === currentIdentity.characterId;
 }
 
 /** Returns every valid pending generation, migrating the legacy single record once. */

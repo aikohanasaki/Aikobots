@@ -1,4 +1,36 @@
 const STORAGE_KEY = 'aikobots.chat-workspace-tabs.v1';
+const ACTIVE_RECOVERY_STATES = new Set(['queued', 'running', 'cancel_requested']);
+
+/** Selects the recovery refresh cadence from visible and active workspace state. */
+export function getChatWorkspaceRecoveryRefreshDelay({ panelOpen = false, generationActive = false, recoveries = [] }, fastMs, idleMs) {
+    const hasActiveRecovery = recoveries.some(recovery => ACTIVE_RECOVERY_STATES.has(recovery?.state));
+    return panelOpen || generationActive || hasActiveRecovery ? fastMs : idleMs;
+}
+
+/** Captures the stable identity of a focused workspace-tab control. */
+export function captureChatWorkspaceTabFocus(container, activeElement = globalThis.document?.activeElement) {
+    if (!container?.contains(activeElement)) {
+        return null;
+    }
+    const control = activeElement?.closest?.('[data-workspace-tab-key][data-workspace-tab-action]');
+    const key = String(control?.dataset?.workspaceTabKey || '');
+    const action = String(control?.dataset?.workspaceTabAction || '');
+    return container.contains(control) && key && ['open', 'close'].includes(action) ? { key, action } : null;
+}
+
+/** Restores focus to the matching control after workspace tabs are rebuilt. */
+export function restoreChatWorkspaceTabFocus(container, focusIdentity) {
+    if (!container || !focusIdentity) {
+        return false;
+    }
+    for (const control of container.querySelectorAll('[data-workspace-tab-key][data-workspace-tab-action]')) {
+        if (control.dataset.workspaceTabKey === focusIdentity.key && control.dataset.workspaceTabAction === focusIdentity.action) {
+            control.focus();
+            return true;
+        }
+    }
+    return false;
+}
 
 function getDefaultStorage() {
     try {
@@ -22,7 +54,7 @@ export function normalizeChatWorkspaceTab(value, now = Date.now()) {
         return null;
     }
     return {
-        key: `${ownerType}:${ownerId}:${chatId}`,
+        key: `${ownerType}:${encodeURIComponent(ownerId)}:${encodeURIComponent(chatId)}`,
         ownerType,
         ownerId,
         chatId,

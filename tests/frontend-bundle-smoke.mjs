@@ -572,7 +572,7 @@ try {
     await testWorldInfoPresetSelectionUi(page);
     await testWorldInfoBulkDelete(page, fatalBrowserDiagnostics);
     assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected World Info bulk-delete diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
-    assert.equal(await page.evaluate(async () => (await (await globalThis.fetch('/version')).json()).pkgVersion), '5.0.0', 'Runtime version is not v5.');
+    assert.equal(await page.evaluate(async () => (await (await globalThis.fetch('/version')).json()).pkgVersion), '5.1.0', 'Runtime version is not v5.');
     assert.deepEqual(await hashDirectory(defaultOutputDirectory), committedBundleHashes, 'Production startup modified committed frontend artifacts.');
     console.log(`Frontend ${browserName} smoke passed with ${requests.length} JS/CSS requests: ${requests.join(', ')}`);
 } catch (error) {
