@@ -98,4 +98,19 @@ describe('active session takeover', () => {
         expect(refreshedStore.leases[leaseKey].lastSeenAt).toBeGreaterThan(store.leases[leaseKey].lastSeenAt);
         expect(refreshedStore.leases[leaseKey].expiresAt).toBeGreaterThan(Date.now() + 100_000);
     });
+
+    it('resets the active lease and cancels in-flight operations for a user', async () => {
+        await activeSessionStore.takeOver(USER_HANDLE, FIRST_TAB_SESSION_ID, {});
+        const operation = await activeSessionStore.beginOperation(USER_HANDLE, FIRST_TAB_SESSION_ID, 'POST /api/chats/save');
+
+        const result = await activeSessionStore.resetUser(USER_HANDLE);
+
+        expect(result).toEqual({ released: true, cancelled: 1 });
+        await expect(activeSessionStore.assertActive(USER_HANDLE, FIRST_TAB_SESSION_ID)).rejects.toMatchObject({
+            code: ACTIVE_SESSION_ERROR,
+        });
+        await expect(activeSessionStore.assertOperationAllowed(USER_HANDLE, FIRST_TAB_SESSION_ID, operation.operationId)).rejects.toMatchObject({
+            code: ACTIVE_SESSION_ERROR,
+        });
+    });
 });

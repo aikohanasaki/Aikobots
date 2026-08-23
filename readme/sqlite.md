@@ -590,6 +590,8 @@ The need for application locks around ordinary row mutations must be verified ra
 
 A mutation lock may remain justified when correctness depends on state outside the SQLite transaction, such as external active-session state or coordinated filesystem work.
 
+Administrative session reset uses two shared `DATA_ROOT` stores rather than process memory. It rotates the epoch in the cross-worker-locked user record so every older signed login cookie is rejected, then removes that user's active-tab lease and cancels their in-flight protected operations under the active-session store lock. This changes authentication and active-tab identity only; it does not mutate chat storage.
+
 However:
 
 - revision validation belongs inside the transaction;

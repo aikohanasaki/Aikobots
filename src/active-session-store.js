@@ -407,6 +407,30 @@ export const activeSessionStore = {
         });
     },
 
+    /** Removes a user's active lease and cancels every in-flight protected operation. */
+    async resetUser(userHandle) {
+        return await withStoreLock(async (store) => {
+            const now = Date.now();
+            const key = getLeaseKey(userHandle);
+            const released = Boolean(store.leases[key]);
+            let cancelled = 0;
+
+            delete store.leases[key];
+            for (const operation of Object.values(store.operations || {})) {
+                if (operation?.userHandle === userHandle && !operation.cancelledAt) {
+                    operation.cancelledAt = now;
+                    operation.expiresAt = now + OPERATION_TTL_MS;
+                    cancelled++;
+                }
+            }
+
+            return {
+                write: released || cancelled > 0,
+                value: { released, cancelled },
+            };
+        });
+    },
+
     async beginOperation(userHandle, tabSessionId, operationType) {
         const normalizedSessionId = normalizeTabSessionId(tabSessionId);
         if (!normalizedSessionId) {

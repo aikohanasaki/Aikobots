@@ -137,6 +137,7 @@ async function quarantineInvalidStorageFiles(storageDir) {
  * @property {boolean} enabled - Whether the user is enabled
  * @property {boolean} admin - Whether the user is an admin (can manage other users)
  * @property {boolean} [patron] - Whether the user can use patron generation features
+ * @property {string} [sessionEpoch] - Rotated to invalidate every existing login session
  */
 
 /**
@@ -533,6 +534,17 @@ export async function updateUserRecord(handle, mutation) {
     });
 }
 
+/** Returns the persisted epoch used to validate a user's login sessions. */
+function getUserSessionEpoch(user) {
+    return typeof user?.sessionEpoch === 'string' ? user.sessionEpoch : '';
+}
+
+/** Stores the authenticated user and current epoch in a cookie-backed session. */
+export function setUserSession(request, user) {
+    request.session.handle = user.handle;
+    request.session.sessionEpoch = getUserSessionEpoch(user);
+}
+
 /**
  * Initializes the user storage.
  * @param {string} dataRoot The root directory for user data
@@ -807,7 +819,7 @@ async function singleUserLogin(request) {
     if (userHandles.length === 1) {
         const user = await storage.getItem(toKey(userHandles[0]));
         if (user && !user.password) {
-            request.session.handle = userHandles[0];
+            setUserSession(request, user);
             return true;
         }
     }
@@ -856,7 +868,7 @@ async function headerUserLogin(request, header = 'Remote-User') {
         if (remoteUser.toLowerCase() === userHandle) {
             const user = await storage.getItem(toKey(userHandle));
             if (user && user.enabled) {
-                request.session.handle = userHandle;
+                setUserSession(request, user);
                 return true;
             }
         }
@@ -897,7 +909,7 @@ async function basicUserLogin(request) {
             const user = await storage.getItem(toKey(userHandle));
             // Verify pass again here just to be sure
             if (user && user.enabled && user.password && user.password === getPasswordHash(password, user.salt)) {
-                request.session.handle = userHandle;
+                setUserSession(request, user);
                 return true;
             }
         }
@@ -942,6 +954,11 @@ export async function setUserDataMiddleware(request, response, next) {
 
     if (!user) {
         console.error('User not found:', handle);
+        return next();
+    }
+
+    if (getUserSessionEpoch(request.session) !== getUserSessionEpoch(user)) {
+        request.session = null;
         return next();
     }
 

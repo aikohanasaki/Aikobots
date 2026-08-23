@@ -742,7 +742,7 @@ The group participant chooser keeps `.stmb-group-participants-list` within half 
 
 ## 23. Memory Books help drawer
 
-The main Memory Books popup places `.stmb-help-drawer` below its title. Its two `.stmb-help-drawer-content` rows keep the explanatory copy beside the external guide links on wider screens and stack below 600px. The drawer inherits smart-theme surfaces, borders, and buttons from `public/style.css`; layouts may adjust spacing but should preserve the native disclosure control and readable keyboard-accessible links.
+The main Memory Books popup places `.stmb-help-drawer` below its title. Its `.stmb-help-drawer-content` row keeps the AI Reference Manual copy beside the native-language GitHub download on wider screens, includes a full-language-tree link, and stacks below 600px. The drawer inherits smart-theme surfaces, borders, and buttons from `public/style.css`; layouts may adjust spacing but should preserve the native disclosure control and readable keyboard-accessible links.
 
 ## 24. World Info preset and lock bar
 

@@ -21,6 +21,22 @@ export const STMB_MEMORY_BOUNDARY_MODES = Object.freeze({
     BOTH: 'both',
 });
 const STMB_MEMORY_BOUNDARY_MODE_VALUES = new Set(Object.values(STMB_MEMORY_BOUNDARY_MODES));
+const STMB_AI_REFERENCE_MANUAL_LOCALES = Object.freeze({
+    de: 'de-de',
+    es: 'es-es',
+    fr: 'fr-fr',
+    id: 'id-id',
+    ja: 'ja-jp',
+    ko: 'ko-kr',
+    ms: 'ms-my',
+    pt: 'pt-br',
+    ru: 'ru-ru',
+    zh: 'zh-cn',
+    'zh-cn': 'zh-cn',
+    'zh-hans': 'zh-cn',
+    'zh-tw': 'zh-tw',
+    'zh-hant': 'zh-tw',
+});
 export const STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE = `Please aggressively make this lorebook entry more token-efficient while retaining as much useful information as possible.
 
 Rules:
@@ -57,6 +73,14 @@ export const STMB_DEFAULT_TITLE_FORMATS = Object.freeze([
     '[000] - {{title}} ({{scene}})',
     '[000] - {{title}}',
 ]);
+
+/** Resolves a UI locale to an available Memory Books AI Reference Manual locale. */
+export function resolveStmbAIReferenceManualLocale(locale) {
+    const normalizedLocale = String(locale || 'en').trim().replaceAll('_', '-').toLowerCase();
+    return STMB_AI_REFERENCE_MANUAL_LOCALES[normalizedLocale]
+        ?? STMB_AI_REFERENCE_MANUAL_LOCALES[normalizedLocale.split('-')[0]]
+        ?? 'en';
+}
 
 /** Returns the STMB copy kind only while Memory Book copying is enabled. */
 export function resolveStmbChatCopyKind(kind, moduleSettings) {

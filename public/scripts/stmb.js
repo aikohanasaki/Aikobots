@@ -35,7 +35,7 @@ import {
 } from './stmb-api.js';
 import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showConsolidationPreviewPopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showRegenerationReviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
-import { applyLocale, t, translate } from './i18n.js';
+import { applyLocale, getCurrentLocale, t, translate } from './i18n.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
@@ -76,6 +76,7 @@ import {
     parseStmbCatchupCommandArgs,
     parseSequenceFromTitle,
     parseStructuredMemoryResponse,
+    resolveStmbAIReferenceManualLocale,
     resolveStmbChatCopyKind,
     resolveStmbProfileConnectionSummary,
     shouldBlockStmbMemoryPreparation,
@@ -245,6 +246,8 @@ import {
 } from './stmb-context-settings.js';
 
 const $ = window.jQuery;
+const STMB_AI_REFERENCE_MANUAL_DOWNLOAD_ROOT = 'https://github.com/aikohanasaki/SillyTavern-MemoryBooks/raw/refs/heads/main/userguides';
+const STMB_AI_REFERENCE_MANUAL_TREE_URL = 'https://github.com/aikohanasaki/SillyTavern-MemoryBooks/tree/main/userguides';
 let stmbSettings = normalizeStmbSettings();
 let activeRootTask = null;
 let memoryPreparationInProgress = false;
@@ -283,6 +286,13 @@ const MEMORY_BOUNDARY_BUTTON_DEFAULT_BOTTOM = 112;
 const MEMORY_BOUNDARY_BUTTON_DEFAULT_RIGHT = 18;
 const CHAT_END_BUTTON_DEFAULT_BOTTOM = 64;
 const CHAT_END_BUTTON_DEFAULT_RIGHT = 18;
+
+/** Returns the direct GitHub download URL for the current locale's AI Reference Manual. */
+function getAIReferenceManualUrl(locale = getCurrentLocale()) {
+    const manualLocale = resolveStmbAIReferenceManualLocale(locale);
+    const filename = `Memory_Books_AI_Reference_Manual_${manualLocale}.md`;
+    return `${STMB_AI_REFERENCE_MANUAL_DOWNLOAD_ROOT}/${filename}`;
+}
 
 const DURABLE_SYNC_STATE_KEYS = [
     'sceneStart',
@@ -2334,6 +2344,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
         ? Math.trunc(Number(moduleSettings.summaryReverseStart))
         : Number(moduleSettings.summaryEntrySettings?.reverseStart ?? 9999);
     const hasLorebookOrderDefaults = Boolean(moduleSettings.lorebookOrderDefaults);
+    const aiReferenceManualUrl = getAIReferenceManualUrl();
 
     return `
         <div class="stmb-settings-popup">
@@ -2341,28 +2352,21 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
             <details class="stmb-help-drawer info-block hint">
                 <summary>
                     <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
-                    <span data-i18n="STMemoryBooks_InteractiveGuideSummary">Help &amp; Guides</span>
+                    <span data-i18n="STMemoryBooks_HelpAndGuides">Help &amp; Guides</span>
                 </summary>
                 <div class="stmb-help-drawer-content">
-                    <div class="stmb-help-drawer-copy">
-                        <p data-i18n="STMemoryBooks_InteractiveGuideDescription">Ask the Interactive Memory Books Guide about setup, features, workflows, and troubleshooting.</p>
-                        <small class="opacity70p" data-i18n="STMemoryBooks_InteractiveGuideSignInNote">Opens Gemini in a new tab. Google sign-in required.</small>
-                    </div>
+                    <p class="stmb-help-drawer-copy" data-i18n="STMemoryBooks_AIReferenceManualOption">Download the Memory Books AI Reference Manual, upload it to your preferred AI assistant, and ask it questions about Memory Books.</p>
                     <a class="menu_button menu_button_icon interactable stmb-help-drawer-link"
-                        href="https://gemini.google.com/gem/1XRy0GEu_iWmqdjMV1ZpD59rexoFDJo7B?usp=sharing"
-                        target="_blank" rel="noopener noreferrer">
-                        <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i>
-                        <span data-i18n="STMemoryBooks_OpenInteractiveGuide">Open Interactive Guide</span>
-                    </a>
-                </div>
-                <div class="stmb-help-drawer-content stmb-help-drawer-manual">
-                    <p class="stmb-help-drawer-copy" data-i18n="STMemoryBooks_AIReferenceManualOption">Prefer another AI assistant? Download the Memory Books AI Reference Manual, upload it to your preferred assistant, and ask it questions about Memory Books.</p>
-                    <a class="menu_button menu_button_icon interactable stmb-help-drawer-link"
-                        href="https://github.com/aikohanasaki/SillyTavern-MemoryBooks/blob/main/userguides/1%20Memory_Books_AI_Reference_Manual.md"
+                        href="${aiReferenceManualUrl}"
                         target="_blank" rel="noopener noreferrer">
                         <i class="fa-solid fa-download" aria-hidden="true"></i>
                         <span data-i18n="STMemoryBooks_DownloadAIReferenceManual">Download AI Reference Manual (.md)</span>
                     </a>
+                    <small class="stmb-help-languages">
+                        <a href="${STMB_AI_REFERENCE_MANUAL_TREE_URL}"
+                            target="_blank" rel="noopener noreferrer"
+                            data-i18n="STMemoryBooks_BrowseGuideLanguages">Browse the guide in other languages</a>
+                    </small>
                 </div>
             </details>
             <div id="stmb-settings-scene-section">${buildSettingsPopupSceneSectionHtml(sceneData)}</div>

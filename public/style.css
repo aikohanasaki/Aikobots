@@ -7725,6 +7725,7 @@ body.active-session-read-only [data-active-session-disabled="true"] {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 12px;
     padding: 4px 10px 10px 30px;
 }
@@ -7733,21 +7734,21 @@ body.active-session-read-only [data-active-session-disabled="true"] {
     min-width: 0;
 }
 
-.stmb-help-drawer-copy p {
-    margin: 0 0 4px;
-}
-
 p.stmb-help-drawer-copy {
     margin: 0;
 }
 
-.stmb-help-drawer-manual {
-    padding-top: 10px;
-    border-top: 1px solid var(--SmartThemeBorderColor);
-}
-
 .stmb-help-drawer-link {
     flex: 0 0 auto;
+}
+
+.stmb-help-languages {
+    width: 100%;
+    flex-shrink: 0;
+}
+
+.stmb-help-languages a {
+    text-decoration: underline;
 }
 
 .stmb-regenerate-entry {

@@ -1225,6 +1225,45 @@ async function setPatron(handle, patron, callback) {
     }
 }
 
+/** Invalidates every login and active-tab session for one user. */
+async function resetUserSession(handle, callback) {
+    try {
+        if (handle === currentUser.handle) {
+            toastr.error(translate('You cannot reset your own session.'), translate('Failed to reset user session'));
+            return;
+        }
+
+        const content = $('<div class="flex-container flexFlowColumn flexGap10"></div>')
+            .append($('<p></p>').text(translate('This will log the user out everywhere, clear their active-tab lock, and require them to log in again.')))
+            .append($('<strong></strong>').text(handle));
+        const result = await callGenericPopup(content, POPUP_TYPE.CONFIRM, translate('Reset User Session'), {
+            okButton: translate('Reset Session'),
+            cancelButton: translate('Cancel'),
+            wide: false,
+            large: false,
+        });
+        if (result !== POPUP_RESULT.AFFIRMATIVE) {
+            return;
+        }
+
+        const response = await fetch('/api/users/reset-session', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ handle }),
+        });
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.error || 'Failed to reset user session');
+        }
+
+        toastr.success(translate('User logged out everywhere'), translate('Session Reset'));
+        callback();
+    } catch (error) {
+        console.error('Error resetting user session:', error);
+        toastr.error(translate('Failed to reset user session'));
+    }
+}
+
 /**
  * Create a new user.
  * @param {HTMLFormElement} form Form element
@@ -1921,6 +1960,7 @@ async function openAdminPanel(initialTab = 'usersList') {
             userBlock.find('.userPatronButton').toggle(!user.admin).on('click', () => setPatron(user.handle, !user.patron, renderUsers));
             userBlock.find('.userPatronButton').attr('title', user.patron ? translate('Remove patron access') : translate('Grant patron access'));
             userBlock.find('.userChangePasswordButton').on('click', () => changePassword(user.handle, renderUsers));
+            userBlock.find('.userResetSessionButton').toggle(user.handle !== currentUser.handle).on('click', () => resetUserSession(user.handle, renderUsers));
             userBlock.find('.userDelete').on('click', () => deleteUser(user.handle, renderUsers));
             userBlock.find('.userChangeNameButton').on('click', async () => changeName(user.handle, user.name, renderUsers));
             userBlock.find('.userBackupButton').on('click', function () {

@@ -4,6 +4,14 @@
     "Duplicate": "Duplicado",
     "Persona": "Pessoa",
     "Delete": "Excluir",
+    "Log out user everywhere and clear their active-tab lock.": "Terminar a sessão do utilizador em todo o lado e limpar o bloqueio do separador ativo.",
+    "You cannot reset your own session.": "Não pode repor a sua própria sessão.",
+    "Failed to reset user session": "Falha ao repor a sessão do utilizador",
+    "This will log the user out everywhere, clear their active-tab lock, and require them to log in again.": "Isto irá terminar a sessão do utilizador em todo o lado, limpar o bloqueio do separador ativo e exigir que inicie sessão novamente.",
+    "Reset User Session": "Repor sessão do utilizador",
+    "Reset Session": "Repor sessão",
+    "User logged out everywhere": "A sessão do utilizador foi terminada em todo o lado",
+    "Session Reset": "Sessão reposta",
     "Prompt Cache": "Cache do prompt",
     "Cached Tokens:": "Tokens em cache:",
     "AI Response Configuration": "Configuração de resposta da IA",
@@ -1607,12 +1615,10 @@
   ,"STMemoryBooks_TopicalClip_PromptMissingSourceMessages": "O prompt do Clip Temático deve incluir {{SOURCE_MESSAGES}} quando mensagens do chat forem selecionadas."
   ,"STMemoryBooks_TopicalClip_InvalidMessageRange": "Insira um intervalo de mensagens válido no chat atual."
   ,"STMemoryBooks_TopicalClip_MessageCompileFailed": "Falha ao compilar as mensagens selecionadas."
-  ,"STMemoryBooks_InteractiveGuideSummary": "Ajuda e Guias"
-  ,"STMemoryBooks_InteractiveGuideDescription": "Consulte o Guia Interativo dos Livros de Memória sobre configuração, recursos, fluxos de trabalho e solução de problemas."
-  ,"STMemoryBooks_OpenInteractiveGuide": "Abrir Guia Interativo"
-  ,"STMemoryBooks_InteractiveGuideSignInNote": "Abre o Gemini em uma nova aba. É necessário fazer login com o Google."
-  ,"STMemoryBooks_AIReferenceManualOption": "Prefere outro assistente de IA? Baixe o Manual de Referência de IA dos Livros de Memória, envie-o ao assistente de sua preferência e faça perguntas sobre os Livros de Memória."
+  ,"STMemoryBooks_HelpAndGuides": "Ajuda e Guias"
+  ,"STMemoryBooks_AIReferenceManualOption": "Baixe o Manual de Referência de IA dos Livros de Memória, envie-o ao assistente de IA de sua preferência e faça perguntas sobre os Livros de Memória."
   ,"STMemoryBooks_DownloadAIReferenceManual": "Baixar Manual de Referência de IA (.md)"
+  ,"STMemoryBooks_BrowseGuideLanguages": "Ver o guia em outros idiomas"
   ,"STMemoryBooks_EnableSidePrompt": "Ativar Prompt Lateral"
   ,"STMemoryBooks_DisableSidePrompt": "Desativar Prompt Lateral"
   ,"STMemoryBooks_FailedToToggleSidePrompt": "Falha ao alterar o estado de ativação do Prompt Lateral."

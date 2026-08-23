@@ -42,6 +42,10 @@ declare global {
              */
             handle: string;
             /**
+             * Epoch copied from the user record to support global session invalidation.
+             */
+            sessionEpoch: string;
+            /**
              * Last time the session was extended.
              */
             touch: number;

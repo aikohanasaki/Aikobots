@@ -5,7 +5,7 @@ import express from 'express';
 import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import { getIpAddress } from '../express-common.js';
 import { color, getConfigValue } from '../util.js';
-import { KEY_PREFIX, getUserAvatar, toKey, getPasswordHash, getPasswordSalt, getUserDirectories, updateUserRecord } from '../users.js';
+import { KEY_PREFIX, getUserAvatar, toKey, getPasswordHash, getPasswordSalt, getUserDirectories, setUserSession, updateUserRecord } from '../users.js';
 import { cleanupDeadLorebookSettingsReferences } from '../dead-lorebook-cleanup.js';
 import { clearUserFlowState, getUserFlowState, setUserFlowState } from './user-flow-state.js';
 
@@ -91,7 +91,7 @@ router.post('/login', async (request, response) => {
         }
 
         await loginLimiter.delete(ip);
-        request.session.handle = user.handle;
+        setUserSession(request, user);
         try {
             const cleanupResult = await cleanupDeadLorebookSettingsReferences(getUserDirectories(user.handle));
             if (cleanupResult.changed) {

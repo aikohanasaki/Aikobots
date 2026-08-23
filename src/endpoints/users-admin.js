@@ -1,5 +1,6 @@
 import fs, { promises as fsPromises } from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 import storage from 'node-persist';
 import express from 'express';
@@ -21,6 +22,7 @@ import {
 import { DEFAULT_USER, SETTINGS_FILE } from '../constants.js';
 import { parse as parseCharacterCard } from '../character-card-parser.js';
 import { assertSafeFileName, resolvePathUnderParent } from '../path-security.js';
+import { activeSessionStore } from '../active-session-store.js';
 
 export const router = express.Router();
 const UNKNOWN_LAST_OPENED = 'Unknown';
@@ -262,6 +264,32 @@ router.post('/patron', requireAdminMiddleware, async (request, response) => {
         return response.sendStatus(204);
     } catch (error) {
         console.error('Patron update failed:', error);
+        return response.sendStatus(500);
+    }
+});
+
+router.post('/reset-session', requireAdminMiddleware, async (request, response) => {
+    try {
+        const handle = request.body.handle;
+        if (!handle) {
+            return response.status(400).json({ error: 'Missing required fields' });
+        }
+        if (handle === request.user.profile.handle) {
+            return response.status(400).json({ error: 'Cannot reset your own session' });
+        }
+
+        const user = await updateUserRecord(handle, current => {
+            current.sessionEpoch = crypto.randomUUID();
+            return current;
+        });
+        if (!user) {
+            return response.status(404).json({ error: 'User not found' });
+        }
+
+        await activeSessionStore.resetUser(handle);
+        return response.sendStatus(204);
+    } catch (error) {
+        console.error('User session reset failed:', error);
         return response.sendStatus(500);
     }
 });
