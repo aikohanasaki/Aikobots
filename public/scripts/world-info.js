@@ -8464,9 +8464,10 @@ export function initWorldInfo() {
 
         const worldName = characters[chid]?.data?.extensions?.world;
         const hasEmbed = checkEmbeddedWorld(chid);
-        if (worldName && world_names.includes(worldName) && !event.shiftKey) {
+        const openBindingPanel = event.shiftKey || event.altKey;
+        if (worldName && world_names.includes(worldName) && !openBindingPanel) {
             openWorldInfoEditor(worldName);
-        } else if (hasEmbed && !event.shiftKey) {
+        } else if (hasEmbed && !openBindingPanel) {
             await importEmbeddedWorldInfo();
             markCharacterEditorDirty();
         }
