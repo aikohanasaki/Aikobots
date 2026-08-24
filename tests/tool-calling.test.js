@@ -1,7 +1,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const registeredCommands = [];
-const doReturn = jest.fn(async (_type, value, { objectToStringFunc }) => objectToStringFunc(value));
+const doReturn = jest.fn(async (type, value, { objectToStringFunc, objectToHtmlFunc }) => {
+    return type.endsWith('html') && objectToHtmlFunc ? objectToHtmlFunc(value) : objectToStringFunc(value);
+});
 
 jest.unstable_mockModule('../public/scripts/i18n.js', () => ({
     t: value => String(value),
@@ -80,11 +82,18 @@ jest.unstable_mockModule('../public/scripts/slash-commands/SlashCommandReturnHel
 }));
 
 jest.unstable_mockModule('../public/scripts/utils.js', () => ({
+    escapeHtml: value => String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;'),
     isTrueBoolean: value => String(value).toLowerCase() === 'true',
 }));
 
 let ToolManager;
-const toolNames = ['CloneableTool', 'FunctionSchema', 'ProxySchema'];
+const escapedToolName = 'Markup<Item>&"\'';
+const toolNames = ['CloneableTool', 'FunctionSchema', 'ProxySchema', escapedToolName];
 
 beforeAll(async () => {
     ({ ToolManager } = await import('../public/scripts/tool-calling.js'));
@@ -196,7 +205,31 @@ describe('function tool serialization', () => {
 
         const output = await command.callback({ return: 'popup-html' });
 
-        expect(output).toBe('<div><b>CloneableTool</b></div><div><small>Clone-safe tool</small></div><pre class="justifyLeft wordBreakAll"><code class="flex padding5">{\n  "type": "object",\n  "properties": {\n    "prompt": {\n      "type": "string"\n    }\n  }\n}</code></pre><hr>');
+        expect(output).toBe('<div><b>CloneableTool</b></div><div><small>Clone-safe tool</small></div><pre class="justifyLeft wordBreakAll"><code class="flex padding5">{\n  &quot;type&quot;: &quot;object&quot;,\n  &quot;properties&quot;: {\n    &quot;prompt&quot;: {\n      &quot;type&quot;: &quot;string&quot;\n    }\n  }\n}</code></pre><hr>');
         expect(doReturn).toHaveBeenCalledTimes(1);
+    });
+
+    it('escapes tools-list metadata only for HTML returns', async () => {
+        ToolManager.registerFunctionTool({
+            name: escapedToolName,
+            description: 'Describe <item> & "quoted" \'value\'',
+            parameters: {
+                type: 'object',
+                description: '<item> & "quoted" \'value\'',
+            },
+            action: async () => 'done',
+        });
+        ToolManager.initToolSlashCommands();
+        const command = registeredCommands.find(item => item.name === 'tools-list');
+
+        const htmlOutput = await command.callback({ return: 'popup-html' });
+        const pipeOutput = await command.callback({ return: 'pipe' });
+
+        expect(htmlOutput).toContain('<b>Markup&lt;Item&gt;&amp;&quot;&#39;</b>');
+        expect(htmlOutput).toContain('<small>Describe &lt;item&gt; &amp; &quot;quoted&quot; &#39;value&#39;</small>');
+        expect(htmlOutput).toContain('&quot;description&quot;: &quot;&lt;item&gt; &amp; \\&quot;quoted\\&quot; &#39;value&#39;&quot;');
+        expect(pipeOutput).toContain('<item>');
+        expect(pipeOutput).not.toContain('&lt;item&gt;');
+        expect(JSON.parse(pipeOutput)[0].function.name).toBe(escapedToolName);
     });
 });

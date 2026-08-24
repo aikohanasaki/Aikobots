@@ -11,7 +11,7 @@ import { enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { enumTypes, SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { slashCommandReturnHelper } from './slash-commands/SlashCommandReturnHelper.js';
-import { isTrueBoolean } from './utils.js';
+import { escapeHtml, isTrueBoolean } from './utils.js';
 
 /**
  * @typedef {object} ToolInvocation
@@ -120,8 +120,8 @@ function cloneToolParameters(name, parameters) {
  * @param {ToolDefinitionOpenAI} tool Function tool descriptor
  * @returns {string} Human-readable HTML
  */
-function formatFunctionToolOpenAI(tool) {
-    return `<div><b>${tool.function.name}</b></div><div><small>${tool.function.description}</small></div><pre class="justifyLeft wordBreakAll"><code class="flex padding5">${JSON.stringify(tool.function.parameters, null, 2)}</code></pre><hr>`;
+function formatFunctionToolOpenAIHtml(tool) {
+    return `<div><b>${escapeHtml(tool.function.name)}</b></div><div><small>${escapeHtml(tool.function.description)}</small></div><pre class="justifyLeft wordBreakAll"><code class="flex padding5">${escapeHtml(JSON.stringify(tool.function.parameters, null, 2))}</code></pre><hr>`;
 }
 
 /**
@@ -1003,9 +1003,10 @@ export class ToolManager {
             callback: async (args) => {
                 /** @type {any} */
                 const returnType = String(args?.return ?? 'popup-html').trim().toLowerCase();
-                const objectToStringFunc = tools => (Array.isArray(tools) ? tools : [tools]).map(formatFunctionToolOpenAI).join('\n\n');
+                const objectToStringFunc = tools => JSON.stringify(tools, null, 2);
+                const objectToHtmlFunc = tools => (Array.isArray(tools) ? tools : [tools]).map(formatFunctionToolOpenAIHtml).join('\n\n');
                 const tools = ToolManager.tools.map(tool => tool.toFunctionOpenAI());
-                return await slashCommandReturnHelper.doReturn(returnType ?? 'popup-html', tools ?? [], { objectToStringFunc });
+                return await slashCommandReturnHelper.doReturn(returnType ?? 'popup-html', tools ?? [], { objectToStringFunc, objectToHtmlFunc });
             },
         }));
 
