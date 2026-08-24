@@ -49,8 +49,80 @@ import { isTrueBoolean } from './utils.js';
  * @property {string} function.name - The name of the function.
  * @property {string} function.description - The description of the function.
  * @property {object} function.parameters - The parameters of the function.
- * @property {function} toString - A function to convert the tool to a string.
  */
+
+/**
+ * Returns whether a value contains only JSON-compatible data.
+ * @param {any} value Value to validate
+ * @param {Set<object>} ancestors Objects in the current traversal path
+ * @returns {boolean} Whether the value is JSON-compatible
+ */
+function isJsonCompatibleToolValue(value, ancestors = new Set()) {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+        return true;
+    }
+    if (typeof value === 'number') {
+        return Number.isFinite(value);
+    }
+    if (typeof value !== 'object') {
+        return false;
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+    if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) {
+        return false;
+    }
+    if (ancestors.has(value)) {
+        return false;
+    }
+
+    ancestors.add(value);
+    const keys = Reflect.ownKeys(value);
+    if (Array.isArray(value) && keys.length !== value.length + 1) {
+        ancestors.delete(value);
+        return false;
+    }
+
+    const isCompatible = keys.every(key => {
+        if (Array.isArray(value) && key === 'length') {
+            return true;
+        }
+        if (typeof key !== 'string') {
+            return false;
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        return Boolean(descriptor?.enumerable && Object.hasOwn(descriptor, 'value'))
+            && isJsonCompatibleToolValue(descriptor.value, ancestors);
+    });
+    ancestors.delete(value);
+    return isCompatible;
+}
+
+/**
+ * Validates and snapshots a provider-facing function tool schema.
+ * @param {string} name Tool name used in the safe validation error
+ * @param {object} parameters JSON schema to snapshot
+ * @returns {object} Cloneable schema snapshot
+ */
+function cloneToolParameters(name, parameters) {
+    try {
+        if (!parameters || Array.isArray(parameters) || !isJsonCompatibleToolValue(parameters)) {
+            throw new TypeError();
+        }
+        return structuredClone(parameters);
+    } catch {
+        throw new TypeError(`Invalid function tool parameters for "${String(name)}": expected a plain JSON-compatible object.`);
+    }
+}
+
+/**
+ * Formats a provider-facing function tool for the tools-list command.
+ * @param {ToolDefinitionOpenAI} tool Function tool descriptor
+ * @returns {string} Human-readable HTML
+ */
+function formatFunctionToolOpenAI(tool) {
+    return `<div><b>${tool.function.name}</b></div><div><small>${tool.function.description}</small></div><pre class="justifyLeft wordBreakAll"><code class="flex padding5">${JSON.stringify(tool.function.parameters, null, 2)}</code></pre><hr>`;
+}
 
 /**
  * Assigns nested variables to a scope.
@@ -175,7 +247,7 @@ class ToolDefinition {
         this.#name = name;
         this.#displayName = displayName;
         this.#description = description;
-        this.#parameters = parameters;
+        this.#parameters = cloneToolParameters(name, parameters);
         this.#action = action;
         this.#formatMessage = formatMessage;
         this.#shouldRegister = shouldRegister;
@@ -192,10 +264,7 @@ class ToolDefinition {
             function: {
                 name: this.#name,
                 description: this.#description,
-                parameters: this.#parameters,
-            },
-            toString: function () {
-                return `<div><b>${this.function.name}</b></div><div><small>${this.function.description}</small></div><pre class="justifyLeft wordBreakAll"><code class="flex padding5">${JSON.stringify(this.function.parameters, null, 2)}</code></pre><hr>`;
+                parameters: structuredClone(this.#parameters),
             },
         };
     }
@@ -934,7 +1003,7 @@ export class ToolManager {
             callback: async (args) => {
                 /** @type {any} */
                 const returnType = String(args?.return ?? 'popup-html').trim().toLowerCase();
-                const objectToStringFunc = (tools) => Array.isArray(tools) ? tools.map(x => x.toString()).join('\n\n') : tools.toString();
+                const objectToStringFunc = tools => (Array.isArray(tools) ? tools : [tools]).map(formatFunctionToolOpenAI).join('\n\n');
                 const tools = ToolManager.tools.map(tool => tool.toFunctionOpenAI());
                 return await slashCommandReturnHelper.doReturn(returnType ?? 'popup-html', tools ?? [], { objectToStringFunc });
             },
