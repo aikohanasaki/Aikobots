@@ -1674,7 +1674,7 @@ async function applyWorldInfoToContext(context) {
         const bottom = Array.isArray(scanResult.ANAfterEntries) ? scanResult.ANAfterEntries.join('\n') : '';
         const authorsNoteSegments = joinContentSegments([
             context.worldInfoAuthorsNoteTopSegments,
-            createTextContentSegment(original),
+            original,
             context.worldInfoAuthorsNoteBottomSegments,
         ]);
         extensionPrompts['2_floating_prompt'] = {

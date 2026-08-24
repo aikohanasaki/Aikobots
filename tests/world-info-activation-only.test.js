@@ -95,14 +95,14 @@ function expectNoSentinel(value) {
     expect(JSON.stringify(value)).not.toContain(ACTIVATION_ONLY_SENTINEL);
 }
 
-describe('activation-only world info entries', () => {
-    beforeAll(async () => {
-        const scanModule = await import('../src/prompting/world-info-scan.js');
-        const assemblyModule = await import('../src/prompting/chat-completion-assembly.js');
-        scanWorldInfo = scanModule.scanWorldInfo;
-        assembleChatCompletionPrompt = assemblyModule.assembleChatCompletionPrompt;
-    });
+beforeAll(async () => {
+    const scanModule = await import('../src/prompting/world-info-scan.js');
+    const assemblyModule = await import('../src/prompting/chat-completion-assembly.js');
+    scanWorldInfo = scanModule.scanWorldInfo;
+    assembleChatCompletionPrompt = assemblyModule.assembleChatCompletionPrompt;
+});
 
+describe('activation-only world info entries', () => {
     it('activates and recursively scans without inserting activation-only content', async () => {
         const result = await scanWorldInfo(makeScanPayload());
 
@@ -222,5 +222,81 @@ describe('activation-only world info entries', () => {
         expectNoSentinel(assembly.chat);
         expectNoSentinel(assembly.messagesState);
         expectNoSentinel(assembly.itemization);
+    });
+});
+
+describe('author note world info assembly', () => {
+    it('preserves a persona inserted at the bottom of the author note', async () => {
+        const assembly = await assembleChatCompletionPrompt({
+            model: '',
+            userName: 'User',
+            charName: 'Assistant',
+            serviceSettings: {
+                openai_max_context: 4096,
+                openai_max_tokens: 256,
+                prompts: [
+                    { identifier: 'main', role: 'system', content: 'Main prompt' },
+                    { identifier: 'chatHistory', role: 'system', content: '' },
+                ],
+                prompt_order: [
+                    {
+                        character_id: 1,
+                        order: [
+                            { identifier: 'main', enabled: true },
+                            { identifier: 'chatHistory', enabled: true },
+                        ],
+                    },
+                ],
+            },
+            activeCharacter: { id: 1 },
+            oaiSettings: {
+                wi_format: '',
+                squash_system_messages: false,
+            },
+            worldInfoRequest: {
+                chat: [],
+                maxContext: 4096,
+                worldInfoPosition,
+                wiAnchorPosition,
+                settings: {
+                    world_info_budget: 100,
+                    world_info_budget_cap: 0,
+                    world_info_recursive: false,
+                    world_info_max_recursion_steps: 1,
+                },
+                sortedEntries: [
+                    {
+                        uid: 1,
+                        world: 'AuthorNoteTest',
+                        order: 100,
+                        position: worldInfoPosition.ANBottom,
+                        constant: true,
+                        content: 'World info at bottom',
+                        lorebookSettings: { budgetMode: 'default' },
+                    },
+                ],
+            },
+            promptState: {
+                modules: {
+                    authorsNote: {
+                        value: 'Author note\nPersona at bottom',
+                        position: 1,
+                        depth: 4,
+                        scan: false,
+                        role: 0,
+                    },
+                },
+                prompts: [],
+            },
+            messages: [
+                { role: 'user', content: 'hello' },
+            ],
+        });
+
+        expect(assembly.chat).toContainEqual({
+            role: 'system',
+            content: 'Author note\nPersona at bottom\nWorld info at bottom',
+        });
+        expect(JSON.stringify(assembly.messagesState)).not.toContain('[object Object]');
     });
 });
