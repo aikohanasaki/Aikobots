@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter } from '../public/scripts/swipe-policy.js';
+import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter, shouldRestoreSwipeButtons } from '../public/scripts/swipe-policy.js';
 
 test('historical swipe generation requires every later message to be prompt-hidden', () => {
     const messages = [
@@ -37,4 +37,19 @@ test('swipe counters distinguish prompt-hidden messages from system notices', ()
     assert.equal(shouldDisplaySwipeCounter({ is_system: true, swipes: ['notice'], extra: { type: 'notice' } }, isSystemNotice), false);
     assert.equal(shouldDisplaySwipeCounter({ is_user: true, swipes: ['user'] }, isSystemNotice), false);
     assert.equal(shouldDisplaySwipeCounter({ swipes: ['small'], extra: { isSmallSys: true } }, isSystemNotice), false);
+});
+
+test('send controls restore swipes only when no other UI operation owns them', () => {
+    const available = {
+        swipesEnabled: true,
+        hasActiveMessageEdit: false,
+        isDeleteMode: false,
+        isGroupGenerating: false,
+    };
+
+    assert.equal(shouldRestoreSwipeButtons(available), true);
+    assert.equal(shouldRestoreSwipeButtons({ ...available, swipesEnabled: false }), false);
+    assert.equal(shouldRestoreSwipeButtons({ ...available, hasActiveMessageEdit: true }), false);
+    assert.equal(shouldRestoreSwipeButtons({ ...available, isDeleteMode: true }), false);
+    assert.equal(shouldRestoreSwipeButtons({ ...available, isGroupGenerating: true }), false);
 });

@@ -31,3 +31,16 @@ export function shouldDisplaySwipeCounter(message, isSystemNotice = () => false)
         !(message.is_system && isSystemNotice(message)),
     );
 }
+
+/**
+ * Returns whether restoring the send controls may also restore swipe controls.
+ * @param {object} state Current UI state.
+ * @param {boolean} state.swipesEnabled User swipe-button preference.
+ * @param {boolean} state.hasActiveMessageEdit Whether a message edit still owns the UI.
+ * @param {boolean} state.isDeleteMode Whether bulk message deletion is active.
+ * @param {boolean} state.isGroupGenerating Whether a group generation still owns the UI.
+ * @returns {boolean}
+ */
+export function shouldRestoreSwipeButtons({ swipesEnabled, hasActiveMessageEdit, isDeleteMode, isGroupGenerating }) {
+    return Boolean(swipesEnabled && !hasActiveMessageEdit && !isDeleteMode && !isGroupGenerating);
+}

@@ -278,7 +278,7 @@ import { AudioPlayer } from './scripts/audio-player.js';
 import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
-import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter } from './scripts/swipe-policy.js';
+import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter, shouldRestoreSwipeButtons } from './scripts/swipe-policy.js';
 import { shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence-policy.js';
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
@@ -9508,10 +9508,6 @@ class StreamingProcessor {
         deactivateSendButtons();
     }
 
-    markUIGenStopped() {
-        activateSendButtons();
-    }
-
     /** Clears only this processor's persisted reload-recovery reference. */
     clearGenerationRecovery() {
         const generationId = this.generator?.generationId;
@@ -9816,7 +9812,6 @@ class StreamingProcessor {
         }
         this.isStopped = true;
 
-        this.markUIGenStopped();
         unblockGeneration();
 
         const ephemeralMessage = chat[this.messageId];
@@ -12166,7 +12161,6 @@ function unblockGeneration(type) {
 
     is_send_press = false;
     activateSendButtons();
-    showSwipeButtons();
     setGenerationProgress(0);
     flushEphemeralStoppingStrings();
 }
@@ -13598,6 +13592,15 @@ export function activateSendButtons() {
     setGenerationPreflightIndicator(false);
     hideStopButton();
     delete document.body.dataset.generating;
+
+    if (shouldRestoreSwipeButtons({
+        swipesEnabled: swipes,
+        hasActiveMessageEdit: hasActiveMessageEditSession(),
+        isDeleteMode: is_delete_mode,
+        isGroupGenerating: is_group_generating,
+    })) {
+        showSwipeButtons();
+    }
 }
 
 /**

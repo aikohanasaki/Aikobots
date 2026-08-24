@@ -54,7 +54,6 @@ import {
     talkativeness_default,
     selectRightMenuWithAnimation,
     deleteLastMessage,
-    showSwipeButtons,
     hideSwipeButtons,
     chat_metadata,
     updateChatMetadata,
@@ -1511,7 +1510,6 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         }
         setCharacterName('');
         activateSendButtons();
-        showSwipeButtons();
         await eventSource.emit(event_types.GROUP_WRAPPER_FINISHED, { selected_group, type });
     }
 
