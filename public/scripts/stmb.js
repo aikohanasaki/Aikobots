@@ -249,6 +249,7 @@ import {
     createNarratorMember,
     ensureNarratorConfig,
     getNarratorCastFromMessage,
+    isNarratorModeActive,
     mergeNarratorLorebookEntries,
     migrateNarratorLorebookReference,
     normalizeMultiCharacterSnapshot,
@@ -2188,9 +2189,11 @@ function getCurrentNarratorConfig(sceneContext = buildStmbSceneContext()) {
 }
 
 function isCurrentNarratorModeActive(sceneContext = buildStmbSceneContext()) {
-    return !sceneContext?.isGroupChat
-        && getModuleSettings().manualModeEnabled === true
-        && getCurrentNarratorConfig(sceneContext).enabled === true;
+    return isNarratorModeActive({
+        isGroupChat: Boolean(sceneContext?.isGroupChat),
+        manualModeEnabled: getModuleSettings().manualModeEnabled === true,
+        enabled: getCurrentNarratorConfig(sceneContext).enabled === true,
+    });
 }
 
 function getNarratorCanonicalLorebookName(sceneContext = buildStmbSceneContext()) {
