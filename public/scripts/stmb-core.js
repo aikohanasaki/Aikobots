@@ -1,13 +1,14 @@
 import { cloneStloSettings } from './stlo-utils.js';
 import { normalizeCharacterMemoryBookLocks } from './stmb-character-memory-book-locks.js';
 import { normalizeMemoryAssistanceMode } from './stmb-clip-review-policy.js';
+import { getNarratorSceneParticipants } from './stmb-narrator-mode.js';
 
 export const STMB_PARITY = Object.freeze({
     sourceRepo: 'aikohanasaki/SillyTavern-MemoryBooks',
     sourceCommit: '52520c76e1a1c9ad820d37c0960e4608467ff2f6',
 });
 
-export const STMB_SETTINGS_VERSION = 7;
+export const STMB_SETTINGS_VERSION = 8;
 export const STMB_METADATA_KEY = 'STMemoryBooks';
 export const STMB_MANAGED_FLAG = 'stmemorybooks';
 export const STMB_DEFAULT_PROFILE_NAME = 'Current SillyTavern Settings';
@@ -618,6 +619,8 @@ export function createDefaultStmbSettings() {
             memoryBoundaryMode: STMB_MEMORY_BOUNDARY_MODES.BOTH,
             memoryBoundaryButtonPosition: null,
             chatEndButtonPosition: null,
+            narratorCastDrawerPosition: null,
+            narratorCastDrawerCollapsed: true,
             compactionPromptTemplate: STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE,
             topicalClipPromptTemplate: '',
             compactionProfileIndex: 0,
@@ -960,6 +963,8 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.memoryBoundaryMode = normalizeStmbMemoryBoundaryMode(moduleSettings.memoryBoundaryMode);
     moduleSettings.memoryBoundaryButtonPosition = normalizeStmbMemoryBoundaryButtonPosition(moduleSettings.memoryBoundaryButtonPosition);
     moduleSettings.chatEndButtonPosition = normalizeStmbMemoryBoundaryButtonPosition(moduleSettings.chatEndButtonPosition);
+    moduleSettings.narratorCastDrawerPosition = normalizeStmbMemoryBoundaryButtonPosition(moduleSettings.narratorCastDrawerPosition);
+    moduleSettings.narratorCastDrawerCollapsed = moduleSettings.narratorCastDrawerCollapsed !== false;
     moduleSettings.compactionPromptTemplate = typeof moduleSettings.compactionPromptTemplate === 'string'
         && moduleSettings.compactionPromptTemplate.trim()
         && moduleSettings.compactionPromptTemplate.includes('{{ENTRY_CONTENT}}')
@@ -1494,6 +1499,10 @@ export function compileScene(messages, sceneRequest, options = {}) {
         throw new Error(`Message IDs out of bounds: ${sceneStart}-${sceneEnd} (0-${Math.max(sourceMessages.length - 1, 0)})`);
     }
 
+    const narratorParticipants = options?.collectNarratorCast === true
+        ? getNarratorSceneParticipants(sourceMessages.slice(sceneStart, sceneEnd + 1))
+        : null;
+
     const sceneMessages = [];
     const participantFilterNames = new Set();
     let hiddenMessageCount = 0;
@@ -1554,6 +1563,11 @@ export function compileScene(messages, sceneRequest, options = {}) {
     };
     if (participantFilterNames.size > 0) {
         metadata.characterFilterNames = Array.from(participantFilterNames);
+    }
+    if (narratorParticipants) {
+        metadata.stmbPromptTarget = 'group';
+        metadata.narratorParticipantIds = narratorParticipants.memberIds;
+        metadata.narratorHasUntaggedMessages = narratorParticipants.hasUntaggedMessages;
     }
 
     return {

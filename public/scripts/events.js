@@ -6,6 +6,7 @@ export const event_types = {
     MESSAGE_SWIPED: 'message_swiped',
     MESSAGE_SENT: 'message_sent',
     MESSAGE_RECEIVED: 'message_received',
+    MESSAGE_BEFORE_PERSIST: 'message_before_persist',
     MESSAGE_EDITED: 'message_edited',
     MESSAGE_DELETED: 'message_deleted',
     MESSAGE_UPDATED: 'message_updated',

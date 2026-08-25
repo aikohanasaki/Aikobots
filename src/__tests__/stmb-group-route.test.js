@@ -136,6 +136,16 @@ function mockLoadedLorebooks() {
     getLorebookForManagement.mockImplementation((_user, name) => structuredClone(books.get(name)));
 }
 
+function makeNarratorRequest() {
+    const request = makeRequest();
+    request.body.routingMode = 'narrator';
+    request.body.primary.characterFilterNames = ['must-not-persist'];
+    request.body.primary.narratorParticipantIds = ['alice-id'];
+    request.body.targets[0].characterFilterNames = ['must-not-persist'];
+    request.body.targets[0].narratorOwnerIds = ['alice-id'];
+    return request;
+}
+
 describe('STMB multi-lorebook group route', () => {
     it('synchronizes existing group bindings without returning character metadata', async () => {
         getLorebookForManagement.mockResolvedValue({
@@ -242,6 +252,67 @@ describe('STMB multi-lorebook group route', () => {
             },
         });
         expect(response.payload.entries[0]).not.toHaveProperty('content');
+    });
+
+    it('routes Narrator entries by stable IDs without native filters or STLO mutation', async () => {
+        mockLoadedLorebooks();
+        const response = makeResponse();
+
+        await handler(makeNarratorRequest(), response);
+
+        expect(response.statusCode).toBe(200);
+        const primaryData = transactionSave.mock.calls[0][2];
+        const targetData = transactionSave.mock.calls[1][2];
+        const primaryEntry = Object.values(primaryData.entries)[0];
+        const targetEntry = Object.values(targetData.entries)[0];
+        expect(primaryEntry.STMB_narratorParticipantIds).toEqual(['alice-id']);
+        expect(targetEntry.STMB_narratorOwnerIds).toEqual(['alice-id']);
+        expect(primaryEntry).not.toHaveProperty('characterFilter');
+        expect(targetEntry).not.toHaveProperty('characterFilter');
+        expect(targetData).not.toHaveProperty('stlo');
+        expect(JSON.stringify(response.payload)).not.toContain('alice-id');
+    });
+
+    it('rejects secure or inconsistent Narrator routing before reading lorebooks', async () => {
+        const secureRequest = makeNarratorRequest();
+        secureRequest.body.targets[0].storage = 'secure';
+        const secureResponse = makeResponse();
+        await handler(secureRequest, secureResponse);
+        expect(secureResponse.statusCode).toBe(403);
+        expect(getLorebookForManagement).not.toHaveBeenCalled();
+
+        const invalidRequest = makeNarratorRequest();
+        invalidRequest.body.targets[0].narratorOwnerIds = ['other-id'];
+        const invalidResponse = makeResponse();
+        await handler(invalidRequest, invalidResponse);
+        expect(invalidResponse.statusCode).toBe(400);
+        expect(getLorebookForManagement).not.toHaveBeenCalled();
+    });
+
+    it('rolls back a completed Narrator write after a partial failure', async () => {
+        mockLoadedLorebooks();
+        transactionSave
+            .mockResolvedValueOnce({})
+            .mockRejectedValueOnce(new Error('simulated write failure'))
+            .mockResolvedValueOnce({});
+        const response = makeResponse();
+        const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        try {
+            await handler(makeNarratorRequest(), response);
+        } finally {
+            consoleSpy.mockRestore();
+        }
+
+        expect(transactionSave).toHaveBeenCalledTimes(3);
+        expect(transactionSave.mock.calls[2][2]).toEqual({ entries: {} });
+        expect(response.payload).toEqual({
+            error: {
+                type: 'StmbGroupMemoryWriteFailed',
+                message: 'The group memory could not be saved.',
+            },
+        });
+        expect(JSON.stringify(response.payload)).not.toContain('alice-id');
     });
 
     it('saves numeric scene boundaries for legacy JSONL chats without message UUIDs', async () => {

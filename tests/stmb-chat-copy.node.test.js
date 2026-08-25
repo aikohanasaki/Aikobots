@@ -183,11 +183,13 @@ test('chat-only copies remove STMB-owned bindings', () => {
         STMemoryBooks: {
             manualCharacterLorebooks: { alice: 'Alice Memories' },
             sidePromptLorebookOverrides: { tracker: 'Tracker' },
+            narratorMode: { enabled: true, members: [{ id: 'alice', lorebookName: 'Alice Memories', retired: false }] },
         },
     });
     assert.equal('world_info' in result, false);
     assert.equal('manualCharacterLorebooks' in result.STMemoryBooks, false);
     assert.equal('sidePromptLorebookOverrides' in result.STMemoryBooks, false);
+    assert.equal('narratorMode' in result.STMemoryBooks, false);
 
     const manual = clearStmbChatMetadataBindings({
         world_info: 'Unrelated Character Lorebook',
@@ -195,4 +197,27 @@ test('chat-only copies remove STMB-owned bindings', () => {
     });
     assert.equal(manual.world_info, 'Unrelated Character Lorebook');
     assert.equal('manualLorebook' in manual.STMemoryBooks, false);
+});
+
+test('Narrator copies include retired members and rewrite every cast assignment despite solo locks', () => {
+    const metadata = {
+        STMemoryBooks: {
+            manualLorebook: 'Omniscient',
+            narratorMode: {
+                enabled: true,
+                members: [
+                    { id: 'alice', lorebookName: 'Alice', retired: false },
+                    { id: 'bob', lorebookName: 'Bob', retired: true },
+                ],
+            },
+        },
+    };
+    assert.deepEqual(collectStmbChatLorebookNames(metadata, { soloMemoryBookLocked: true }), ['Omniscient', 'Alice', 'Bob']);
+    const rewritten = rewriteStmbChatMetadataForCopy(metadata, new Map([
+        ['Omniscient', 'Omniscient Branch 1'],
+        ['Alice', 'Alice Branch 1'],
+        ['Bob', 'Bob Branch 1'],
+    ]), 10, { soloMemoryBookLocked: true });
+    assert.equal(rewritten.STMemoryBooks.manualLorebook, 'Omniscient Branch 1');
+    assert.deepEqual(rewritten.STMemoryBooks.narratorMode.members.map(member => member.lorebookName), ['Alice Branch 1', 'Bob Branch 1']);
 });

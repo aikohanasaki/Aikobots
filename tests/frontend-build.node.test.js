@@ -51,7 +51,7 @@ test('committed build stays within startup budgets and contains bundled registri
     assert.ok(manifest.initialRequestCount <= 12);
     assert.ok(manifest.initialGzipBytes <= 1.8 * 1024 * 1024);
     assert.equal(manifest.builtinExtensionCount, 13);
-    assert.equal(manifest.stmbModuleCount, 28);
+    assert.equal(manifest.stmbModuleCount, 29);
     assert.ok(manifest.assets.some(asset => asset.name === 'chunks/builtins.js'));
     assert.ok(manifest.assets.some(asset => asset.name === 'stmb.js'));
 });

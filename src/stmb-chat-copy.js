@@ -52,11 +52,17 @@ export function collectStmbChatLorebookNames(chatMetadata, { soloMemoryBookLocke
 
     const names = new Set();
     const state = chatMetadata[STMB_METADATA_KEY];
+    const narratorMode = isPlainObject(state.narratorMode) ? state.narratorMode : null;
+    const narratorActive = narratorMode?.enabled === true;
     const lockedKeys = new Set(Array.isArray(lockedCharacterBindingKeys) ? lockedCharacterBindingKeys.map(String) : []);
-    if (!soloMemoryBookLocked && !String(state.manualLorebook || '').trim()) {
+    if ((!soloMemoryBookLocked || narratorActive) && !String(state.manualLorebook || '').trim()) {
         addBookNameValues(names, chatMetadata.world_info);
     }
-    if (!soloMemoryBookLocked) addBookName(names, state.manualLorebook);
+    if (!soloMemoryBookLocked || narratorActive) addBookName(names, state.manualLorebook);
+    if (narratorActive) {
+        (Array.isArray(narratorMode.members) ? narratorMode.members : [])
+            .forEach(member => addBookName(names, member?.lorebookName));
+    }
     Object.entries(isPlainObject(state.manualCharacterLorebooks) ? state.manualCharacterLorebooks : {})
         .filter(([key]) => !lockedKeys.has(key))
         .forEach(([, value]) => addBookNameValues(names, value));
@@ -107,9 +113,18 @@ export function rewriteStmbChatMetadataForCopy(chatMetadata, nameMap, cutoffInde
     }
 
     const lockedKeys = new Set(Array.isArray(lockedCharacterBindingKeys) ? lockedCharacterBindingKeys.map(String) : []);
-    if (!soloMemoryBookLocked) {
+    const narratorMode = isPlainObject(state.narratorMode) ? state.narratorMode : null;
+    const narratorActive = narratorMode?.enabled === true;
+    if (!soloMemoryBookLocked || narratorActive) {
         metadata.world_info = replaceBookReference(metadata.world_info, nameMap);
         if (typeof state.manualLorebook === 'string') state.manualLorebook = nameMap.get(state.manualLorebook) || state.manualLorebook;
+    }
+    if (narratorMode && Array.isArray(narratorMode.members)) {
+        for (const member of narratorMode.members) {
+            if (isPlainObject(member) && typeof member.lorebookName === 'string') {
+                member.lorebookName = nameMap.get(member.lorebookName) || member.lorebookName;
+            }
+        }
     }
     if (isPlainObject(state.manualCharacterLorebooks)) {
         for (const [bindingKey, value] of Object.entries(state.manualCharacterLorebooks)) {
@@ -146,6 +161,7 @@ export function clearStmbChatMetadataBindings(chatMetadata) {
     delete state.manualLorebook;
     delete state.manualCharacterLorebooks;
     delete state.sidePromptLorebookOverrides;
+    delete state.narratorMode;
     return metadata;
 }
 

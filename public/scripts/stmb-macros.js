@@ -9,6 +9,7 @@ const EMPTY_TIER_COUNTS = Object.freeze(Object.fromEntries(Array.from({ length: 
 
 let getSettings = () => ({});
 let getManualLorebook = () => '';
+let getAdditionalLorebooks = () => [];
 let tierCounts = { ...EMPTY_TIER_COUNTS };
 let clipCount = 0;
 let sidePromptCount = 0;
@@ -23,9 +24,17 @@ function getEffectiveLorebookName() {
     return manualLorebook && world_names.includes(manualLorebook) ? manualLorebook : '';
 }
 
-function updateCounts(lorebookData) {
+/** Returns the canonical and active Narrator books that contribute to chat-scoped macro counts. */
+function getEffectiveLorebookNames() {
+    const primary = getEffectiveLorebookName();
+    if (!primary) return [];
+    return [...new Set([primary, ...getAdditionalLorebooks()].map(value => String(value || '').trim()))]
+        .filter(name => name && world_names.includes(name));
+}
+
+function updateCounts(lorebookDatas) {
     const counts = { ...EMPTY_TIER_COUNTS };
-    const entries = Object.values(lorebookData?.entries || {});
+    const entries = lorebookDatas.flatMap(lorebookData => Object.values(lorebookData?.entries || {}));
     for (const entry of entries) {
         if (entry?.[STMB_MANAGED_FLAG] !== true) {
             continue;
@@ -56,23 +65,25 @@ function clearCounts() {
  * Refreshes the cached Memory Books macro counts for the effective lorebook.
  */
 export async function refreshStmbMacroCache(lorebookName = null, lorebookData = null) {
-    const effectiveLorebook = getEffectiveLorebookName();
-    if (!effectiveLorebook) {
+    const effectiveLorebooks = getEffectiveLorebookNames();
+    if (effectiveLorebooks.length === 0) {
         ++refreshSequence;
         clearCounts();
         return;
     }
-    if (lorebookName && String(lorebookName) !== effectiveLorebook) {
+    if (lorebookName && !effectiveLorebooks.includes(String(lorebookName))) {
         return;
     }
 
     const sequence = ++refreshSequence;
     clearCounts();
     try {
-        const data = lorebookData && typeof lorebookData === 'object'
-            ? lorebookData
-            : await loadWorldInfo(effectiveLorebook);
-        if (sequence !== refreshSequence || effectiveLorebook !== getEffectiveLorebookName()) {
+        const data = await Promise.all(effectiveLorebooks.map(name => (
+            lorebookData && typeof lorebookData === 'object' && name === String(lorebookName)
+                ? lorebookData
+                : loadWorldInfo(name)
+        )));
+        if (sequence !== refreshSequence || effectiveLorebooks.join('\n') !== getEffectiveLorebookNames().join('\n')) {
             return;
         }
         updateCounts(data);
@@ -89,6 +100,7 @@ export async function refreshStmbMacroCache(lorebookName = null, lorebookData = 
 export function initStmbMacros(options = {}) {
     getSettings = typeof options.getSettings === 'function' ? options.getSettings : getSettings;
     getManualLorebook = typeof options.getManualLorebook === 'function' ? options.getManualLorebook : getManualLorebook;
+    getAdditionalLorebooks = typeof options.getAdditionalLorebooks === 'function' ? options.getAdditionalLorebooks : getAdditionalLorebooks;
     if (registered) {
         void refreshStmbMacroCache();
         return;

@@ -48,6 +48,8 @@ function addStmbStateReferences(names, state) {
     addLorebookName(names, state.manualLorebook);
     addLorebookNames(names, Object.values(state.manualCharacterLorebooks || {}));
     addLorebookNames(names, Object.values(state.sidePromptLorebookOverrides || {}));
+    addLorebookNames(names, (Array.isArray(state.narratorMode?.members) ? state.narratorMode.members : [])
+        .map(member => member?.lorebookName));
 }
 
 function addChatMetadataReferences(names, metadata) {

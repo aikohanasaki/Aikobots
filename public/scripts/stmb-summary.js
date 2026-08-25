@@ -2,6 +2,7 @@ import {
     STMB_MANAGED_FLAG,
     parseSequenceFromTitle,
 } from './stmb-core.js';
+import { collectNarratorSourceMetadata } from './stmb-narrator-mode.js';
 
 export const MIN_SUMMARY_CHILDREN = 1;
 const DEFAULT_MIN_CHILDREN = 5;
@@ -1771,6 +1772,7 @@ export function createManagedSummaryEntryData(summaryCandidate, {
     };
     const characterFilter = collectSummarySourceCharacterFilter(summaryCandidate, sourceEntries);
     if (characterFilter) entry.characterFilter = characterFilter;
+    Object.assign(entry, collectNarratorSourceMetadata(sourceEntries, summaryCandidate?.memberIds));
     if (summaryCandidate?.inclusionGroup) {
         entry.group = String(summaryCandidate.inclusionGroup);
         entry.STMB_inclusionGroup = String(summaryCandidate.inclusionGroup);

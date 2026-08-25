@@ -1475,6 +1475,9 @@ function migrateStmbStateReferences(state, oldCanonicalName, newCanonicalName = 
         } else {
             delete state.manualLorebook;
         }
+        if (!manualLorebook.value && state.narratorMode && typeof state.narratorMode === 'object') {
+            state.narratorMode.enabled = false;
+        }
         changed = true;
     }
 
@@ -1504,6 +1507,18 @@ function migrateStmbStateReferences(state, oldCanonicalName, newCanonicalName = 
 
         if (Object.keys(state.sidePromptLorebookOverrides).length === 0) {
             delete state.sidePromptLorebookOverrides;
+        }
+    }
+
+    if (state.narratorMode && typeof state.narratorMode === 'object' && !Array.isArray(state.narratorMode)) {
+        const members = Array.isArray(state.narratorMode.members) ? state.narratorMode.members : [];
+        for (const member of members) {
+            if (!member || typeof member !== 'object' || Array.isArray(member)) continue;
+            const migrated = migrateLorebookReferenceScalar(member.lorebookName, oldCanonicalName, newCanonicalName);
+            if (!migrated.changed) continue;
+            member.lorebookName = migrated.value || '';
+            if (!migrated.value) state.narratorMode.enabled = false;
+            changed = true;
         }
     }
 
@@ -2164,6 +2179,7 @@ export function listLorebookNamesForAllocation(user) {
             if (path.extname(file).toLowerCase() === '.json') names.add(path.parse(file).name);
         }
     }
+
     return [...names];
 }
 

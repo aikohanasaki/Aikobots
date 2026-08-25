@@ -9751,6 +9751,7 @@ class StreamingProcessor {
             targetMessage.extra = targetMessage.extra || {};
             targetMessage.extra[GENERATION_RECOVERY_MARKER_KEY] = generationId;
         }
+        await eventSource.emit(event_types.MESSAGE_BEFORE_PERSIST, sqliteMutationMessageId, this.type);
         const finishedText = String(targetMessage.mes || '').trim();
         if (this.temporaryGenerationAttempt
             && ((finishedText && finishedText !== '...') || this.reasoningHandler.reasoning || this.images.length > 0)) {
@@ -11758,6 +11759,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         }
 
         if (replyResult) {
+            await eventSource.emit(event_types.MESSAGE_BEFORE_PERSIST, replyResult.messageId, replyResult.type);
             const replySaveResult = await saveSqliteReplyMutation(replyResult);
             if (replySaveResult !== CHAT_SAVE_RESULT.SAVED) {
                 await reloadCurrentChat();

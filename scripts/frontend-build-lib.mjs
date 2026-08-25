@@ -308,9 +308,9 @@ export async function buildFrontend(outputDirectory = defaultOutputDirectory) {
     if (!emittedAssets.includes('stmb.js') || !stmbChunk) {
         throw new Error('The dedicated STMB chunk was not emitted.');
     }
-    if (stmbModules.length !== 28 || stmbModules.some(module => module.chunks?.length !== 1 || module.chunks[0] !== stmbChunk.id)) {
+    if (stmbModules.length !== 29 || stmbModules.some(module => module.chunks?.length !== 1 || module.chunks[0] !== stmbChunk.id)) {
         const placements = [...new Set(stmbModules.map(module => JSON.stringify(module.chunks)))].join(', ');
-        throw new Error(`Expected all 28 STMB modules only in chunk ${stmbChunk.id}; found ${stmbModules.length} with placements ${placements}.`);
+        throw new Error(`Expected all 29 STMB modules only in chunk ${stmbChunk.id}; found ${stmbModules.length} with placements ${placements}.`);
     }
 
     const manifest = {

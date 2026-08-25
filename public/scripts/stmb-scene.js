@@ -243,7 +243,7 @@ function buildLocalRangeInfo(rangeStart = null, rangeEnd = null) {
     };
 }
 
-function buildLocalCompiledScene(range, { skipSystemMessages = true, allowPartial = false, sceneContext = null } = {}) {
+function buildLocalCompiledScene(range, { skipSystemMessages = true, allowPartial = false, collectNarratorCast = false, sceneContext = null } = {}) {
     const resolvedSceneContext = sceneContext || buildStmbSceneContext();
     const requestedStart = Number(range?.sceneStart);
     const requestedEnd = Number(range?.sceneEnd);
@@ -267,6 +267,7 @@ function buildLocalCompiledScene(range, { skipSystemMessages = true, allowPartia
     }, {
         skipSystemMessages,
         groupParticipants: resolvedSceneContext?.groupParticipants,
+        collectNarratorCast,
     });
     const sceneStartUuid = chat[requestedStart]?.[AIKOBOTS_MESSAGE_UUID_KEY];
     const sceneEndUuid = chat[requestedEnd]?.[AIKOBOTS_MESSAGE_UUID_KEY];
@@ -337,6 +338,7 @@ export async function captureStmbSceneRange(range, options = {}) {
         sceneContext: sceneContextOverride = null,
         sceneStartUuid = '',
         sceneEndUuid = '',
+        collectNarratorCast = false,
     } = options;
     const sceneContext = sceneContextOverride || buildStmbSceneContext();
     const hasUuidRange = Boolean(sceneStartUuid || sceneEndUuid);
@@ -345,6 +347,7 @@ export async function captureStmbSceneRange(range, options = {}) {
         const localCapture = buildLocalCompiledScene(range, {
             skipSystemMessages,
             allowPartial,
+            collectNarratorCast,
             sceneContext,
         });
         if (
@@ -367,5 +370,6 @@ export async function captureStmbSceneRange(range, options = {}) {
         sceneEndUuid,
         skipSystemMessages,
         allowPartial,
+        collectNarratorCast,
     }, { signal });
 }

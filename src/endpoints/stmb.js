@@ -183,6 +183,7 @@ function normalizeSceneEndpointRequest(body = {}) {
         userName: String(body.userName || ''),
         groupName: String(body.groupName || ''),
         isGroupChat: Boolean(body.isGroupChat || body.groupId),
+        collectNarratorCast: body.collectNarratorCast === true,
         groupParticipants: (Array.isArray(body.groupParticipants) ? body.groupParticipants : [])
             .slice(0, 100)
             .map(item => ({
@@ -398,6 +399,7 @@ async function resolveCapturedScene(request, normalizedRequest) {
         {
             skipSystemMessages: normalizedRequest.skipSystemMessages,
             groupParticipants: normalizedRequest.groupParticipants,
+            collectNarratorCast: normalizedRequest.collectNarratorCast,
         },
     );
     const sceneStartUuid = chatState.messages?.[sceneStart]?.[AIKOBOTS_MESSAGE_UUID_KEY];
@@ -559,6 +561,18 @@ function getLorebookContext(request) {
     };
 }
 
+function normalizeNarratorIdentityList(value, label) {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > 100) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} must be an array with no more than 100 items.`);
+    }
+    const normalized = [...new Set(value.map(item => String(item || '').trim()).filter(Boolean))];
+    if (normalized.some(item => item.length > 200)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} contains an invalid identity.`);
+    }
+    return normalized;
+}
+
 function normalizeGroupMemoryWriteTarget(value, label, user) {
     const lorebookName = String(value?.lorebookName || '').trim();
     const memoryObject = value?.memoryObject;
@@ -598,6 +612,8 @@ function normalizeGroupMemoryWriteTarget(value, label, user) {
         characterFilterNames: [...new Set((Array.isArray(value.characterFilterNames) ? value.characterFilterNames : [])
             .map(item => String(item || '').trim()).filter(Boolean))].slice(0, 100),
         usePrimaryTitle: value.usePrimaryTitle !== false,
+        narratorParticipantIds: normalizeNarratorIdentityList(value.narratorParticipantIds, `${label} narratorParticipantIds`),
+        narratorOwnerIds: normalizeNarratorIdentityList(value.narratorOwnerIds, `${label} narratorOwnerIds`),
     };
 }
 
@@ -1109,6 +1125,7 @@ router.post('/sync-group-stlo', async (request, response) => {
 router.post('/save-group-memory', async (request, response) => {
     let primary;
     let targets;
+    let routingMode;
     let sceneContext = request.body?.sceneContext;
     const profile = request.body?.profile || {};
     try {
@@ -1122,6 +1139,10 @@ router.post('/save-group-memory', async (request, response) => {
         if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
             throw createStmbRequestError(400, 'StmbBadRequest', 'profile must be an object.');
         }
+        routingMode = String(request.body?.routingMode || 'group').trim();
+        if (!['group', 'narrator'].includes(routingMode)) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'routingMode must be "group" or "narrator".');
+        }
         primary = normalizeGroupMemoryWriteTarget(request.body?.primary, 'primary', request.user);
         targets = (rawTargets || [])
             .map((target, index) => normalizeGroupMemoryWriteTarget(target, `targets[${index}]`, request.user));
@@ -1134,6 +1155,18 @@ router.post('/save-group-memory', async (request, response) => {
                 throw createStmbRequestError(400, 'StmbDuplicateGroupLorebook', 'Each group memory target lorebook must be unique.');
             }
             names.add(target.lorebookName);
+        }
+        if (routingMode === 'narrator') {
+            if ([primary, ...targets].some(target => target.storage !== 'user')) {
+                throw createStmbRequestError(403, 'StmbNarratorStorageNotAllowed', 'Narrator Mode requires ordinary user lorebooks.');
+            }
+            const participantIds = new Set(primary.narratorParticipantIds);
+            const ownerIds = targets.flatMap(target => target.narratorOwnerIds);
+            if (targets.some(target => target.narratorOwnerIds.length !== 1)
+                || ownerIds.length !== new Set(ownerIds).size
+                || ownerIds.some(ownerId => !participantIds.has(ownerId))) {
+                throw createStmbRequestError(400, 'StmbBadRequest', 'Narrator Mode character-copy routing is invalid.');
+            }
         }
     } catch (error) {
         return sendStmbError(response, error);
@@ -1183,15 +1216,20 @@ router.post('/save-group-memory', async (request, response) => {
                 profile,
                 primarySequence,
                 {
-                    characterFilterNames: primary.characterFilterNames,
+                    characterFilterNames: routingMode === 'group' ? primary.characterFilterNames : [],
                     inclusionGroup,
-                    entryMetadata: createCanonicalEntryMetadata(
-                        inclusionGroup,
-                        primaryBook.metadata.name,
-                        null,
-                        canonicalNumber,
-                        true,
-                    ),
+                    entryMetadata: {
+                        ...createCanonicalEntryMetadata(
+                            inclusionGroup,
+                            primaryBook.metadata.name,
+                            null,
+                            canonicalNumber,
+                            true,
+                        ),
+                        ...(routingMode === 'narrator' ? {
+                            STMB_narratorParticipantIds: primary.narratorParticipantIds,
+                        } : {}),
+                    },
                 },
             );
             const primaryEntry = createLorebookEntry(primaryBook.data);
@@ -1213,7 +1251,7 @@ router.post('/save-group-memory', async (request, response) => {
             for (let index = 1; index < lorebooks.length; index++) {
                 const book = lorebooks[index];
                 const target = book.request;
-                applyStloCharacterFilters(book.data, target.characterFilterNames);
+                if (routingMode === 'group') applyStloCharacterFilters(book.data, target.characterFilterNames);
                 const sequence = getNextManagedMemorySequenceNumber(
                     book.data.entries,
                     profile?.titleFormat || sceneContext?.titleFormat || null,
@@ -1225,15 +1263,20 @@ router.post('/save-group-memory', async (request, response) => {
                     sequence,
                     {
                         entryTitle: target.usePrimaryTitle ? primaryEntry.comment : null,
-                        characterFilterNames: target.characterFilterNames,
+                        characterFilterNames: routingMode === 'group' ? target.characterFilterNames : [],
                         inclusionGroup,
-                        entryMetadata: createCanonicalEntryMetadata(
-                            inclusionGroup,
-                            primaryBook.metadata.name,
-                            primaryEntry.uid,
-                            canonicalNumber,
-                            false,
-                        ),
+                        entryMetadata: {
+                            ...createCanonicalEntryMetadata(
+                                inclusionGroup,
+                                primaryBook.metadata.name,
+                                primaryEntry.uid,
+                                canonicalNumber,
+                                false,
+                            ),
+                            ...(routingMode === 'narrator' ? {
+                                STMB_narratorOwnerIds: target.narratorOwnerIds,
+                            } : {}),
+                        },
                     },
                 );
                 const entry = createLorebookEntry(book.data);

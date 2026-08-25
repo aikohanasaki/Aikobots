@@ -244,6 +244,19 @@ import {
     showStmbContextSettingsPopup,
     STMB_CONTEXT_NONE_KEY,
 } from './stmb-context-settings.js';
+import {
+    buildNarratorCopyTargets,
+    createNarratorMember,
+    ensureNarratorConfig,
+    getNarratorCastFromMessage,
+    mergeNarratorLorebookEntries,
+    migrateNarratorLorebookReference,
+    normalizeMultiCharacterSnapshot,
+    setNarratorActiveCast,
+    stampNarratorCast,
+    validateNarratorBindings,
+    validateNarratorMemberBinding,
+} from './stmb-narrator-mode.js';
 
 const $ = window.jQuery;
 const STMB_AI_REFERENCE_MANUAL_DOWNLOAD_ROOT = 'https://github.com/aikohanasaki/SillyTavern-MemoryBooks/raw/refs/heads/main/userguides';
@@ -258,6 +271,11 @@ let lastFailedSummaryContext = null;
 let sidePromptNameCache = [];
 let sidePromptSetNameCache = [];
 let activeSettingsPopupDialog = null;
+let narratorCastDrawer = null;
+let narratorCastDrawerDragState = null;
+let narratorGenerationSnapshot = null;
+let narratorGenerationType = null;
+let narratorGenerationChatKey = null;
 const pendingPassiveChecksByChat = new Map();
 const deferredPostSaveEffectsByChat = new Map();
 let plannerStatusPollHandle = null;
@@ -302,6 +320,7 @@ const DURABLE_SYNC_STATE_KEYS = [
     'autoSummaryNextPromptAt',
     'manualLorebook',
     'manualCharacterLorebooks',
+    'narratorMode',
     'contextSettingKey',
     'autoConsolidationLastPromptKey',
 ];
@@ -2158,6 +2177,196 @@ function getStmbSelectableLorebookNames() {
     return (Array.isArray(world_names) ? world_names : []).filter(name => !isReservedTemplateWorldName(name));
 }
 
+function getNarratorOrdinaryLorebookNames() {
+    return getStmbSelectableLorebookNames().filter(name => getLorebookStorageForRequest(name) === 'user');
+}
+
+function getCurrentNarratorConfig(sceneContext = buildStmbSceneContext()) {
+    const { config, changed } = ensureNarratorConfig(getStmbState(sceneContext));
+    if (changed) saveMetadataDebounced();
+    return config;
+}
+
+function isCurrentNarratorModeActive(sceneContext = buildStmbSceneContext()) {
+    return !sceneContext?.isGroupChat
+        && getModuleSettings().manualModeEnabled === true
+        && getCurrentNarratorConfig(sceneContext).enabled === true;
+}
+
+function getNarratorCanonicalLorebookName(sceneContext = buildStmbSceneContext()) {
+    return String(getStmbState(sceneContext).manualLorebook || '').trim();
+}
+
+function formatNarratorBindingIssue(issue) {
+    if (issue?.type === 'canonical') return translate('A cast member cannot use the omniscient Memory Book.');
+    if (issue?.type === 'duplicate') return translate('Every cast member must use a different Memory Book.');
+    return translate('A declared cast Memory Book is missing.');
+}
+
+function getNarratorDrawerPosition() {
+    const collapsed = getModuleSettings().narratorCastDrawerCollapsed !== false;
+    const width = collapsed ? 48 : 280;
+    const height = collapsed ? 48 : Math.min(420, Math.max(160, narratorCastDrawer?.offsetHeight || 260));
+    const source = getModuleSettings().narratorCastDrawerPosition || {};
+    return {
+        left: Math.round(Math.min(Math.max(Number(source.left) || window.innerWidth - width - 72, 12), Math.max(12, window.innerWidth - width - 12))),
+        top: Math.round(Math.min(Math.max(Number(source.top) || window.innerHeight - height - 170, 12), Math.max(12, window.innerHeight - height - 12))),
+    };
+}
+
+function applyNarratorDrawerPosition() {
+    if (!narratorCastDrawer) return;
+    const position = getNarratorDrawerPosition();
+    narratorCastDrawer.style.left = `${position.left}px`;
+    narratorCastDrawer.style.top = `${position.top}px`;
+}
+
+function beginNarratorDrawerDrag(event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    if (!narratorCastDrawer?.classList.contains('collapsed') && event.target.closest('button, input, label')) return;
+    const rect = narratorCastDrawer.getBoundingClientRect();
+    narratorCastDrawerDragState = {
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+    };
+    const move = moveEvent => {
+        if (!narratorCastDrawerDragState || !narratorCastDrawer) return;
+        if (Math.hypot(moveEvent.clientX - narratorCastDrawerDragState.startX, moveEvent.clientY - narratorCastDrawerDragState.startY) > 4) {
+            narratorCastDrawerDragState.moved = true;
+        }
+        narratorCastDrawer.style.left = `${Math.min(Math.max(moveEvent.clientX - narratorCastDrawerDragState.offsetX, 12), Math.max(12, window.innerWidth - narratorCastDrawer.offsetWidth - 12))}px`;
+        narratorCastDrawer.style.top = `${Math.min(Math.max(moveEvent.clientY - narratorCastDrawerDragState.offsetY, 12), Math.max(12, window.innerHeight - narratorCastDrawer.offsetHeight - 12))}px`;
+    };
+    const up = () => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        document.removeEventListener('pointercancel', up);
+        narratorCastDrawer.dataset.dragged = narratorCastDrawerDragState?.moved ? 'true' : 'false';
+        narratorCastDrawerDragState = null;
+        const drawerRect = narratorCastDrawer.getBoundingClientRect();
+        getModuleSettings().narratorCastDrawerPosition = { left: Math.round(drawerRect.left), top: Math.round(drawerRect.top) };
+        saveSettingsDebounced();
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
+}
+
+function refreshNarratorCastDrawer() {
+    if (!isCurrentNarratorModeActive()) {
+        narratorCastDrawer?.remove();
+        narratorCastDrawer = null;
+        return;
+    }
+    if (!narratorCastDrawer) {
+        narratorCastDrawer = document.createElement('section');
+        narratorCastDrawer.id = 'stmb-narrator-cast-drawer';
+        narratorCastDrawer.className = 'stmb_narrator_cast_drawer';
+        narratorCastDrawer.addEventListener('pointerdown', beginNarratorDrawerDrag);
+        document.body.appendChild(narratorCastDrawer);
+    }
+    const config = getCurrentNarratorConfig();
+    const collapsed = getModuleSettings().narratorCastDrawerCollapsed !== false;
+    const active = new Set(config.activeCastIds);
+    const members = config.members.filter(member => !member.retired);
+    narratorCastDrawer.classList.toggle('collapsed', collapsed);
+    narratorCastDrawer.innerHTML = collapsed
+        ? `<button type="button" class="stmb-narrator-cast-expand interactable" title="${escapeHtml(translate('Active Cast'))}"><i class="fa-solid fa-users" aria-hidden="true"></i><span>${active.size}</span></button>`
+        : `<header class="stmb-narrator-cast-header"><strong>${escapeHtml(translate('Active Cast'))} (${active.size})</strong><button type="button" class="menu_button stmb-narrator-cast-collapse" title="${escapeHtml(translate('Collapse'))}"><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button></header><div class="stmb-narrator-cast-list">${members.length ? members.map(member => `<label class="checkbox_label"><input type="checkbox" data-narrator-member-id="${escapeHtml(member.id)}" ${active.has(member.id) ? 'checked' : ''}><span>${escapeHtml(member.name)}</span></label>`).join('') : `<small class="opacity50p">${escapeHtml(translate('No cast members declared.'))}</small>`}</div><div class="buttons_block marginTop5 justifyCenter gap10px"><button type="button" class="menu_button interactable stmb-narrator-manage"><i class="fa-solid fa-gear" aria-hidden="true"></i> ${escapeHtml(translate('Manage Cast'))}</button></div>`;
+    narratorCastDrawer.querySelector('.stmb-narrator-cast-expand, .stmb-narrator-cast-collapse')?.addEventListener('click', event => {
+        event.stopPropagation();
+        if (narratorCastDrawer.dataset.dragged === 'true') {
+            narratorCastDrawer.dataset.dragged = 'false';
+            return;
+        }
+        getModuleSettings().narratorCastDrawerCollapsed = !collapsed;
+        saveSettingsDebounced();
+        refreshNarratorCastDrawer();
+    });
+    narratorCastDrawer.querySelector('.stmb-narrator-manage')?.addEventListener('click', event => {
+        event.stopPropagation();
+        void showNarratorCastManager();
+    });
+    narratorCastDrawer.querySelectorAll('[data-narrator-member-id]').forEach(checkbox => {
+        checkbox.addEventListener('change', () => {
+            const selected = Array.from(narratorCastDrawer.querySelectorAll('[data-narrator-member-id]:checked')).map(input => input.dataset.narratorMemberId);
+            setNarratorActiveCast(config, selected);
+            saveMetadataDebounced();
+            refreshNarratorCastDrawer();
+        });
+    });
+    applyLocale(narratorCastDrawer);
+    applyNarratorDrawerPosition();
+}
+
+function restoreNarratorCastFromTimeline(messageId = null) {
+    if (!isCurrentNarratorModeActive()) return false;
+    const message = messageId !== null && Number.isInteger(Number(messageId))
+        ? chat[Number(messageId)]
+        : [...chat].reverse().find(item => !item?.is_user && !item?.is_system && item?.extra?.STMemoryBooks?.narratorCast);
+    if (!message?.extra?.STMemoryBooks?.narratorCast) return false;
+    const changed = setNarratorActiveCast(getCurrentNarratorConfig(), getNarratorCastFromMessage(message));
+    if (changed) saveMetadataDebounced();
+    refreshNarratorCastDrawer();
+    return changed;
+}
+
+async function showNarratorCastManager() {
+    const config = getCurrentNarratorConfig();
+    const canonical = getNarratorCanonicalLorebookName();
+    const books = getNarratorOrdinaryLorebookNames().filter(name => name !== canonical);
+    const options = books.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+    const rows = config.members.map(member => `<div class="stmb-narrator-manager-row"><span>${escapeHtml(member.name)}</span><select class="text_pole" data-narrator-book-for="${escapeHtml(member.id)}"><option value="">${escapeHtml(translate('Select Memory Book'))}</option>${books.map(name => `<option value="${escapeHtml(name)}" ${name === member.lorebookName ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="menu_button" data-retire-narrator-member="${escapeHtml(member.id)}">${escapeHtml(translate(member.retired ? 'Restore' : 'Retire'))}</button></div>`).join('');
+    const content = DOMPurify.sanitize(`<h3>${escapeHtml(translate('Narrator Cast'))}</h3><p class="opacity50p">${escapeHtml(translate('Each declared character must use a unique Memory Book separate from the omniscient book.'))}</p><div class="stmb-narrator-manager-add"><input id="stmb-narrator-character-name" class="text_pole" type="text" placeholder="${escapeHtml(translate('Character name'))}"><select id="stmb-narrator-book" class="text_pole"><option value="">${escapeHtml(translate('Select Memory Book'))}</option>${options}</select><button type="button" id="stmb-narrator-add" class="menu_button">${escapeHtml(translate('Add'))}</button></div><div class="stmb-narrator-manager-list">${rows || `<small class="opacity50p">${escapeHtml(translate('No cast members declared.'))}</small>`}</div>`);
+    const popup = new Popup(content, POPUP_TYPE.TEXT, '', { wide: true, cancelButton: translate('Close'), okButton: false });
+    popup.dlg.addEventListener('change', event => {
+        const select = event.target.closest('[data-narrator-book-for]');
+        if (!select) return;
+        const member = config.members.find(item => item.id === select.dataset.narratorBookFor);
+        if (!member) return;
+        const previous = member.lorebookName;
+        member.lorebookName = String(select.value || '').trim();
+        const validation = validateNarratorMemberBinding(config, member, canonical, getNarratorOrdinaryLorebookNames());
+        if (!validation.valid) {
+            member.lorebookName = previous;
+            select.value = previous;
+            toastr.error(formatNarratorBindingIssue(validation.issue), 'STMB');
+            return;
+        }
+        saveMetadataDebounced();
+    });
+    popup.dlg.addEventListener('click', async event => {
+        const retireButton = event.target.closest('[data-retire-narrator-member]');
+        if (retireButton) {
+            const member = config.members.find(item => item.id === retireButton.dataset.retireNarratorMember);
+            if (!member) return;
+            member.retired = !member.retired;
+            setNarratorActiveCast(config, config.activeCastIds);
+            saveMetadataDebounced();
+            await popup.complete(POPUP_RESULT.CANCELLED);
+            refreshNarratorCastDrawer();
+            return showNarratorCastManager();
+        }
+        if (!event.target.closest('#stmb-narrator-add')) return;
+        const name = String(popup.dlg.querySelector('#stmb-narrator-character-name')?.value || '').trim();
+        const lorebookName = String(popup.dlg.querySelector('#stmb-narrator-book')?.value || '').trim();
+        if (!name || !lorebookName) return toastr.error(translate('Enter a character name and select a Memory Book.'), 'STMB');
+        if (config.members.some(member => member.name.localeCompare(name, undefined, { sensitivity: 'base' }) === 0)) return toastr.error(translate('That character is already declared.'), 'STMB');
+        const candidate = createNarratorMember({ name, lorebookName });
+        const validation = validateNarratorMemberBinding(config, candidate, canonical, getNarratorOrdinaryLorebookNames());
+        if (!validation.valid) return toastr.error(formatNarratorBindingIssue(validation.issue), 'STMB');
+        config.members.push(candidate);
+        saveMetadataDebounced();
+        await popup.complete(POPUP_RESULT.CANCELLED);
+        refreshNarratorCastDrawer();
+        return showNarratorCastManager();
+    });
+    await popup.show();
+}
+
 function getCurrentSoloCharacter(sceneContext = buildStmbSceneContext()) {
     if (sceneContext?.isGroupChat) return null;
     const characterKey = String(sceneContext?.chatRef?.avatarUrl || '').trim();
@@ -2199,7 +2408,12 @@ function renderCharacterMemoryBookLockButton({ characterKey, characterName, sele
 }
 
 function getManualPrimaryLorebookNames(sceneContext = buildStmbSceneContext()) {
-    if (!sceneContext?.isGroupChat) return getStmbSelectableLorebookNames();
+    if (!sceneContext?.isGroupChat) {
+        const narratorConfig = getCurrentNarratorConfig(sceneContext);
+        const assignedNarratorBooks = new Set(narratorConfig.members.map(member => member.lorebookName).filter(Boolean));
+        const candidates = narratorConfig.enabled ? getNarratorOrdinaryLorebookNames() : getStmbSelectableLorebookNames();
+        return candidates.filter(name => !assignedNarratorBooks.has(name));
+    }
     const state = getStmbState(sceneContext);
     const resolved = resolveManualGroupCharacterBindings({
         manualModeEnabled: true,
@@ -2258,6 +2472,18 @@ function renderManualGroupLorebookBindingsHtml(manualMode) {
         <small class="opacity50p" data-i18n="Select a lorebook for every group member. The same lorebook may be selected more than once.">Select a lorebook for every group member. The same lorebook may be selected more than once.</small>
         <div class="stmb-manual-group-lorebook-list">${rows}</div>
         <label class="checkbox_label marginTop5"><input type="checkbox" id="stmb-settings-auto-accept-group-participants" ${getModuleSettings().autoAcceptGroupParticipants ? 'checked' : ''}> <span data-i18n="Automatically accept detected memory participants">Automatically accept detected memory participants</span></label>
+    </div>`;
+}
+
+function renderNarratorSettingsHtml(sceneContext, manualMode) {
+    if (sceneContext?.isGroupChat) return '';
+    const config = getCurrentNarratorConfig(sceneContext);
+    return `<div class="world_entry_form_control stmb-narrator-settings">
+        <label class="checkbox_label"><input type="checkbox" id="stmb-settings-narrator-mode-enabled" ${manualMode && config.enabled ? 'checked' : ''}><span data-i18n="Enable Narrator Mode">Enable Narrator Mode</span></label>
+        <small class="opacity50p" data-i18n="Use one omniscient Memory Book and one unique Memory Book for each declared character.">Use one omniscient Memory Book and one unique Memory Book for each declared character.</small>
+        <div id="stmb-settings-manage-narrator-cast-container" class="buttons_block marginTop5 ${config.enabled ? '' : 'displayNone'}">
+            <button type="button" id="stmb-settings-manage-narrator-cast" class="menu_button interactable"><i class="fa-solid fa-users" aria-hidden="true"></i> <span data-i18n="Manage Cast">Manage Cast</span> (${config.members.filter(member => !member.retired).length})</button>
+        </div>
     </div>`;
 }
 
@@ -2472,6 +2698,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
                 <label class="checkbox_label" title="When enabled, automatically creates and binds a lorebook to the chat if none exists." data-i18n="[title]When enabled, automatically creates and binds a lorebook to the chat if none exists."><input type="checkbox" id="stmb-settings-auto-create-lorebook" ${moduleSettings.autoCreateLorebook ? 'checked' : ''} ${manualMode ? 'disabled' : ''}> <span title="When enabled, automatically creates and binds a lorebook to the chat if none exists." data-i18n="[title]When enabled, automatically creates and binds a lorebook to the chat if none exists.;Auto-create lorebook if none exists">Auto-create lorebook if none exists</span></label>
             </div>
             ${renderManualGroupLorebookBindingsHtml(manualMode)}
+            ${renderNarratorSettingsHtml(sceneContext, manualMode)}
             <div class="world_entry_form_control marginTop10 marginBot10">
                 <label for="stmb-settings-lorebook-name-template" title="Template for auto-created lorebook names. Supports {{char}}, {{user}}, {{chat}} placeholders." data-i18n="[title]STMemoryBooks_LorebookNameTemplateTooltip;Lorebook Name Template">Lorebook Name Template</label>
                 <input type="text" id="stmb-settings-lorebook-name-template" class="text_pole" value="${escapeHtml(String(moduleSettings.lorebookNameTemplate || 'LTM - {{char}} - {{chat}}'))}" ${moduleSettings.autoCreateLorebook ? '' : 'disabled'} title="Template for auto-created lorebook names. Supports {{char}}, {{user}}, {{chat}} placeholders." data-i18n="[title]STMemoryBooks_LorebookNameTemplateTooltip">
@@ -5949,6 +6176,11 @@ async function showMainEntryPopup(view = 'main', options = {}) {
             return;
         }
         if (target.matches('#stmb-settings-manual-mode-enabled')) {
+            if (!target.checked && getCurrentNarratorConfig().enabled) {
+                target.checked = true;
+                toastr.error(translate('Disable Narrator Mode before disabling Manual Lorebook Mode.'), 'STMB');
+                return;
+            }
             if (target.checked) {
                 const state = getStmbState();
                 const soloCharacter = getCurrentSoloCharacter();
@@ -6004,6 +6236,32 @@ async function showMainEntryPopup(view = 'main', options = {}) {
             void refreshStmbMacroCache();
             return;
         }
+        if (target.matches('#stmb-settings-narrator-mode-enabled')) {
+            const sceneContext = buildStmbSceneContext();
+            if (sceneContext.isGroupChat || (target.checked && !moduleSettings.manualModeEnabled)) {
+                target.checked = false;
+                toastr.error(translate('Enable Manual Lorebook Mode before enabling Narrator Mode.'), 'STMB');
+                return;
+            }
+            const canonical = getNarratorCanonicalLorebookName(sceneContext);
+            if (target.checked && (!canonical || getLorebookStorageForRequest(canonical) !== 'user')) {
+                target.checked = false;
+                toastr.error(translate('Select an ordinary omniscient Memory Book before enabling Narrator Mode.'), 'STMB');
+                return;
+            }
+            const config = getCurrentNarratorConfig(sceneContext);
+            const validation = validateNarratorBindings(config, canonical, getNarratorOrdinaryLorebookNames());
+            if (target.checked && !validation.valid) {
+                target.checked = false;
+                toastr.error(formatNarratorBindingIssue(validation.issues[0]), 'STMB');
+                return;
+            }
+            config.enabled = target.checked;
+            saveMetadataDebounced();
+            popup.dlg.querySelector('#stmb-settings-manage-narrator-cast-container')?.classList.toggle('displayNone', !config.enabled);
+            refreshNarratorCastDrawer();
+            return;
+        }
         if (target.matches('#stmb-settings-auto-accept-group-participants')) {
             moduleSettings.autoAcceptGroupParticipants = target.checked;
             persistSettings();
@@ -6051,6 +6309,11 @@ async function showMainEntryPopup(view = 'main', options = {}) {
             return;
         }
         if (target.matches('#stmb-settings-auto-create-lorebook')) {
+            if (target.checked && getCurrentNarratorConfig().enabled) {
+                target.checked = false;
+                toastr.error(translate('Disable Narrator Mode before enabling automatic lorebook creation.'), 'STMB');
+                return;
+            }
             moduleSettings.autoCreateLorebook = target.checked;
             if (target.checked) {
                 moduleSettings.manualModeEnabled = false;
@@ -6171,8 +6434,15 @@ async function showMainEntryPopup(view = 'main', options = {}) {
                 return;
             }
             delete getStmbState().manualLorebook;
+            getCurrentNarratorConfig().enabled = false;
             saveMetadataDebounced();
             void refreshStmbMacroCache();
+            refreshNarratorCastDrawer();
+            updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+            return;
+        }
+        if (target.closest('#stmb-settings-manage-narrator-cast')) {
+            await showNarratorCastManager();
             updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
             return;
         }
@@ -6590,6 +6860,9 @@ export function getStmbChatCopyLockContext() {
             lockedCharacterBindingKeys: Object.keys(snapshot.locksByMemberKey || {}),
         };
     }
+    if (isCurrentNarratorModeActive(sceneContext)) {
+        return { soloMemoryBookLocked: false, lockedCharacterBindingKeys: [] };
+    }
     return {
         soloMemoryBookLocked: Boolean(getCurrentManualLorebookResolution(sceneContext).lock),
         lockedCharacterBindingKeys: [],
@@ -6607,6 +6880,10 @@ export function hasStmbChatCopyBindings(metadata = chat_metadata, lockContext = 
         return hasValue(value.lorebookName) || hasValue(value.name);
     };
     if (Object.values(state.sidePromptLorebookOverrides || {}).some(hasValue)) return true;
+    if (state.narratorMode?.enabled === true && (
+        hasValue(state.manualLorebook)
+        || (state.narratorMode.members || []).some(member => hasValue(member?.lorebookName))
+    )) return true;
     if (!lockContext.soloMemoryBookLocked && ((!hasValue(state.manualLorebook) && hasValue(metadata?.world_info)) || hasValue(state.manualLorebook))) return true;
     const lockedKeys = new Set(lockContext.lockedCharacterBindingKeys || []);
     return Object.entries(state.manualCharacterLorebooks || {}).some(([key, value]) => !lockedKeys.has(key) && hasValue(value));
@@ -7062,7 +7339,57 @@ async function prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext
         stmbPromptTarget: 'group',
         characterFilterNames,
     };
-    return { ...snapshot, characterFilterNames };
+    return { mode: 'group', ...snapshot, characterFilterNames };
+}
+
+async function confirmNarratorSceneParticipants(compiledScene, snapshot) {
+    if (!compiledScene?.metadata?.narratorHasUntaggedMessages) return true;
+    const selected = new Set([
+        ...(compiledScene.metadata.narratorParticipantIds || []),
+        ...(snapshot.config?.activeCastIds || []),
+    ]);
+    const rows = snapshot.members.filter(member => !member.retired).map(member => `
+        <label class="checkbox_label"><input type="checkbox" class="stmb-narrator-participant" value="${escapeHtml(member.id)}" ${selected.has(member.id) ? 'checked' : ''}><span>${escapeHtml(member.name)}</span></label>`).join('');
+    const popup = new Popup(DOMPurify.sanitize(`
+        <h3>${escapeHtml(translate('Confirm Narrator scene cast'))}</h3>
+        <p>${escapeHtml(translate('This scene contains messages without Narrator cast metadata. Select the characters who were present; an empty selection means canonical-only.'))}</p>
+        <div class="world_entry_form_control flex-container flexFlowColumn">${rows}</div>
+    `), POPUP_TYPE.CONFIRM, '', { okButton: translate('Save'), cancelButton: translate('Cancel') });
+    if (await popup.show() !== POPUP_RESULT.AFFIRMATIVE) return false;
+    compiledScene.metadata.narratorParticipantIds = Array.from(popup.dlg.querySelectorAll('.stmb-narrator-participant:checked'))
+        .map(input => input.value);
+    return true;
+}
+
+async function prepareNarratorMemorySnapshot(compiledScene, sceneContext, { interactive = true } = {}) {
+    if (!isCurrentNarratorModeActive(sceneContext)) return null;
+    const config = structuredClone(getCurrentNarratorConfig(sceneContext));
+    const canonicalLorebookName = getNarratorCanonicalLorebookName(sceneContext);
+    if (!canonicalLorebookName || getLorebookStorageForRequest(canonicalLorebookName) !== 'user') {
+        throw new Error(translate('Narrator Mode requires an ordinary omniscient Memory Book.'));
+    }
+    const availableLorebooks = getNarratorOrdinaryLorebookNames();
+    const validation = validateNarratorBindings(config, canonicalLorebookName, availableLorebooks);
+    if (!validation.valid) throw new Error(formatNarratorBindingIssue(validation.issues[0]));
+    if (compiledScene?.metadata?.narratorHasUntaggedMessages) {
+        if (!interactive) {
+            throw new Error(translate('/stmb-catchup cannot process Narrator messages without cast metadata. Open the scene manually to confirm its cast.'));
+        }
+        if (!await confirmNarratorSceneParticipants(compiledScene, { config, members: config.members })) return null;
+    }
+    const participantIds = [...new Set((compiledScene?.metadata?.narratorParticipantIds || []).map(String).filter(Boolean))];
+    compiledScene.metadata = {
+        ...(compiledScene.metadata || {}),
+        stmbPromptTarget: 'group',
+        narratorParticipantIds: participantIds,
+    };
+    return {
+        mode: 'narrator',
+        canonicalLorebookName,
+        members: config.members,
+        bindings: Object.fromEntries(config.members.map(member => [member.id, member.lorebookName])),
+        participantIds,
+    };
 }
 
 function getFloatingButtonDeviceProfile() {
@@ -7830,6 +8157,7 @@ function handleLorebookReferencesUpdated(payloadOrOperation = {}, oldNameArg = '
             state.manualLorebook = migratedManualLorebook;
         } else {
             delete state.manualLorebook;
+            if (state.narratorMode && typeof state.narratorMode === 'object') state.narratorMode.enabled = false;
         }
         metadataChanged = true;
     }
@@ -7863,6 +8191,10 @@ function handleLorebookReferencesUpdated(payloadOrOperation = {}, oldNameArg = '
         }
     }
 
+    if (migrateNarratorLorebookReference(state.narratorMode, target, replacement)) {
+        metadataChanged = true;
+    }
+
     if (operation === 'rename') {
         for (const lock of Object.values(stmbSettings.characterMemoryBookLocks || {})) {
             if (String(lock?.lorebookName || '').trim() !== target) continue;
@@ -7879,6 +8211,7 @@ function handleLorebookReferencesUpdated(payloadOrOperation = {}, oldNameArg = '
         saveMetadataDebounced();
         void refreshStmbMacroCache();
     }
+    if (metadataChanged) refreshNarratorCastDrawer();
     if (settingsChanged) {
         stmbSettings = normalizeStmbSettings(stmbSettings);
         saveSettingsDebounced();
@@ -8767,6 +9100,14 @@ async function runConsolidationPreviewWorkflow({
 }
 
 function buildManualGroupCopyTargets(snapshot, primaryLorebookName) {
+    if (snapshot?.mode === 'narrator') {
+        return buildNarratorCopyTargets({ members: snapshot.members }, snapshot.participantIds).map(target => {
+            if (target.lorebookName === primaryLorebookName) {
+                throw new Error(translate('A cast member cannot use the omniscient Memory Book.'));
+            }
+            return target;
+        });
+    }
     const selectedNames = new Set(normalizeStmbCharacterFilterNames(snapshot?.characterFilterNames));
     const targetsByLorebook = new Map();
     for (const member of snapshot?.members || []) {
@@ -8793,14 +9134,15 @@ async function generateManualGroupCharacterMemories(groupMemory, compiledScene, 
     const memories = new Map();
     if (!profile?.useGroupSpecificPrompts) return memories;
     for (const target of targets) {
-        if (target.characterFilterNames.length !== 1 || target.members.length !== 1) continue;
+        if (target.members.length !== 1 || (Array.isArray(target.characterFilterNames) && target.characterFilterNames.length !== 1)) continue;
         const member = target.members[0];
         const characterScene = structuredClone(compiledScene);
         characterScene.metadata = {
             ...(characterScene.metadata || {}),
             characterName: member.name,
             stmbPromptTarget: 'character',
-            characterFilterNames: target.characterFilterNames,
+            characterFilterNames: target.characterFilterNames || [],
+            narratorParticipantIds: target.ownerIds || [],
         };
         const memory = await requestStructuredMemory(
             characterScene,
@@ -8821,17 +9163,20 @@ async function saveManualGroupMemoryObjects(groupMemory, characterMemories, snap
     const targets = buildManualGroupCopyTargets(snapshot, lorebookName);
     throwIfStmbAborted(signal);
     const result = await saveStmbGroupMemoryEntries({
+        routingMode: snapshot?.mode === 'narrator' ? 'narrator' : 'group',
         primary: {
             lorebookName,
             storage: getLorebookStorageForRequest(lorebookName),
             memoryObject: groupMemory,
-            characterFilterNames: snapshot.characterFilterNames,
+            characterFilterNames: snapshot.mode === 'narrator' ? [] : snapshot.characterFilterNames,
+            narratorParticipantIds: snapshot.mode === 'narrator' ? snapshot.participantIds : undefined,
         },
         targets: targets.map(target => ({
             lorebookName: target.lorebookName,
             storage: getLorebookStorageForRequest(target.lorebookName),
             memoryObject: characterMemories.get(target.lorebookName) || groupMemory,
-            characterFilterNames: target.characterFilterNames,
+            characterFilterNames: snapshot.mode === 'narrator' ? [] : target.characterFilterNames,
+            narratorOwnerIds: snapshot.mode === 'narrator' ? target.ownerIds : undefined,
             usePrimaryTitle: !characterMemories.has(target.lorebookName),
         })),
         sceneContext: buildMemorySceneData(compiledScene, range),
@@ -9220,9 +9565,7 @@ async function executeMemoryJob(job, context) {
     const jobContextSettingKey = Object.hasOwn(payload, 'contextSettingKey')
         ? payload.contextSettingKey
         : STMB_CONTEXT_NONE_KEY;
-    const manualGroupSnapshot = payload.manualGroupSnapshot && typeof payload.manualGroupSnapshot === 'object'
-        ? structuredClone(payload.manualGroupSnapshot)
-        : null;
+    const multiCharacterSnapshot = normalizeMultiCharacterSnapshot(payload);
 
     if (!Number.isInteger(Number(range?.sceneStart)) || !Number.isInteger(Number(range?.sceneEnd))) {
         throw new Error('Memory job is missing a valid scene range.');
@@ -9242,7 +9585,7 @@ async function executeMemoryJob(job, context) {
                 ? payload.memoryAssistanceLorebookNames
                 : [
                     lorebookName,
-                    ...(manualGroupSnapshot ? buildManualGroupCopyTargets(manualGroupSnapshot, lorebookName).map(target => target.lorebookName) : []),
+                    ...(multiCharacterSnapshot ? buildManualGroupCopyTargets(multiCharacterSnapshot, lorebookName).map(target => target.lorebookName) : []),
                 ];
             for (const assistanceJob of buildQueuedMemoryAssistanceJobs({
                 lorebookNames: savedLorebookNames,
@@ -9273,14 +9616,20 @@ async function executeMemoryJob(job, context) {
         : await captureStmbSceneRange(range, {
             skipSystemMessages,
             sceneContext: job?.sceneContext || buildStmbSceneContext(),
+            collectNarratorCast: multiCharacterSnapshot?.mode === 'narrator',
         });
     const compiledScene = sceneCapture?.compiledScene;
-    if (manualGroupSnapshot) {
+    if (multiCharacterSnapshot) {
         compiledScene.metadata = {
             ...(compiledScene.metadata || {}),
             groupName: compiledScene?.metadata?.groupName || job?.sceneContext?.groupName || '',
             stmbPromptTarget: 'group',
-            characterFilterNames: normalizeStmbCharacterFilterNames(manualGroupSnapshot.characterFilterNames),
+            characterFilterNames: multiCharacterSnapshot.mode === 'group'
+                ? normalizeStmbCharacterFilterNames(multiCharacterSnapshot.characterFilterNames)
+                : [],
+            narratorParticipantIds: multiCharacterSnapshot.mode === 'narrator'
+                ? [...(multiCharacterSnapshot.participantIds || [])]
+                : [],
         };
     }
 
@@ -9372,10 +9721,10 @@ async function executeMemoryJob(job, context) {
             }
         }
 
-        const groupTargets = manualGroupSnapshot
-            ? buildManualGroupCopyTargets(manualGroupSnapshot, lorebookName)
+        const groupTargets = multiCharacterSnapshot
+            ? buildManualGroupCopyTargets(multiCharacterSnapshot, lorebookName)
             : [];
-        const characterMemories = manualGroupSnapshot
+        const characterMemories = multiCharacterSnapshot
             ? await generateManualGroupCharacterMemories(
                 memoryCandidate,
                 compiledScene,
@@ -9391,8 +9740,8 @@ async function executeMemoryJob(job, context) {
             : new Map();
 
         context.setState('saving', { detail: lorebookName });
-        const saved = manualGroupSnapshot
-            ? await saveManualGroupMemoryObjects(memoryCandidate, characterMemories, manualGroupSnapshot, {
+        const saved = multiCharacterSnapshot
+            ? await saveManualGroupMemoryObjects(memoryCandidate, characterMemories, multiCharacterSnapshot, {
                 lorebookName,
                 range,
                 compiledScene,
@@ -9451,6 +9800,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
         sceneCapture = await captureStmbSceneRange(range, {
             skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
             sceneContext,
+            collectNarratorCast: isCurrentNarratorModeActive(sceneContext),
         });
     } catch (error) {
         const visibilityStats = getSceneMessageVisibilityStats(chat, range.sceneStart, range.sceneEnd);
@@ -9494,11 +9844,16 @@ async function executeMemoryCreationFromRange(range, options = {}) {
         return null;
     }
     const queuedProfile = await snapshotStmbProfileConnection(effectiveSettings.profileSettings);
-    let manualGroupSnapshot = null;
+    let multiCharacterSnapshot = null;
     if (sceneContext.isGroupChat) {
         const groupParticipantSnapshot = await prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext);
         if (!groupParticipantSnapshot) return null;
-        if (getModuleSettings().manualModeEnabled) manualGroupSnapshot = groupParticipantSnapshot;
+        if (getModuleSettings().manualModeEnabled) multiCharacterSnapshot = groupParticipantSnapshot;
+    } else if (isCurrentNarratorModeActive(sceneContext)) {
+        multiCharacterSnapshot = await prepareNarratorMemorySnapshot(compiledScene, sceneContext, {
+            interactive: options.source !== 'catchup',
+        });
+        if (!multiCharacterSnapshot) return null;
     }
     ensureStmbJobExecutorsRegistered();
     const memoryJobId = createMemoryJobId();
@@ -9520,7 +9875,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
     }
     const memoryAssistanceLorebookCandidates = [
         lorebookName,
-        ...(manualGroupSnapshot ? buildManualGroupCopyTargets(manualGroupSnapshot, lorebookName).map(target => target.lorebookName) : []),
+        ...(multiCharacterSnapshot ? buildManualGroupCopyTargets(multiCharacterSnapshot, lorebookName).map(target => target.lorebookName) : []),
     ];
     const memoryAssistanceJobs = buildQueuedMemoryAssistanceJobs({
         lorebookNames: memoryAssistanceLorebookCandidates,
@@ -9549,7 +9904,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
             contextSettingKey,
             keepSceneMarkers: Boolean(options.keepSceneMarkers),
             source: options.source || 'memory',
-            manualGroupSnapshot,
+            multiCharacterSnapshot,
             memoryAssistanceLorebookNames,
         },
     });
@@ -9643,7 +9998,7 @@ function buildGroupConsolidationGapMarkers(targetEntries, primaryEntries, member
     const label = names.length <= 1 ? (names[0] || 'this character') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
     return missing.map(number => ({
         __stmbGapMarker: true,
-        id: `gap-${members.map(member => member.key).join('-')}-${number}`,
+        id: `gap-${members.map(member => member.key || member.id).join('-')}-${number}`,
         order: number - 0.5,
         title: `Skipped summaries before ${String(number).padStart(3, '0')}`,
         content: `Some summaries are omitted because ${label} did not participate in them; treat this as a chronological gap, not missing context they should know.`,
@@ -9653,11 +10008,23 @@ function buildGroupConsolidationGapMarkers(targetEntries, primaryEntries, member
 /** Builds canonical group and character-lorebook consolidation work items. */
 async function buildGroupConsolidationWorkItems(primaryItem, targetTier, requiredMinimum) {
     const sceneContext = buildStmbSceneContext();
-    if (!getModuleSettings().manualModeEnabled || !sceneContext.isGroupChat) return [primaryItem];
-    const snapshot = validateManualGroupBindingSnapshot(getManualGroupBindingSnapshot(sceneContext));
+    const narratorMode = isCurrentNarratorModeActive(sceneContext);
+    if (!getModuleSettings().manualModeEnabled || (!sceneContext.isGroupChat && !narratorMode)) return [primaryItem];
+    const narratorConfig = narratorMode ? getCurrentNarratorConfig(sceneContext) : null;
+    if (narratorMode) {
+        const validation = validateNarratorBindings(narratorConfig, primaryItem.lorebookName, getNarratorOrdinaryLorebookNames());
+        if (!validation.valid) throw new Error(formatNarratorBindingIssue(validation.issues[0]));
+    }
+    const snapshot = narratorMode
+        ? {
+            mode: 'narrator',
+            members: structuredClone(narratorConfig.members),
+            bindings: Object.fromEntries(narratorConfig.members.map(member => [member.id, member.lorebookName])),
+        }
+        : validateManualGroupBindingSnapshot(getManualGroupBindingSnapshot(sceneContext));
     const itemsByLorebook = new Map();
     for (const member of snapshot.members) {
-        const lorebookName = String(snapshot.bindings[member.key] || '').trim();
+        const lorebookName = String(snapshot.bindings[member.key || member.id] || '').trim();
         if (!lorebookName || lorebookName === primaryItem.lorebookName) continue;
         if (!itemsByLorebook.has(lorebookName)) itemsByLorebook.set(lorebookName, { lorebookName, members: [] });
         itemsByLorebook.get(lorebookName).members.push(member);
@@ -9665,12 +10032,13 @@ async function buildGroupConsolidationWorkItems(primaryItem, targetTier, require
     if (itemsByLorebook.size === 0) return [primaryItem];
 
     const selectedNumbers = new Set(primaryItem.sourceEntries.map(getStmbCanonicalEntryNumber).filter(Number.isFinite));
-    const ready = [{ ...primaryItem, role: 'group', hasGroupCharacterTopology: true }];
+    const ready = [{ ...primaryItem, role: 'group', hasGroupCharacterTopology: true, routingMode: narratorMode ? 'narrator' : 'group' }];
     const skipped = [];
     for (const item of itemsByLorebook.values()) {
         const data = await loadWorldInfo(item.lorebookName) || { entries: {} };
         const realEntries = identifyEligibleSummarySourceEntries(data.entries || {}, targetTier)
-            .filter(entry => selectedNumbers.size === 0 || selectedNumbers.has(getStmbCanonicalEntryNumber(entry)));
+            .filter(entry => (selectedNumbers.size === 0 || selectedNumbers.has(getStmbCanonicalEntryNumber(entry)))
+                && (!narratorMode || item.members.some(member => (entry.STMB_narratorOwnerIds || []).includes(member.id))));
         const gapMarkers = buildGroupConsolidationGapMarkers(realEntries, primaryItem.sourceEntries, item.members);
         const workItem = {
             lorebookName: item.lorebookName,
@@ -9680,6 +10048,7 @@ async function buildGroupConsolidationWorkItems(primaryItem, targetTier, require
             members: item.members,
             role: 'character',
             hasGroupCharacterTopology: true,
+            routingMode: narratorMode ? 'narrator' : 'group',
         };
         if (realEntries.length >= requiredMinimum) ready.push(workItem);
         else skipped.push(workItem);
@@ -10270,18 +10639,22 @@ async function memoryAssistanceCommand(_, rangeText) {
         const compiledScene = (await captureStmbSceneRange(range, {
             skipSystemMessages: !moduleSettings.unhideBeforeMemory,
             sceneContext,
+            collectNarratorCast: isCurrentNarratorModeActive(sceneContext),
         }))?.compiledScene;
         if (!compiledScene) throw new Error(translate('Failed to run Memory Assistance.', 'STMemoryBooks_ClipReview_CommandFailed'));
 
-        let manualGroupSnapshot = null;
+        let multiCharacterSnapshot = null;
         if (sceneContext.isGroupChat && moduleSettings.manualModeEnabled) {
-            manualGroupSnapshot = await prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext);
-            if (!manualGroupSnapshot) return '';
+            multiCharacterSnapshot = await prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext);
+            if (!multiCharacterSnapshot) return '';
+        } else if (isCurrentNarratorModeActive(sceneContext)) {
+            multiCharacterSnapshot = await prepareNarratorMemorySnapshot(compiledScene, sceneContext);
+            if (!multiCharacterSnapshot) return '';
         }
 
         const lorebookNames = [
             lorebookName,
-            ...(manualGroupSnapshot ? buildManualGroupCopyTargets(manualGroupSnapshot, lorebookName).map(target => target.lorebookName) : []),
+            ...(multiCharacterSnapshot ? buildManualGroupCopyTargets(multiCharacterSnapshot, lorebookName).map(target => target.lorebookName) : []),
         ];
         const queuedProfile = await snapshotStmbProfileConnection(profile);
         const jobs = buildQueuedMemoryAssistanceJobs({
@@ -10360,6 +10733,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
         const contextSettingKey = getChatContextSettingKey();
 
         ensureStmbJobExecutorsRegistered();
+        const queuedJobs = [];
         for (let index = 0; index < chunks.length; index++) {
             const chunk = chunks[index];
             const range = {
@@ -10367,17 +10741,22 @@ async function stmbCatchupCommand(namedArgs = {}) {
                 sceneEnd: chunk.sceneEnd,
             };
             let compiledScene = null;
-            let manualGroupSnapshot = null;
-            if (sceneContext.isGroupChat) {
+            let multiCharacterSnapshot = null;
+            if (sceneContext.isGroupChat || isCurrentNarratorModeActive(sceneContext)) {
                 compiledScene = (await captureStmbSceneRange(range, {
                     skipSystemMessages,
                     sceneContext,
+                    collectNarratorCast: isCurrentNarratorModeActive(sceneContext),
                 }))?.compiledScene;
-                const groupParticipantSnapshot = await prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext);
-                if (!groupParticipantSnapshot) return '';
-                if (getModuleSettings().manualModeEnabled) manualGroupSnapshot = groupParticipantSnapshot;
+                if (sceneContext.isGroupChat) {
+                    const groupParticipantSnapshot = await prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext);
+                    if (!groupParticipantSnapshot) return '';
+                    if (getModuleSettings().manualModeEnabled) multiCharacterSnapshot = groupParticipantSnapshot;
+                } else {
+                    multiCharacterSnapshot = await prepareNarratorMemorySnapshot(compiledScene, sceneContext, { interactive: false });
+                }
             }
-            enqueueStmbJob({
+            queuedJobs.push({
                 type: 'memory',
                 range,
                 lorebookName,
@@ -10397,10 +10776,11 @@ async function stmbCatchupCommand(namedArgs = {}) {
                     skipSystemMessages,
                     tokenWarningThreshold: tokenThreshold,
                     compiledScene,
-                    manualGroupSnapshot,
+                    multiCharacterSnapshot,
                 },
             });
         }
+        queuedJobs.forEach(enqueueStmbJob);
 
         toastr.info(t`STMB catch-up queued: ${chunks.length} chunk${chunks.length === 1 ? '' : 's'}.`, 'STMB');
     } catch (error) {
@@ -10787,6 +11167,7 @@ function getCurrentRegenerationLorebookNames() {
         String(chat_metadata?.[METADATA_KEY] || '').trim(),
         String(resolveLorebookName() || '').trim(),
         ...Object.values(groupBindings).map(value => String(value || '').trim()),
+        ...getCurrentNarratorConfig(sceneContext).members.map(member => String(member.lorebookName || '').trim()),
     ]);
     names.delete('');
     return names;
@@ -10800,6 +11181,7 @@ async function findLinkedManualGroupLorebooks(lorebookName, entry) {
         String(entry?.STMB_canonicalLorebook || '').trim(),
         String(state.manualLorebook || '').trim(),
         ...Object.values(effectiveBindings).map(value => String(value || '').trim()),
+        ...getCurrentNarratorConfig().members.map(member => String(member.lorebookName || '').trim()),
     ]);
     candidates.delete('');
     candidates.delete(lorebookName);
@@ -10839,6 +11221,7 @@ async function buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eli
         saveFirst: true,
         skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
         sceneContext,
+        collectNarratorCast: Boolean(entry?.STMB_narratorOwnerIds || entry?.STMB_narratorParticipantIds),
     });
     const compiledScene = sceneCapture?.compiledScene;
     if (!compiledScene || !Array.isArray(compiledScene.messages) || compiledScene.messages.length === 0) {
@@ -10850,10 +11233,17 @@ async function buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eli
     }
     compiledScene.metadata = {
         ...(compiledScene.metadata || {}),
-        stmbPromptTarget: Array.isArray(entry?.characterFilter?.names) && entry.characterFilter.names.length !== 1 && sceneContext.isGroupChat
+        stmbPromptTarget: Array.isArray(entry?.STMB_narratorParticipantIds)
             ? 'group'
-            : 'character',
+            : Array.isArray(entry?.STMB_narratorOwnerIds)
+                ? 'character'
+                : Array.isArray(entry?.characterFilter?.names) && entry.characterFilter.names.length !== 1 && sceneContext.isGroupChat
+                    ? 'group'
+                    : 'character',
         characterFilterNames: normalizeStmbCharacterFilterNames(entry?.characterFilter?.names),
+        narratorParticipantIds: Array.isArray(entry?.STMB_narratorOwnerIds)
+            ? [...entry.STMB_narratorOwnerIds]
+            : [...(entry?.STMB_narratorParticipantIds || [])],
     };
     const effectiveSettings = await showAndGetMemorySettings(compiledScene, range, lorebookName);
     if (!effectiveSettings) return null;
@@ -11116,6 +11506,9 @@ export function initStmb() {
     initStmbMacros({
         getSettings: () => stmbSettings,
         getManualLorebook: () => resolveLorebookName(),
+        getAdditionalLorebooks: () => isCurrentNarratorModeActive()
+            ? getCurrentNarratorConfig().members.map(member => member.lorebookName).filter(Boolean)
+            : [],
     });
     ensurePlannerStatusUi();
     void pollCurrentChatPlannerState();
@@ -11162,9 +11555,16 @@ export function initStmb() {
         validateSceneMarkers();
         renderAllSceneButtons();
     }, 0);
-    window.addEventListener('resize', refreshFloatingJumpButtons);
+    window.addEventListener('resize', () => {
+        refreshFloatingJumpButtons();
+        applyNarratorDrawerPosition();
+    });
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
+        narratorGenerationSnapshot = null;
+        narratorGenerationType = null;
+        narratorGenerationChatKey = null;
+        refreshNarratorCastDrawer();
         hideFloatingClipButton();
         void pollCurrentChatPlannerState();
         flushDeferredPostSaveEffects().catch(error => {
@@ -11237,6 +11637,7 @@ export function initStmb() {
     eventSource.on(event_types.SETTINGS_LOADED, () => {
         refreshFloatingClipButtonSetting();
         refreshFloatingJumpButtons();
+        refreshNarratorCastDrawer();
         renderAllSceneButtons();
     });
 
@@ -11246,10 +11647,74 @@ export function initStmb() {
 
     eventSource.once(event_types.APP_READY, () => {
         refreshFloatingJumpButtons();
+        refreshNarratorCastDrawer();
     });
 
     eventSource.on(event_types.MESSAGE_DELETED, (deletedId) => {
         handleMessageDeletion(deletedId);
+        if (Number(deletedId) >= chat.length) restoreNarratorCastFromTimeline();
+        else refreshNarratorCastDrawer();
+    });
+
+    eventSource.on(event_types.MESSAGE_SENT, messageId => {
+        if (!isCurrentNarratorModeActive()) return;
+        const message = chat[Number(messageId)];
+        if (message) stampNarratorCast(message, getCurrentNarratorConfig().activeCastIds);
+    });
+
+    eventSource.on(event_types.MESSAGE_BEFORE_PERSIST, (messageId, type) => {
+        if (!narratorGenerationSnapshot || narratorGenerationChatKey !== getCurrentPlannerChatKey() || !isCurrentNarratorModeActive()) return;
+        const message = chat[Number(messageId)];
+        if (!message || message.is_system) return;
+        stampNarratorCast(message, narratorGenerationSnapshot, {
+            merge: type === 'continue' || narratorGenerationType === 'continue',
+        });
+    });
+
+    eventSource.on(event_types.MESSAGE_SWIPED, messageId => {
+        restoreNarratorCastFromTimeline(messageId);
+    });
+
+    eventSource.on(event_types.GENERATION_STARTED, (type, _options, dryRun) => {
+        if (dryRun || !isCurrentNarratorModeActive()) {
+            narratorGenerationSnapshot = null;
+            narratorGenerationType = null;
+            narratorGenerationChatKey = null;
+            return;
+        }
+        const sceneContext = buildStmbSceneContext();
+        const config = getCurrentNarratorConfig(sceneContext);
+        const canonical = getNarratorCanonicalLorebookName(sceneContext);
+        if (!canonical || getLorebookStorageForRequest(canonical) !== 'user') {
+            throw new Error(translate('Narrator Mode requires an ordinary omniscient Memory Book.'));
+        }
+        const validation = validateNarratorBindings(config, canonical, getNarratorOrdinaryLorebookNames());
+        if (!validation.valid) throw new Error(formatNarratorBindingIssue(validation.issues[0]));
+        narratorGenerationSnapshot = [...config.activeCastIds];
+        narratorGenerationType = type;
+        narratorGenerationChatKey = getStmbChatKey(sceneContext);
+    });
+
+    const clearNarratorGenerationSnapshot = () => {
+        narratorGenerationSnapshot = null;
+        narratorGenerationType = null;
+        narratorGenerationChatKey = null;
+    };
+    eventSource.on(event_types.GENERATION_ENDED, clearNarratorGenerationSnapshot);
+    eventSource.on(event_types.GENERATION_STOPPED, clearNarratorGenerationSnapshot);
+
+    eventSource.on(event_types.WORLDINFO_ENTRIES_LOADED, async ({ characterLore, entries }) => {
+        if (!narratorGenerationSnapshot || narratorGenerationChatKey !== getCurrentPlannerChatKey() || !isCurrentNarratorModeActive()) return;
+        const config = getCurrentNarratorConfig();
+        const members = config.members.filter(member => !member.retired && narratorGenerationSnapshot.includes(member.id));
+        const characterKeys = new Set((Array.isArray(characterLore) ? characterLore : []).map(entry => `${entry?.world}.${entry?.uid}`));
+        const entryKeys = new Set((Array.isArray(entries) ? entries : []).map(entry => `${entry?.world}.${entry?.uid}`));
+        const loaded = await Promise.all(members.map(async member => ({ member, data: await loadWorldInfo(member.lorebookName) })));
+        for (const { member, data } of loaded) {
+            if (!data?.entries) throw new Error(translate('A declared cast Memory Book could not be loaded.'));
+            mergeNarratorLorebookEntries(characterLore, data, member.lorebookName, characterKeys);
+            if (entries !== characterLore) mergeNarratorLorebookEntries(entries, data, member.lorebookName, entryKeys);
+        }
     });
 
     eventSource.on(event_types.CHAT_SAVED, (savedChat) => {

@@ -66,7 +66,7 @@ test('lists only ordinary lorebooks absent from every durable reference source',
     try {
         const boundNames = [
             'Global', 'Extra', 'LegacyGlobal', 'PersonaCurrent', 'PersonaSaved', 'CharacterLock', 'LegacyCharacterLock',
-            'CharacterPrimary', 'CharacterLinked', 'ChatPrimary', 'ChatManual', 'ChatCharacter', 'ChatSide',
+            'CharacterPrimary', 'CharacterLinked', 'ChatPrimary', 'ChatManual', 'ChatCharacter', 'ChatSide', 'ChatNarrator',
             'SqlitePrimary', 'LegacyGroup', 'PresetMember', 'HiddenBinding', 'HiddenTemplate', 'ContextSetting', 'SidePromptTarget',
             'ReservedTemplate',
         ];
@@ -103,6 +103,7 @@ test('lists only ordinary lorebooks absent from every durable reference source',
                 manualLorebook: 'ChatManual',
                 manualCharacterLorebooks: { bot: 'ChatCharacter' },
                 sidePromptLorebookOverrides: { prompt: 'ChatSide' },
+                narratorMode: { members: [{ id: 'narrator-member', lorebookName: 'ChatNarrator', retired: true }] },
             },
         });
         await migrateFromJsonlRecords([
