@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { shouldSkipUnstartedCharacterChatSave } from '../public/scripts/chat-persistence-policy.js';
+import { shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from '../public/scripts/chat-persistence-policy.js';
 
 test('zero-message temporary character chats always stay client-only', () => {
     assert.equal(shouldSkipUnstartedCharacterChatSave({
@@ -67,5 +67,32 @@ test('the policy does not suppress established character chats', () => {
         isTemporary: false,
         hasLocalPristineGreeting: false,
         messages: [{ is_user: false, mes: 'Imported assistant-only chat' }],
+    }), false);
+});
+
+test('first SQLite character-chat saves wait for and adopt the revision acknowledgement', () => {
+    assert.equal(shouldQueueAcknowledgedChatSave({
+        shouldTrackRevision: true,
+        isSqlite: false,
+        isTemporaryCharacterSave: true,
+        isPendingSoloCharacterSave: false,
+    }), true);
+    assert.equal(shouldQueueAcknowledgedChatSave({
+        shouldTrackRevision: true,
+        isSqlite: false,
+        isTemporaryCharacterSave: false,
+        isPendingSoloCharacterSave: true,
+    }), true);
+    assert.equal(shouldQueueAcknowledgedChatSave({
+        shouldTrackRevision: true,
+        isSqlite: true,
+        isTemporaryCharacterSave: false,
+        isPendingSoloCharacterSave: false,
+    }), true);
+    assert.equal(shouldQueueAcknowledgedChatSave({
+        shouldTrackRevision: false,
+        isSqlite: true,
+        isTemporaryCharacterSave: true,
+        isPendingSoloCharacterSave: true,
     }), false);
 });

@@ -279,7 +279,7 @@ import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
 import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter, shouldRestoreSwipeButtons } from './scripts/swipe-policy.js';
-import { shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence-policy.js';
+import { shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence-policy.js';
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
@@ -14117,7 +14117,12 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
     };
 
     try {
-        const shouldQueueRevision = shouldTrackRevision && currentChatFileNameLooksSqlite();
+        const shouldQueueRevision = shouldQueueAcknowledgedChatSave({
+            shouldTrackRevision,
+            isSqlite: currentChatFileNameLooksSqlite(),
+            isTemporaryCharacterSave,
+            isPendingSoloCharacterSave,
+        });
         const { response: result, responseData, errorData } = shouldQueueRevision
             ? await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId }) => ({
                 url: '/api/chats/save',
