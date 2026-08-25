@@ -164,15 +164,30 @@ export function getNarratorCastFromMessage(message) {
     return uniqueStrings(message?.extra?.STMemoryBooks?.[NARRATOR_MESSAGE_METADATA_KEY]?.memberIds);
 }
 
+/** Returns whether a message carries an explicit Narrator cast snapshot. */
+function hasNarratorCastMetadata(message) {
+    return isPlainObject(message?.extra?.STMemoryBooks?.[NARRATOR_MESSAGE_METADATA_KEY]);
+}
+
+/** Distinguishes actual system notices from ordinary messages hidden from the prompt. */
+function isNarratorSystemNotice(message) {
+    return Boolean(message?.is_system
+        && !hasNarratorCastMetadata(message)
+        && (cleanString(message?.extra?.type)
+            || Array.isArray(message?.extra?.tool_invocations)
+            || message?.extra?.uses_system_ui === true));
+}
+
 /** Resolves scene participants, treating fully tagged assistant messages as authoritative. */
 export function getNarratorSceneParticipants(messages) {
     const source = Array.isArray(messages) ? messages.filter(Boolean) : [];
-    const narratorMessages = source.filter(message => !message?.is_user && !message?.is_system);
-    const authoritative = narratorMessages.length > 0 ? narratorMessages : source;
+    const participantMessages = source.filter(message => !isNarratorSystemNotice(message));
+    const narratorMessages = participantMessages.filter(message => !message?.is_user);
+    const authoritative = narratorMessages.length > 0 ? narratorMessages : participantMessages;
     const hasUntaggedMessages = authoritative.some(message =>
-        !isPlainObject(message?.extra?.STMemoryBooks?.[NARRATOR_MESSAGE_METADATA_KEY]),
+        !hasNarratorCastMetadata(message),
     );
-    const continuityMessages = hasUntaggedMessages ? source : authoritative;
+    const continuityMessages = hasUntaggedMessages ? participantMessages : authoritative;
     return {
         memberIds: uniqueStrings(continuityMessages.flatMap(getNarratorCastFromMessage)),
         hasUntaggedMessages,

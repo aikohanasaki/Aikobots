@@ -1499,11 +1499,8 @@ export function compileScene(messages, sceneRequest, options = {}) {
         throw new Error(`Message IDs out of bounds: ${sceneStart}-${sceneEnd} (0-${Math.max(sourceMessages.length - 1, 0)})`);
     }
 
-    const narratorParticipants = options?.collectNarratorCast === true
-        ? getNarratorSceneParticipants(sourceMessages.slice(sceneStart, sceneEnd + 1))
-        : null;
-
     const sceneMessages = [];
+    const narratorSourceMessages = options?.collectNarratorCast === true ? [] : null;
     const participantFilterNames = new Set();
     let hiddenMessageCount = 0;
     let skippedMessageCount = 0;
@@ -1524,6 +1521,7 @@ export function compileScene(messages, sceneRequest, options = {}) {
             skippedMessageCount++;
             continue;
         }
+        narratorSourceMessages?.push(message);
 
         const compiledMessage = {
             id: index,
@@ -1545,6 +1543,9 @@ export function compileScene(messages, sceneRequest, options = {}) {
     if (sceneMessages.length === 0) {
         throw new Error(`No visible messages in range ${sceneStart}-${sceneEnd}`);
     }
+    const narratorParticipants = narratorSourceMessages
+        ? getNarratorSceneParticipants(narratorSourceMessages)
+        : null;
 
     const metadata = {
         sceneStart,

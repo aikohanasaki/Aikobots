@@ -84,6 +84,46 @@ test('scene compilation exposes Narrator routing metadata without adding it to s
     assert.equal(JSON.stringify(compiled.messages).includes('narratorCast'), false);
 });
 
+test('scene compilation derives Narrator participants from the messages it compiles', () => {
+    const tagged = (mes, id, overrides = {}) => ({
+        mes,
+        name: 'Narrator',
+        is_user: false,
+        extra: { STMemoryBooks: { narratorCast: { version: 1, memberIds: [id] } } },
+        ...overrides,
+    });
+    const messages = [
+        tagged('Visible reply', 'alice'),
+        { mes: '   ', name: 'Narrator', is_user: false },
+        tagged('Hidden reply', 'bob', { is_system: true }),
+        { mes: 'System notice', name: 'System', is_user: false, is_system: true, extra: { type: 'generic' } },
+    ];
+
+    const visibleOnly = compileScene(messages, { sceneStart: 0, sceneEnd: 3 }, { collectNarratorCast: true });
+    assert.deepEqual(visibleOnly.metadata.narratorParticipantIds, ['alice']);
+    assert.equal(visibleOnly.metadata.narratorHasUntaggedMessages, false);
+
+    const includingHidden = compileScene(messages, { sceneStart: 0, sceneEnd: 3 }, {
+        collectNarratorCast: true,
+        skipSystemMessages: false,
+    });
+    assert.deepEqual(includingHidden.metadata.narratorParticipantIds, ['alice', 'bob']);
+    assert.equal(includingHidden.metadata.narratorHasUntaggedMessages, false);
+    assert.deepEqual(includingHidden.messages.map(message => message.mes), ['Visible reply', 'Hidden reply', 'System notice']);
+
+    const legacyHiddenReply = compileScene([
+        tagged('Visible reply', 'alice'),
+        { mes: 'Legacy hidden reply', name: 'Narrator', is_user: false, is_system: true },
+    ], { sceneStart: 0, sceneEnd: 1 }, { collectNarratorCast: true, skipSystemMessages: false });
+    assert.equal(legacyHiddenReply.metadata.narratorHasUntaggedMessages, true);
+
+    const systemNoticeOnly = compileScene([
+        { mes: 'System notice', name: 'System', is_user: false, is_system: true, extra: { type: 'generic' } },
+    ], { sceneStart: 0, sceneEnd: 0 }, { collectNarratorCast: true, skipSystemMessages: false });
+    assert.deepEqual(systemNoticeOnly.metadata.narratorParticipantIds, []);
+    assert.equal(systemNoticeOnly.metadata.narratorHasUntaggedMessages, false);
+});
+
 test('copy targets, prompt lore deduplication, lifecycle repair, and summary propagation preserve IDs', () => {
     const config = {
         enabled: true,
