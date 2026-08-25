@@ -1379,9 +1379,10 @@ export function updateStmbJobsForLorebookReference({ operation, oldName, newName
         for (const runningJob of getRunningJobs(store)) {
             const runningJobLorebookName = String(runningJob?.lorebookName || '').trim();
             const runningPayloadLorebookName = String(runningJob?.payload?.lorebookName || '').trim();
+            const runningSnapshotMatches = migrateJobMultiCharacterSnapshot(runningJob, target, replacement, operation);
             const runningMatches = runningJobLorebookName === target
                 || runningPayloadLorebookName === target
-                || migrateJobMultiCharacterSnapshot(runningJob, target, replacement, operation);
+                || runningSnapshotMatches;
 
             if (runningMatches) {
                 if (operation === 'rename') {
@@ -1414,9 +1415,10 @@ export function updateStmbJobsForLorebookReference({ operation, oldName, newName
         for (const job of Array.isArray(store.queue) ? store.queue : []) {
             const jobLorebookName = String(job?.lorebookName || '').trim();
             const payloadLorebookName = String(job?.payload?.lorebookName || '').trim();
+            const snapshotMatches = migrateJobMultiCharacterSnapshot(job, target, replacement, operation);
             const matches = jobLorebookName === target
                 || payloadLorebookName === target
-                || migrateJobMultiCharacterSnapshot(job, target, replacement, operation);
+                || snapshotMatches;
 
             if (!matches) {
                 nextQueue.push(job);
