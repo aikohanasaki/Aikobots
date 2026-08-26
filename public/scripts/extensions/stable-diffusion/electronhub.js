@@ -1,3 +1,4 @@
+// Thanks to Emily (m98blackwidow on Discord) for pointing out Electron Hub's documented model-size metadata.
 export const ELECTRONHUB_IMAGE_SIZES = Object.freeze([
     '256x256',
     '512x512',
