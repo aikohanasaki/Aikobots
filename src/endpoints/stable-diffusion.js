@@ -959,6 +959,35 @@ huggingface.post('/generate', async (request, response) => {
 
 const electronhub = express.Router();
 
+/**
+ * Build a validated Electron Hub image-generation request.
+ * @param {any} body Incoming request body
+ * @returns {Record<string, string>|null} Electron Hub request body, or null when required fields are invalid
+ */
+export function getElectronHubImageRequest(body) {
+    const model = typeof body?.model === 'string' ? body.model.trim() : '';
+    const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
+    if (!model || !prompt.trim()) {
+        return null;
+    }
+
+    const requestBody = {
+        model,
+        prompt,
+        response_format: 'b64_json',
+    };
+
+    if (typeof body.size === 'string' && body.size.trim()) {
+        requestBody.size = body.size.trim();
+    }
+
+    if (typeof body.quality === 'string' && body.quality.trim()) {
+        requestBody.quality = body.quality.trim();
+    }
+
+    return requestBody;
+}
+
 electronhub.post('/models', async (request, response) => {
     try {
         const key = readSecret(request.user.directories, SECRET_KEYS.ELECTRONHUB);
@@ -1008,21 +1037,10 @@ electronhub.post('/generate', async (request, response) => {
             return response.sendStatus(400);
         }
 
-        let bodyParams = {
-            model: request.body.model,
-            prompt: request.body.prompt,
-            response_format: 'b64_json',
-        };
-
-        if (request.body.size) {
-            bodyParams.size = request.body.size;
+        const bodyParams = getElectronHubImageRequest(request.body);
+        if (!bodyParams) {
+            return response.sendStatus(400);
         }
-
-        if (request.body.quality) {
-            bodyParams.quality = request.body.quality;
-        }
-
-        console.debug('Electron Hub request:', bodyParams);
 
         const result = await fetch('https://api.electronhub.ai/v1/images/generations', {
             method: 'POST',
@@ -1036,8 +1054,7 @@ electronhub.post('/generate', async (request, response) => {
         });
 
         if (!result.ok) {
-            const errorText = await result.text();
-            console.warn('Electron Hub returned an error.', result.status, result.statusText, errorText);
+            console.warn('Electron Hub returned an error.', result.status, result.statusText);
             return response.sendStatus(500);
         }
 
@@ -1045,42 +1062,16 @@ electronhub.post('/generate', async (request, response) => {
         const data = await result.json();
         const image = data?.data?.[0]?.b64_json;
 
-        if (!image) {
+        if (typeof image !== 'string' || !image) {
             console.warn('Electron Hub returned invalid data.');
             return response.sendStatus(500);
         }
 
         return response.send({ image });
     } catch (error) {
-        console.error(error);
+        console.error('Electron Hub image generation failed:', error instanceof Error ? error.message : 'Unknown error.');
         return response.sendStatus(500);
     }
-});
-
-electronhub.post('/sizes', async (request, response) => {
-    const result = await fetch(`https://api.electronhub.ai/v1/models/${request.body.model}`, {
-        method: 'GET',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-    });
-
-    if (!result.ok) {
-        console.warn('Electron Hub returned an error.');
-        return response.sendStatus(500);
-    }
-
-    /** @type {any} */
-    const data = await result.json();
-
-    const sizes = data.sizes;
-
-    if (!sizes) {
-        console.warn('Electron Hub returned invalid data.');
-        return response.sendStatus(500);
-    }
-
-    return response.send({ sizes });
 });
 
 const nanogpt = express.Router();
