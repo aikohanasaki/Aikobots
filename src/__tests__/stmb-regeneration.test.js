@@ -12,7 +12,10 @@ import {
     buildRegenerationIndexes,
     getRegenerationEligibility,
     getRegenerationSequenceNumber,
+    hasLinkedManualGroupMetadata,
     hashRegenerationEntry,
+    isCanonicalLinkedGroupMemory,
+    isLinkedManualGroupEntry,
     getSidePromptRegenerationSnapshot,
     selectPreviousRegenerationMemories,
 } from '../../public/scripts/stmb-regeneration.js';
@@ -59,6 +62,27 @@ describe('STMB regeneration eligibility and replacement', () => {
         });
         expect(() => buildRegenerationJobInput({ lorebookName: 'Book' })).toThrow(/entry UID/);
         expect(() => buildRegenerationJobInput({ lorebookName: 'Book', entryUid: '8' })).toThrow(/chat identity/);
+    });
+
+    it('stores only linked regeneration identities and removes duplicate targets', () => {
+        const job = buildRegenerationJobInput({
+            lorebookName: 'Group Book',
+            entryUid: '10',
+            sceneContext: {
+                chatId: 'chat-1',
+                groupId: 'group-1',
+                chatRef: { type: 'group', chatId: 'chat-1' },
+            },
+            linkedTargets: [
+                { lorebookName: 'Alice Book', entryUid: 20, content: 'must not persist' },
+                { lorebookName: 'Alice Book', entryUid: 20 },
+                { lorebookName: 'Group Book', entryUid: 10 },
+            ],
+        });
+        expect(job.payload).toEqual({
+            entryUid: '10',
+            linkedTargets: [{ lorebookName: 'Alice Book', entryUid: '20' }],
+        });
     });
 
     it('stores only a validated group chat identity', () => {
@@ -255,6 +279,32 @@ describe('STMB regeneration eligibility and replacement', () => {
 });
 
 describe('STMB regeneration presets and metadata', () => {
+    it('identifies canonical group memories and only their matching linked copies', () => {
+        const canonical = memory(10, 1, {
+            STMB_canonical: true,
+            STMB_canonicalLorebook: 'Group Book',
+            STMB_canonicalEntryUid: 10,
+            STMB_inclusionGroup: 'Group-Memory-001',
+        });
+        const linked = memory(20, 1, {
+            STMB_canonical: false,
+            STMB_canonicalLorebook: 'Group Book',
+            STMB_canonicalEntryUid: 10,
+            STMB_inclusionGroup: 'Group-Memory-001',
+        });
+        const conflicting = memory(30, 1, {
+            STMB_canonicalLorebook: 'Other Group',
+            STMB_canonicalEntryUid: 10,
+            STMB_inclusionGroup: 'Group-Memory-001',
+        });
+
+        expect(hasLinkedManualGroupMetadata(canonical)).toBe(true);
+        expect(isCanonicalLinkedGroupMemory(canonical, 'Group Book')).toBe(true);
+        expect(isCanonicalLinkedGroupMemory(linked, 'Alice Book')).toBe(false);
+        expect(isLinkedManualGroupEntry(canonical, linked, 'Group Book')).toBe(true);
+        expect(isLinkedManualGroupEntry(canonical, conflicting, 'Group Book')).toBe(false);
+    });
+
     it('normalizes the flat regeneration response and reserves its preset key', () => {
         expect(CONSOLIDATION_REGENERATION_PRESET_KEY).toBe('arc_regenerate');
         expect(parseSummaryJsonResponse('{"title":"Arc","content":"Body","keywords":["hook"]}', {

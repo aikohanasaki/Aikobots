@@ -939,7 +939,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.unhiddenEntriesCount = moduleSettings.unhiddenEntriesCount === undefined || moduleSettings.unhiddenEntriesCount === null
         ? defaults.moduleSettings.unhiddenEntriesCount
         : moduleSettings.unhiddenEntriesCount;
-    moduleSettings.autoSummaryInterval = moduleSettings.autoSummaryInterval === undefined || Number(moduleSettings.autoSummaryInterval) < 10
+    moduleSettings.autoSummaryInterval = moduleSettings.autoSummaryInterval === undefined || Number(moduleSettings.autoSummaryInterval) < 5
         ? defaults.moduleSettings.autoSummaryInterval
         : Math.trunc(Number(moduleSettings.autoSummaryInterval));
     moduleSettings.autoSummaryBuffer = Number.isFinite(Number(moduleSettings.autoSummaryBuffer)) ? Math.max(0, Math.trunc(Number(moduleSettings.autoSummaryBuffer))) : defaults.moduleSettings.autoSummaryBuffer;
@@ -1452,6 +1452,31 @@ export function resolveStmbGroupParticipantFilterName(message, resolver) {
     const speakerName = String(message?.name || '').trim();
     const matches = speakerName ? resolver.avatarsBySpeaker.get(speakerName) : null;
     return matches?.size === 1 ? getStmbCharacterFilterName(matches.values().next().value) : '';
+}
+
+/** Chooses detected group participants and whether the user must confirm them. */
+export function getStmbGroupParticipantConfirmationPolicy(detectedNames, allNames, autoAccept) {
+    const detected = normalizeStmbCharacterFilterNames(detectedNames);
+    const available = normalizeStmbCharacterFilterNames(allNames);
+    const detectionFailed = detected.length === 0;
+
+    return {
+        detectionFailed,
+        selectedNames: detectionFailed ? available : detected,
+        requiresConfirmation: detectionFailed || autoAccept !== true,
+    };
+}
+
+/** Returns the stable error code for a truncated provider response, or an empty string. */
+export function getStmbProviderTruncationCode(providerResponse) {
+    const finishReason = providerResponse?.choices?.[0]?.finish_reason
+        || providerResponse?.finish_reason
+        || providerResponse?.stop_reason;
+    const normalizedFinishReason = typeof finishReason === 'string' ? finishReason.toLowerCase() : '';
+    if (normalizedFinishReason.includes('length') || normalizedFinishReason.includes('max')) {
+        return 'PROVIDER_TRUNCATION';
+    }
+    return providerResponse?.truncated === true ? 'PROVIDER_TRUNCATION_FLAG' : '';
 }
 
 /**

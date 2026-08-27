@@ -18,6 +18,7 @@ import {
     getActiveStmbProfile,
     readSidePromptCheckpoint,
     resolveAfterMemorySidePromptSetKey,
+    getStmbProviderTruncationCode,
     STMB_METADATA_KEY,
 } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
@@ -528,6 +529,15 @@ async function runTextGeneration(prompt, settings, profile = null, signal = null
             settings?.moduleSettings?.maxTokens,
         ),
     }, { signal, onRateLimitWait });
+    const truncationCode = getStmbProviderTruncationCode(result?.providerResponse);
+    if (truncationCode) {
+        const message = truncationCode === 'PROVIDER_TRUNCATION'
+            ? translate('Model response appears truncated (provider finish reason). Please increase Max Response Length.')
+            : translate('Model response appears truncated (provider flag). Please increase Max Response Length.');
+        const error = new Error(message);
+        error.code = truncationCode;
+        throw error;
+    }
     const cleanedText = removeReasoningFromString(String(result?.text ?? ''));
     return applyStmbIncomingRegex(cleanedText);
 }

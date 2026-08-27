@@ -532,13 +532,16 @@ export async function showAutoConsolidationPromptPopup(data = {}) {
 export async function showSummaryConsolidationOptionsPopup(data = {}) {
     const targetTier = Number(data?.initialTargetTier ?? 1);
     const tierOptions = Array.isArray(data?.tierOptions) ? data.tierOptions : [];
-    const tierConfigs = Array.isArray(data?.tierConfigs) ? data.tierConfigs : [];
-    const tierConfigMap = new Map(tierConfigs.map(config => [Number(config?.value), config]));
+    let tierConfigs = Array.isArray(data?.tierConfigs) ? data.tierConfigs : [];
+    let tierConfigMap = new Map(tierConfigs.map(config => [Number(config?.value), config]));
     let presets = Array.isArray(data?.presets) ? data.presets : [];
+    const lorebooks = Array.isArray(data?.lorebooks) ? data.lorebooks : [];
+    let selectedLorebookName = String(data?.selectedLorebookName || '').trim();
     const initialEntrySettings = data?.summaryEntrySettings && typeof data.summaryEntrySettings === 'object'
         ? data.summaryEntrySettings
         : {};
-    const hasLorebook = data?.hasLorebook !== false;
+    let hasLorebook = data?.hasLorebook !== false;
+    let isLorebookLoading = false;
     const readInt = (value, fallback) => {
         const parsed = Number(value);
         if (Number.isFinite(parsed)) {
@@ -568,9 +571,17 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
             ${hasLorebook ? '' : `
                 <div class="world_entry_form_control opacity70p">
                     <div data-i18n="No memory lorebook is currently assigned.">No memory lorebook is currently assigned.</div>
-                    <div data-i18n="You can review consolidation options, but Run will still require an assigned lorebook.">You can review consolidation options, but Run will still require an assigned lorebook.</div>
+                    <div data-i18n="Choose a Memory Book below to run consolidation without changing the chat assignment.">Choose a Memory Book below to run consolidation without changing the chat assignment.</div>
                 </div>
             `}
+            <div class="world_entry_form_control">
+                <label for="stmb-summary-lorebook" data-i18n="Memory Book to consolidate">Memory Book to consolidate</label>
+                <select id="stmb-summary-lorebook" class="text_pole" style="width:100%">
+                    <option value="" ${selectedLorebookName ? '' : 'selected'} disabled data-i18n="Select a Memory Book...">Select a Memory Book...</option>
+                    ${lorebooks.map(name => `<option value="${escapeHtml(String(name))}" ${String(name) === selectedLorebookName ? 'selected' : ''}>${escapeHtml(String(name))}</option>`).join('')}
+                </select>
+                <small class="opacity70p" data-i18n="Choose the Memory Book whose eligible entries should be consolidated. This choice applies only to this run.">Choose the Memory Book whose eligible entries should be consolidated. This choice applies only to this run.</small>
+            </div>
             <div class="world_entry_form_control">
                 <label for="stmb-summary-tier" data-i18n="Summary Tier">Summary Tier</label>
                 <select id="stmb-summary-tier" class="text_pole" style="width:100%">
@@ -705,6 +716,7 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
                 toastr.error(translate('Assign a lorebook before running consolidation'), 'STMB');
                 return false;
             }
+            if (isLorebookLoading) return false;
 
             const currentTier = Number(popupDialog.querySelector('#stmb-summary-tier')?.value ?? targetTier);
             const config = getTierConfig(currentTier);
@@ -796,14 +808,16 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
             tipEl.textContent = t`Tip: uncheck ${String(config.sourcePlural || 'source entries').toLowerCase()} that should not be included.`;
         }
         if (statusEl) {
-            statusEl.textContent = t`Need ${requiredMin} eligible ${String(config.sourcePlural || 'source entries').toLowerCase()}, have ${(config.candidates || []).length}.`;
-            statusEl.className = (config.candidates || []).length < requiredMin
+            statusEl.textContent = isLorebookLoading
+                ? translate('Loading Memory Book...')
+                : t`Need ${requiredMin} eligible ${String(config.sourcePlural || 'source entries').toLowerCase()}, have ${(config.candidates || []).length}.`;
+            statusEl.className = !isLorebookLoading && (config.candidates || []).length < requiredMin
                 ? 'info-block warning marginBot5'
                 : 'info-block marginBot5';
         }
         if (listEl) {
             listEl.innerHTML = '';
-            for (const candidate of config.candidates || []) {
+            for (const candidate of isLorebookLoading ? [] : (config.candidates || [])) {
                 const row = document.createElement('label');
                 row.className = 'flex-container flexGap10';
                 row.style.alignItems = 'center';
@@ -816,16 +830,48 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
         const selectedCount = Array.from(dialog?.querySelectorAll('.stmb-summary-source-item') || []).filter(input => input.checked).length;
         if (popup.okButton) {
             const locked = selectedCount < requiredMin;
-            const disabled = locked || !hasLorebook;
+            const disabled = isLorebookLoading || locked || !hasLorebook;
             popup.okButton.disabled = disabled;
             popup.okButton.style.opacity = disabled ? '0.5' : '';
-            popup.okButton.title = !hasLorebook
-                ? 'Assign a lorebook before running consolidation'
-                : locked
-                    ? `Need at least ${requiredMin} selected ${String(config.sourcePlural || 'source entries').toLowerCase()}`
-                    : '';
+            popup.okButton.title = isLorebookLoading
+                ? translate('Loading Memory Book...')
+                : !hasLorebook
+                    ? 'Assign a lorebook before running consolidation'
+                    : locked
+                        ? `Need at least ${requiredMin} selected ${String(config.sourcePlural || 'source entries').toLowerCase()}`
+                        : '';
         }
     };
+    let lorebookLoadSequence = 0;
+    dialog?.querySelector('#stmb-summary-lorebook')?.addEventListener('change', async event => {
+        const nextLorebookName = String(event.target.value || '').trim();
+        if (!nextLorebookName || nextLorebookName === selectedLorebookName || typeof data?.onLorebookChange !== 'function') return;
+
+        const previousLorebookName = selectedLorebookName;
+        const loadSequence = ++lorebookLoadSequence;
+        isLorebookLoading = true;
+        renderTierState();
+        try {
+            const nextState = await data.onLorebookChange(nextLorebookName);
+            if (loadSequence !== lorebookLoadSequence) return;
+            tierConfigs = Array.isArray(nextState?.tierConfigs) ? nextState.tierConfigs : [];
+            tierConfigMap = new Map(tierConfigs.map(config => [Number(config?.value), config]));
+            selectedLorebookName = nextLorebookName;
+            hasLorebook = nextState?.hasLorebook !== false;
+        } catch {
+            if (loadSequence !== lorebookLoadSequence) return;
+            event.target.value = previousLorebookName;
+            toastr.error(
+                translate('Could not load Memory Book "{{name}}".').replace('{{name}}', nextLorebookName),
+                'STMB',
+            );
+        } finally {
+            if (loadSequence === lorebookLoadSequence) {
+                isLorebookLoading = false;
+                renderTierState();
+            }
+        }
+    });
     const refreshPresetOptions = (selectedKey = null) => {
         const presetSelect = dialog?.querySelector('#stmb-summary-preset');
         if (!presetSelect) {
@@ -914,6 +960,7 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
 
     return {
         action: 'run',
+        lorebookName: selectedLorebookName,
         targetTier: getCurrentTier(),
         presetKey: getCurrentPresetKey(),
         promptText: getSelectedPresetPromptText(getCurrentPresetKey()),

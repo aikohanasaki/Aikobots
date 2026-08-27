@@ -53,17 +53,30 @@ function normalizeRegenerationSceneContext(sceneContext) {
 }
 
 /** Builds the content-free queue record for one regeneration request. */
-export function buildRegenerationJobInput({ lorebookName, entryUid, sceneContext } = {}) {
+export function buildRegenerationJobInput({ lorebookName, entryUid, sceneContext, linkedTargets = [] } = {}) {
     const normalizedLorebookName = String(lorebookName || '').trim();
     const normalizedEntryUid = String(entryUid || '').trim();
     if (!normalizedLorebookName || !normalizedEntryUid) {
         throw new Error('Memory regeneration requires a lorebook and entry UID.');
     }
+    const normalizedLinkedTargets = [];
+    const seenTargets = new Set([`${normalizedLorebookName}\u0000${normalizedEntryUid}`]);
+    for (const target of Array.isArray(linkedTargets) ? linkedTargets : []) {
+        const targetLorebookName = String(target?.lorebookName || '').trim();
+        const targetEntryUid = String(target?.entryUid || '').trim();
+        const targetKey = `${targetLorebookName}\u0000${targetEntryUid}`;
+        if (!targetLorebookName || !targetEntryUid || seenTargets.has(targetKey)) continue;
+        seenTargets.add(targetKey);
+        normalizedLinkedTargets.push({ lorebookName: targetLorebookName, entryUid: targetEntryUid });
+    }
+    const payload = { entryUid: normalizedEntryUid };
+    if (normalizedLinkedTargets.length > 0) payload.linkedTargets = normalizedLinkedTargets;
+
     return {
         type: 'regeneration',
         lorebookName: normalizedLorebookName,
         sceneContext: normalizeRegenerationSceneContext(sceneContext),
-        payload: { entryUid: normalizedEntryUid },
+        payload,
     };
 }
 
@@ -254,6 +267,46 @@ export function getRegenerationEligibility(entry, lorebookData, indexes = null) 
         return { eligible: false, reason: 'missing-range', tier: 0, sequenceNumber };
     }
     return { eligible: true, kind: 'memory', tier: 0, sequenceNumber, sceneStart, sceneEnd };
+}
+
+/** Returns whether an entry is the canonical root of a linked group memory. */
+export function isCanonicalLinkedGroupMemory(entry, lorebookName) {
+    if (entry?.[STMB_MANAGED_FLAG] !== true || getEntrySummaryTier(entry) !== 0) return false;
+    if (!hasLinkedManualGroupMetadata(entry)) return false;
+    if (entry.STMB_canonical === true) return true;
+    if (entry.STMB_canonical === false) return false;
+
+    const canonicalLorebook = String(entry.STMB_canonicalLorebook || '').trim();
+    return Boolean(canonicalLorebook && canonicalLorebook === String(lorebookName || '').trim());
+}
+
+/** Returns whether a candidate is a linked copy of the selected group memory. */
+export function isLinkedManualGroupEntry(sourceEntry, candidateEntry, sourceLorebookName) {
+    const inclusionGroup = String(sourceEntry?.STMB_inclusionGroup || '').trim();
+    const canonicalUid = String(sourceEntry?.STMB_canonicalEntryUid ?? sourceEntry?.uid ?? '').trim();
+    const canonicalLorebook = String(sourceEntry?.STMB_canonicalLorebook || sourceLorebookName || '').trim();
+    const candidateCanonicalUid = String(candidateEntry?.STMB_canonicalEntryUid ?? '').trim();
+    const candidateCanonicalLorebook = String(candidateEntry?.STMB_canonicalLorebook || '').trim();
+    const hasCanonicalIdentity = Boolean(
+        canonicalUid && canonicalLorebook && candidateCanonicalUid && candidateCanonicalLorebook,
+    );
+    const sameCanonicalIdentity = hasCanonicalIdentity
+        && candidateCanonicalUid === canonicalUid
+        && candidateCanonicalLorebook === canonicalLorebook;
+
+    if (inclusionGroup && String(candidateEntry?.STMB_inclusionGroup || '').trim() === inclusionGroup) {
+        return hasCanonicalIdentity ? sameCanonicalIdentity : true;
+    }
+    return sameCanonicalIdentity;
+}
+
+/** Returns whether an entry carries linked manual-group identity metadata. */
+export function hasLinkedManualGroupMetadata(entry) {
+    return Boolean(
+        entry?.STMB_inclusionGroup
+        || entry?.STMB_canonicalLorebook
+        || entry?.STMB_canonicalEntryUid !== undefined,
+    );
 }
 
 /** Selects base memories preceding the target without including later entries. */
