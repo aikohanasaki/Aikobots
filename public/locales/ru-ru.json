@@ -4816,6 +4816,7 @@
     "Choose which summary tiers should trigger the confirmation prompt.": "Выберите, какие уровни сводки должны вызывать подтверждение.",
     "Custom Title Format...": "Пользовательский формат заголовка...",
     "Enter custom format": "Введите пользовательский формат",
+    "STMemoryBooks_TitleFormatTooltip": "Используйте [0], [00], [000] для простой автоматической нумерации; используйте [[0]], [[00]], [[000]], чтобы сохранить квадратные скобки. Доступно: {{title}}, {{scene}}, {{char}}, {{groupname}}, {{present}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}.",
     "Profile Settings:": "Настройки профиля:",
     "View Prompt": "Просмотр Промпта",
     "New Profile": "Новый профиль",

@@ -3,9 +3,11 @@ import { describe, expect, it } from '@jest/globals';
 import {
     compileScene,
     createManagedLorebookEntryData,
+    formatMemoryTitle,
     getStmbCharacterFilterName,
     normalizeStmbSettings,
     resolveAfterMemorySidePromptSetKey,
+    validateTitleFormat,
 } from '../../public/scripts/stmb-core.js';
 import {
     buildBriefsFromEntries,
@@ -39,6 +41,7 @@ describe('STMB group participant capture', () => {
         expect(scene.messages[0].original_avatar).toBe('alice.png');
         expect(scene.metadata.characterFilterNames).toEqual(['alice', 'bob']);
         expect(scene.metadata.groupName).toBe('Party');
+        expect(scene.metadata.presentCharacterNames).toEqual(['Renamed Alice', 'Bob']);
     });
 
     it('skips ambiguous display-name matches and deduplicates participant filters', () => {
@@ -65,8 +68,10 @@ describe('STMB group participant capture', () => {
         }, {
             sceneStart: 1,
             sceneEnd: 4,
+            groupName: 'Party',
+            presentCharacterNames: ['Alice', 'Bob'],
             characterFilterNames: ['alice', 'bob'],
-        }, { titleFormat: '[000] - {{title}}' }, 3, {
+        }, { titleFormat: '[000] - {{groupname}} - {{present}} - {{title}}' }, 3, {
             inclusionGroup: 'Party-Memory-003',
             entryMetadata: {
                 STMB_canonical: true,
@@ -77,8 +82,11 @@ describe('STMB group participant capture', () => {
         });
 
         expect(entry.characterFilter).toEqual({ isExclude: false, names: ['alice', 'bob'], tags: [] });
+        expect(entry.comment).toBe('003 - Party - Alice, Bob - Arrival');
         expect(entry.group).toBe('Party-Memory-003');
         expect(entry.STMB_canonicalMemoryNumber).toBe(3);
+        expect(validateTitleFormat('{{groupname}} - {{present}} - {{title}}').warnings).toEqual([]);
+        expect(formatMemoryTitle('{{present}}', { characterName: 'Solo Alice' }, 1)).toBe('Solo Alice');
     });
 });
 

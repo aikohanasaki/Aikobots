@@ -4429,6 +4429,7 @@
     "Memory Title Format": "Speichertitelformat",
     "Custom Title Format...": "Benutzerdefiniertes Titelformat...",
     "Enter custom format": "Geben Sie ein benutzerdefiniertes Format ein",
+    "STMemoryBooks_TitleFormatTooltip": "Verwenden Sie [0], [00], [000] für die einfache automatische Nummerierung; verwenden Sie [[0]], [[00]], [[000]], um eckige Klammern beizubehalten. Verfügbar: {{title}}, {{scene}}, {{char}}, {{groupname}}, {{present}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}.",
     "Profile Settings:": "Profileinstellungen:",
     "View Prompt": "Eingabeaufforderung anzeigen",
     "👤 Profile Actions": "👤 Profilaktionen",

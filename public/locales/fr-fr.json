@@ -4724,6 +4724,7 @@
     "Memory Title Format": "Format du titre de la mémoire",
     "Custom Title Format...": "Format de titre personnalisé...",
     "Enter custom format": "Entrez un format personnalisé",
+    "STMemoryBooks_TitleFormatTooltip": "Utilisez [0], [00], [000] pour la numérotation automatique simple ; utilisez [[0]], [[00]], [[000]] pour conserver les crochets. Disponibles : {{title}}, {{scene}}, {{char}}, {{groupname}}, {{present}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}.",
     "Profile Settings:": "Paramètres du profil :",
     "View Prompt": "Afficher l'invite",
     "👤 Profile Actions": "👤 Actions de profil",

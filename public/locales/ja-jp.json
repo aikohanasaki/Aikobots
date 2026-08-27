@@ -4434,6 +4434,7 @@
     "Memory Title Format": "メモリータイトルフォーマット",
     "Custom Title Format...": "カスタム タイトル形式...",
     "Enter custom format": "カスタム形式を入力してください",
+    "STMemoryBooks_TitleFormatTooltip": "[0]、[00]、[000] は通常の自動採番に使用し、[[0]]、[[00]]、[[000]] は角括弧を残す場合に使用します。利用可能: {{title}}、{{scene}}、{{char}}、{{groupname}}、{{present}}、{{user}}、{{messages}}、{{profile}}、{{date}}、{{time}}。",
     "Profile Settings:": "プロファイル設定:",
     "View Prompt": "プロンプトを表示",
     "👤 Profile Actions": "👤 プロフィールアクション",

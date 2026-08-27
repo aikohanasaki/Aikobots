@@ -194,6 +194,16 @@ export function getNarratorSceneParticipants(messages) {
     };
 }
 
+/** Maps selected Narrator cast identities to display names in selection order. */
+export function getNarratorParticipantNames(config, participantIds) {
+    const membersById = new Map(
+        (Array.isArray(config?.members) ? config.members : []).map(member => [member?.id, member]),
+    );
+    return uniqueStrings(participantIds)
+        .map(id => cleanString(membersById.get(id)?.name))
+        .filter(Boolean);
+}
+
 /** Builds unique character-book write targets for selected participants. */
 export function buildNarratorCopyTargets(config, participantIds) {
     const selected = new Set(uniqueStrings(participantIds));

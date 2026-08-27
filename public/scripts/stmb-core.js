@@ -1527,6 +1527,7 @@ export function compileScene(messages, sceneRequest, options = {}) {
     const sceneMessages = [];
     const narratorSourceMessages = options?.collectNarratorCast === true ? [] : null;
     const participantFilterNames = new Set();
+    const presentCharacterNames = new Set();
     let hiddenMessageCount = 0;
     let skippedMessageCount = 0;
 
@@ -1561,6 +1562,9 @@ export function compileScene(messages, sceneRequest, options = {}) {
         if (!message.is_user && groupParticipantResolver) {
             const filterName = resolveStmbGroupParticipantFilterName(message, groupParticipantResolver);
             if (filterName) participantFilterNames.add(filterName);
+            if (filterName || groupParticipantResolver.avatarsBySpeaker.has(compiledMessage.name)) {
+                presentCharacterNames.add(compiledMessage.name);
+            }
         }
         sceneMessages.push(compiledMessage);
     }
@@ -1589,6 +1593,9 @@ export function compileScene(messages, sceneRequest, options = {}) {
     };
     if (participantFilterNames.size > 0) {
         metadata.characterFilterNames = Array.from(participantFilterNames);
+    }
+    if (groupParticipantResolver) {
+        metadata.presentCharacterNames = Array.from(presentCharacterNames);
     }
     if (narratorParticipants) {
         metadata.stmbPromptTarget = 'group';
@@ -2529,6 +2536,10 @@ export function formatMemoryTitle(titleFormat, context, sequenceNumber) {
         title: sanitizeTitle(context?.title || 'Memory'),
         scene: `Scene ${sceneRange || 'Unknown'}`,
         char: String(context?.characterName || '').trim() || 'Unknown',
+        groupname: String(context?.groupName || '').trim() || 'Unknown',
+        present: Array.isArray(context?.presentCharacterNames)
+            ? context.presentCharacterNames.join(', ')
+            : (String(context?.characterName || '').trim() || 'Unknown'),
         user: String(context?.userName || '').trim() || 'User',
         messages: String(context?.messageCount ?? 0),
         profile: String(context?.profileName || '').trim() || 'Unknown',
@@ -2556,7 +2567,7 @@ export function validateTitleFormat(format) {
         warnings.push('Title contains characters that will be removed during sanitization');
     }
 
-    const validPlaceholders = new Set(['{{title}}', '{{scene}}', '{{char}}', '{{user}}', '{{messages}}', '{{profile}}', '{{date}}', '{{time}}']);
+    const validPlaceholders = new Set(['{{title}}', '{{scene}}', '{{char}}', '{{groupname}}', '{{present}}', '{{user}}', '{{messages}}', '{{profile}}', '{{date}}', '{{time}}']);
     const invalidPlaceholders = [...value.matchAll(/\{\{[^}]*\}\}/g)]
         .map(match => match[0])
         .filter(token => !validPlaceholders.has(token));
@@ -2604,6 +2615,8 @@ export function previewTitle(titleFormat, sampleData = {}) {
         sceneStart: 15,
         sceneEnd: 23,
         characterName: 'Alice',
+        groupName: 'Example Group',
+        presentCharacterNames: ['Alice', 'Clara'],
         userName: 'Bob',
         messageCount: 9,
         profileName: 'Summary',

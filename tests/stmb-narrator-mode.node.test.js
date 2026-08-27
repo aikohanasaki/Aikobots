@@ -7,6 +7,7 @@ import {
     collectNarratorSourceMetadata,
     createNarratorMember,
     getNarratorCastFromMessage,
+    getNarratorParticipantNames,
     getNarratorSceneParticipants,
     mergeNarratorLorebookEntries,
     migrateNarratorLorebookReference,
@@ -71,6 +72,15 @@ test('scene participant resolution uses tagged assistant responses authoritative
         memberIds: ['user-hint', 'alice'],
         hasUntaggedMessages: true,
     });
+});
+
+test('selected Narrator cast identities map to display names in selection order', () => {
+    const config = { members: [
+        { id: 'alice', name: 'Alice' },
+        { id: 'bob', name: 'Bob' },
+    ] };
+    assert.deepEqual(getNarratorParticipantNames(config, ['bob', 'missing', 'alice', 'bob']), ['Bob', 'Alice']);
+    assert.deepEqual(getNarratorParticipantNames(config, []), []);
 });
 
 test('scene compilation exposes Narrator routing metadata without adding it to scene text', () => {

@@ -254,6 +254,7 @@ import {
     createNarratorMember,
     ensureNarratorConfig,
     getNarratorCastFromMessage,
+    getNarratorParticipantNames,
     isNarratorModeActive,
     mergeNarratorLorebookEntries,
     migrateNarratorLorebookReference,
@@ -2766,12 +2767,12 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
 
             <h3 class="stmb-section-title" data-i18n="🧠 Memory Profiles">🧠 Memory Profiles</h3>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-title-format-select" title="Use [0], [00], [000] for plain auto-numbering; use [[0]], [[00]], [[000]] to keep square brackets. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}." data-i18n="Memory Title Format">Memory Title Format</label>
+                <label for="stmb-settings-title-format-select" title="Use [0], [00], [000] for plain auto-numbering; use [[0]], [[00]], [[000]] to keep square brackets. Available: {{title}}, {{scene}}, {{char}}, {{groupname}}, {{present}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}." data-i18n="[title]STMemoryBooks_TitleFormatTooltip;Memory Title Format">Memory Title Format</label>
                 <select id="stmb-settings-title-format-select" class="text_pole">
                     ${titleFormats.map(format => `<option value="${escapeHtml(format)}" ${!usesCustomTitleFormat && format === currentTitleFormat ? 'selected' : ''}>${escapeHtml(format)}</option>`).join('')}
                     <option value="custom" ${usesCustomTitleFormat ? 'selected' : ''} data-i18n="Custom Title Format...">Custom Title Format...</option>
                 </select>
-                <input type="text" id="stmb-settings-custom-title-format" class="text_pole marginTop5 ${usesCustomTitleFormat ? '' : 'displayNone'}" value="${escapeHtml(currentTitleFormat)}" placeholder="Enter custom format" title="Use [0], [00], [000] for plain auto-numbering; use [[0]], [[00]], [[000]] to keep square brackets. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}." data-i18n="[placeholder]Enter custom format">
+                <input type="text" id="stmb-settings-custom-title-format" class="text_pole marginTop5 ${usesCustomTitleFormat ? '' : 'displayNone'}" value="${escapeHtml(currentTitleFormat)}" placeholder="Enter custom format" title="Use [0], [00], [000] for plain auto-numbering; use [[0]], [[00]], [[000]] to keep square brackets. Available: {{title}}, {{scene}}, {{char}}, {{groupname}}, {{present}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}." data-i18n="[placeholder]Enter custom format;[title]STMemoryBooks_TitleFormatTooltip">
             </div>
 
             <div class="world_entry_form_control">
@@ -7405,6 +7406,7 @@ async function prepareNarratorMemorySnapshot(compiledScene, sceneContext, { inte
         ...(compiledScene.metadata || {}),
         stmbPromptTarget: 'group',
         narratorParticipantIds: participantIds,
+        presentCharacterNames: getNarratorParticipantNames(config, participantIds),
     };
     return {
         mode: 'narrator',
@@ -8807,6 +8809,9 @@ function buildMemorySceneData(compiledScene, range, settings = stmbSettings) {
         characterName: compiledScene?.metadata?.characterName || '',
         userName: compiledScene?.metadata?.userName || '',
         groupName: compiledScene?.metadata?.groupName || '',
+        presentCharacterNames: Array.isArray(compiledScene?.metadata?.presentCharacterNames)
+            ? [...compiledScene.metadata.presentCharacterNames]
+            : undefined,
         stmbPromptTarget: compiledScene?.metadata?.stmbPromptTarget || '',
         characterFilterNames: normalizeStmbCharacterFilterNames(compiledScene?.metadata?.characterFilterNames),
         titleFormat: settings?.titleFormat || STMB_DEFAULT_TITLE_FORMAT,
@@ -11298,6 +11303,9 @@ async function buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eli
         }
         throw new Error('No capturable messages remain in the original range.');
     }
+    const narratorParticipantIds = Array.isArray(entry?.STMB_narratorOwnerIds)
+        ? [...entry.STMB_narratorOwnerIds]
+        : [...(entry?.STMB_narratorParticipantIds || [])];
     compiledScene.metadata = {
         ...(compiledScene.metadata || {}),
         stmbPromptTarget: Array.isArray(entry?.STMB_narratorParticipantIds)
@@ -11308,9 +11316,13 @@ async function buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eli
                     ? 'group'
                     : 'character',
         characterFilterNames: normalizeStmbCharacterFilterNames(entry?.characterFilter?.names),
-        narratorParticipantIds: Array.isArray(entry?.STMB_narratorOwnerIds)
-            ? [...entry.STMB_narratorOwnerIds]
-            : [...(entry?.STMB_narratorParticipantIds || [])],
+        narratorParticipantIds,
+        ...(entry?.STMB_narratorOwnerIds || entry?.STMB_narratorParticipantIds ? {
+            presentCharacterNames: getNarratorParticipantNames(
+                getCurrentNarratorConfig(sceneContext),
+                narratorParticipantIds,
+            ),
+        } : {}),
     };
     const effectiveSettings = options.effectiveSettings
         || await showAndGetMemorySettings(compiledScene, range, lorebookName);
@@ -11347,6 +11359,8 @@ async function buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eli
             sceneEnd: eligibility.sceneEnd,
             sceneRange: `${eligibility.sceneStart}-${eligibility.sceneEnd}`,
             characterName: compiledScene?.metadata?.characterName,
+            groupName: compiledScene?.metadata?.groupName,
+            presentCharacterNames: compiledScene?.metadata?.presentCharacterNames,
             userName: compiledScene?.metadata?.userName,
             messageCount: compiledScene?.metadata?.messageCount,
             profileName: effectiveSettings.profileSettings?.name,
