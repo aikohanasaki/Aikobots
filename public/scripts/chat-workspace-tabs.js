@@ -115,3 +115,11 @@ export function removeChatWorkspaceTab(key, storage = getDefaultStorage()) {
         // Session storage is best-effort; chats remain authoritative on the server.
     }
 }
+
+/** Removes the workspace tab for one owner-qualified chat identity. */
+export function removeChatWorkspaceTabByIdentity({ ownerType, ownerId, chatId } = {}, storage = getDefaultStorage()) {
+    const tab = normalizeChatWorkspaceTab({ ownerType, ownerId, chatId, label: chatId });
+    if (tab) {
+        removeChatWorkspaceTab(tab.key, storage);
+    }
+}

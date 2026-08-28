@@ -25,6 +25,7 @@ import { LONG_CHAT_DISPLAY_MIN, power_user, loadMovingUIState, sortEntitiesList 
 import { debounce_timeout } from './constants.js';
 import { deferLoader, ensureDeferredLoaderShown, waitForLoaderPaint } from './loader.js';
 import { fetchChatSearchResults } from './chat-search.js';
+import { removeChatWorkspaceTabByIdentity } from './chat-workspace-tabs.js';
 
 import {
     chat,
@@ -1727,13 +1728,13 @@ async function deleteGroup(id) {
         body: JSON.stringify({ id: id }),
     });
 
-    if (group && Array.isArray(group.chats)) {
-        for (const chatId of group.chats) {
-            await eventSource.emit(event_types.GROUP_CHAT_DELETED, chatId);
-        }
-    }
-
     if (response.ok) {
+        if (group && Array.isArray(group.chats)) {
+            for (const chatId of group.chats) {
+                removeChatWorkspaceTabByIdentity({ ownerType: 'group', ownerId: id, chatId });
+                await eventSource.emit(event_types.GROUP_CHAT_DELETED, chatId);
+            }
+        }
         await clearChat({ flushPendingSave: false });
         selected_group = null;
         delete tag_map[id];
@@ -2600,6 +2601,7 @@ export async function deleteGroupChatByName(groupId, chatName) {
     if (chatIndex !== -1) {
         group.chats.splice(chatIndex, 1);
     }
+    removeChatWorkspaceTabByIdentity({ ownerType: 'group', ownerId: groupId, chatId: chatName });
 
     // If the deleted chat was the current chat, switch to the last chat in the group
     if (group.chat_id === chatName) {
@@ -2650,6 +2652,7 @@ export async function deleteGroupChat(groupId, chatId, { jumpToNewChat = true, b
     if (chatIndex !== -1) {
         group.chats.splice(chatIndex, 1);
     }
+    removeChatWorkspaceTabByIdentity({ ownerType: 'group', ownerId: groupId, chatId });
 
     if (isCurrentChat) {
         group.chat_id = '';

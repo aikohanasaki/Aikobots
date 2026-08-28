@@ -285,7 +285,7 @@ import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
 import { clearPendingGeneration, getSupersededFailedGenerationIds, isSameGenerationRecoveryChatIdentity, isTerminalGenerationRecovery, listPendingGenerations, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
 import { createGenerationReadinessSignal, waitForGenerationReadiness, waitForGenerationSettlement } from './scripts/generation-readiness.js';
-import { captureChatWorkspaceTabFocus, getChatWorkspaceRecoveryRefreshDelay, getLatestChatWorkspaceRecovery, listChatWorkspaceTabs, removeChatWorkspaceTab, restoreChatWorkspaceTabFocus, upsertChatWorkspaceTab } from './scripts/chat-workspace-tabs.js';
+import { captureChatWorkspaceTabFocus, getChatWorkspaceRecoveryRefreshDelay, getLatestChatWorkspaceRecovery, listChatWorkspaceTabs, removeChatWorkspaceTab, removeChatWorkspaceTabByIdentity, restoreChatWorkspaceTabFocus, upsertChatWorkspaceTab } from './scripts/chat-workspace-tabs.js';
 import { initWorldInfoLocks, loadWorldInfoLocksSettings } from './scripts/world-info-locks.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
@@ -3391,9 +3391,15 @@ function initTopChatUi() {
     eventSource.on(event_types.CHECKPOINT_CREATED, () => requestTopChatUiRefresh(true));
     eventSource.on(event_types.CHAT_CHANGED, handleMessageEditChatChanged);
     eventSource.on(event_types.CHAT_CREATED, () => requestTopChatUiRefresh(true));
-    eventSource.on(event_types.CHAT_DELETED, () => requestTopChatUiRefresh(true));
+    eventSource.on(event_types.CHAT_DELETED, () => {
+        renderChatWorkspaceTabs();
+        requestTopChatUiRefresh(true);
+    });
     eventSource.on(event_types.GROUP_CHAT_CREATED, () => requestTopChatUiRefresh(true));
-    eventSource.on(event_types.GROUP_CHAT_DELETED, () => requestTopChatUiRefresh(true));
+    eventSource.on(event_types.GROUP_CHAT_DELETED, () => {
+        renderChatWorkspaceTabs();
+        requestTopChatUiRefresh(true);
+    });
     eventSource.on(event_types.MESSAGE_SENT, () => requestTopChatUiRefresh(false));
     eventSource.on(event_types.GENERATION_STARTED, refreshTopChatAvailabilityDebounced);
     eventSource.on(event_types.GENERATION_STOPPED, () => requestTopChatUiRefresh(false));
@@ -5499,6 +5505,7 @@ async function delChat(chatfile, { backupBeforeDelete = false } = {}) {
     if (response.ok === true) {
         // choose another chat if current was deleted
         const name = normalizeTopChatFileName(chatfile);
+        removeChatWorkspaceTabByIdentity({ ownerType: 'character', ownerId: avatarUrl, chatId: name });
         if (name === characters[this_chid].chat) {
             characters[this_chid].chat = '';
             $('#selected_chat_pole').val('');
@@ -5567,6 +5574,12 @@ export async function deleteCharacterChatByName(characterId, fileName) {
         console.error('Failed to delete chat for character.');
         return;
     }
+
+    removeChatWorkspaceTabByIdentity({
+        ownerType: 'character',
+        ownerId: character.avatar,
+        chatId: normalizeTopChatFileName(fileName),
+    });
 
     if (normalizeTopChatFileName(fileName) === character.chat) {
         const chatsResponse = await fetch('/api/characters/chats', {
@@ -21154,6 +21167,7 @@ export async function deleteCharacter(characterKey, { deleteChats = true, delete
         if (deleteChats) {
             for (const chat of pastChats) {
                 const name = chat.file_name.replace(/\.(jsonl|sqlite)$/i, '');
+                removeChatWorkspaceTabByIdentity({ ownerType: 'character', ownerId: character.avatar, chatId: name });
                 await eventSource.emit(event_types.CHAT_DELETED, name);
             }
         }

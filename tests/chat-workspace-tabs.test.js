@@ -6,6 +6,7 @@ import {
     getLatestChatWorkspaceRecovery,
     listChatWorkspaceTabs,
     removeChatWorkspaceTab,
+    removeChatWorkspaceTabByIdentity,
     restoreChatWorkspaceTabFocus,
     upsertChatWorkspaceTab,
 } from '../public/scripts/chat-workspace-tabs.js';
@@ -107,6 +108,26 @@ describe('chat workspace tabs', () => {
         expect(first.key).not.toBe(second.key);
         expect(listChatWorkspaceTabs(storage)).toEqual([first, second]);
         removeChatWorkspaceTab(first.key, storage);
+        expect(listChatWorkspaceTabs(storage)).toEqual([second]);
+    });
+
+    it('removes only the deleted owner-qualified chat tab', () => {
+        const storage = createStorage();
+        const first = upsertChatWorkspaceTab({
+            ownerType: 'character',
+            ownerId: 'avatar-a.png',
+            chatId: 'shared-name',
+            label: 'Bot A: shared-name',
+        }, storage);
+        const second = upsertChatWorkspaceTab({
+            ownerType: 'character',
+            ownerId: 'avatar-b.png',
+            chatId: 'shared-name',
+            label: 'Bot B: shared-name',
+        }, storage);
+
+        removeChatWorkspaceTabByIdentity(first, storage);
+
         expect(listChatWorkspaceTabs(storage)).toEqual([second]);
     });
 });
