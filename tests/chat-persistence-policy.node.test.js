@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { canCommitComposerSendAttempt, mergeRejectedSendDraft, shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from '../public/scripts/chat-persistence-policy.js';
+import { canCommitComposerSendAttempt, isSameComposerContext, isSameComposerOwner, mergeRejectedSendDraft, shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from '../public/scripts/chat-persistence-policy.js';
 
 test('zero-message temporary character chats always stay client-only', () => {
     assert.equal(shouldSkipUnstartedCharacterChatSave({
@@ -143,7 +143,7 @@ test('a posted group send can commit while generation temporarily selects a memb
     assert.equal(canCommitComposerSendAttempt(
         sendAttempt,
         { groupId: 'group-1', characterId: '4', chatId: 'chat-1' },
-        messages,
+        [],
     ), true);
     assert.equal(canCommitComposerSendAttempt(
         sendAttempt,
@@ -152,10 +152,39 @@ test('a posted group send can commit while generation temporarily selects a memb
     ), false);
 });
 
+test('group composer ownership ignores only the transient selected speaker', () => {
+    const captured = { groupId: 'group-1', characterId: '', chatId: 'chat-1' };
+
+    assert.equal(isSameComposerContext(
+        captured,
+        { groupId: 'group-1', characterId: '4', chatId: 'chat-1' },
+    ), true);
+    assert.equal(isSameComposerContext(
+        captured,
+        { groupId: 'group-1', characterId: '4', chatId: 'chat-2' },
+    ), false);
+    assert.equal(isSameComposerContext(
+        captured,
+        { groupId: 'group-2', characterId: '4', chatId: 'chat-1' },
+    ), false);
+});
+
+test('composer owner remains stable when a temporary chat receives its persistent name', () => {
+    assert.equal(isSameComposerOwner(
+        { groupId: '', characterId: '3', chatId: 'temporary-chat' },
+        { groupId: '', characterId: '3', chatId: 'saved-chat' },
+    ), true);
+    assert.equal(isSameComposerOwner(
+        { groupId: '', characterId: '3', chatId: 'temporary-chat' },
+        { groupId: '', characterId: '4', chatId: 'saved-chat' },
+    ), false);
+});
+
 test('only an explicit normal Send owns and consumes the composer after persistence', () => {
     const scriptSource = fs.readFileSync(new URL('../public/script.js', import.meta.url), 'utf8');
     assert.match(scriptSource, /Generate\(generateType, { consumeComposer: generateType === 'normal' }\)/);
     assert.match(scriptSource, /messageUuid: composerSendAttempt\?\.messageUuid/);
+    assert.match(scriptSource, /clearAcceptedComposerDraft\(composerSendAttempt\)/);
     assert.match(scriptSource, /commitComposerSendAttempt\(composerSendAttempt\)/);
     assert.match(scriptSource, /const attachmentDraft = sendOptions\?\.attachmentDraft \?\? capturePendingFileAttachmentDraft\(\)/);
     assert.match(scriptSource, /consumePendingFileAttachmentDraft\(attachmentDraft\)/);

@@ -54,6 +54,33 @@ export function mergeRejectedSendDraft(rejectedText, currentText) {
 }
 
 /**
+ * Compares composer owners while ignoring the transient speaker selected during group generation.
+ * @param {object|null|undefined} left First composer chat identity.
+ * @param {object|null|undefined} right Second composer chat identity.
+ * @returns {boolean} Whether both identities belong to the same character or group.
+ */
+export function isSameComposerOwner(left, right) {
+    if (!left || !right) {
+        return false;
+    }
+
+    return left.groupId
+        ? left.groupId === right.groupId
+        : !right.groupId && left.characterId === right.characterId;
+}
+
+/**
+ * Compares composer contexts while ignoring the transient speaker selected during group generation.
+ * @param {object|null|undefined} left First composer chat identity.
+ * @param {object|null|undefined} right Second composer chat identity.
+ * @returns {boolean} Whether both identities refer to the same composer.
+ */
+export function isSameComposerContext(left, right) {
+    return isSameChatIdentity(left, right)
+        || (isSameComposerOwner(left, right) && left.chatId === right.chatId);
+}
+
+/**
  * Allows a saved composer send to commit after a benign active-identity change.
  * @param {object|null|undefined} sendAttempt Captured composer send attempt.
  * @param {object|null|undefined} currentChatIdentity Current active chat identity.
@@ -65,15 +92,11 @@ export function canCommitComposerSendAttempt(sendAttempt, currentChatIdentity, m
         return false;
     }
 
-    if (isSameChatIdentity(sendAttempt.chatIdentity, currentChatIdentity)) {
+    if (isSameComposerContext(sendAttempt.chatIdentity, currentChatIdentity)) {
         return true;
     }
 
-    const groupId = sendAttempt.chatIdentity?.groupId;
-    const hasSameOwner = groupId
-        ? groupId === currentChatIdentity.groupId
-        : !currentChatIdentity.groupId && sendAttempt.chatIdentity?.characterId === currentChatIdentity.characterId;
-    if (!hasSameOwner) {
+    if (!isSameComposerOwner(sendAttempt.chatIdentity, currentChatIdentity)) {
         return false;
     }
 

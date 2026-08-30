@@ -279,7 +279,7 @@ import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
 import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter, shouldRestoreSwipeButtons } from './scripts/swipe-policy.js';
-import { canCommitComposerSendAttempt, mergeRejectedSendDraft, shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence-policy.js';
+import { canCommitComposerSendAttempt, isSameComposerOwner, mergeRejectedSendDraft, shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence-policy.js';
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
@@ -10357,7 +10357,7 @@ function createComposerSendAttempt() {
 
 /** Restores a rejected send to the active chat composer without overwriting newer input. */
 function restoreRejectedSendDraft(messageText, attachmentDraft, chatIdentity, sendAttempt = null) {
-    if (!isSameChatIdentity(chatIdentity, getActiveChatIdentity())) {
+    if (!isSameComposerOwner(chatIdentity, getActiveChatIdentity())) {
         return false;
     }
 
@@ -10377,6 +10377,20 @@ function restoreRejectedSendDraft(messageText, attachmentDraft, chatIdentity, se
     if (sendAttempt) {
         rejectedComposerSendAttempt = sendAttempt;
     }
+    return true;
+}
+
+/** Clears an accepted draft while retaining its captured send attempt for safe rollback. */
+function clearAcceptedComposerDraft(sendAttempt) {
+    const textarea = document.getElementById('send_textarea');
+    if (!(textarea instanceof HTMLTextAreaElement)
+        || !sendAttempt?.messageText
+        || textarea.value !== sendAttempt.messageText) {
+        return false;
+    }
+
+    textarea.value = '';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
 }
 
@@ -10784,6 +10798,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         || (textareaAttachmentDraft?.imageAttachments?.length || 0) > 0;
     //for normal messages sent from user..
     if ((textareaText != '' || (hasComposerAttachments && !noAttachTypes.includes(type))) && !automatic_trigger && type !== 'quiet' && !dryRun) {
+        clearAcceptedComposerDraft(composerSendAttempt);
         // If user message contains no text other than bias - send as a system message
         if (messageBias && !removeMacros(textareaText) && !hasComposerAttachments) {
             const insertedMessageId = chat.length;
