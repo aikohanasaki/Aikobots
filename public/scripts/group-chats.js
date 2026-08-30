@@ -66,6 +66,7 @@ import {
     cancelTtsPlay,
     displayPastChats,
     sendMessageAsUser,
+    commitComposerSendAttempt,
     getBiasStrings,
     saveChatConditional,
     deactivateSendButtons,
@@ -1388,7 +1389,7 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         is_group_generating = true;
         setCharacterName('');
         setCharacterId(undefined);
-        const userInput = String($('#send_textarea').val());
+        const userInput = params?.composerSendAttempt?.messageText ?? String($('#send_textarea').val());
 
         // id of this specific batch for regeneration purposes
         group_generation_id = Date.now();
@@ -1453,11 +1454,22 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         if (activatedMembers.length === 0) {
             //toastr.warning(translate('All group members are disabled. Enable at least one to get a reply.'));
 
+            if (params?.consumeComposer !== true || by_auto_mode) {
+                return Promise.resolve();
+            }
+
             // Send user message as is
             const bias = getBiasStrings(userInput, type);
-            await sendMessageAsUser(userInput, bias.messageBias);
-            await saveChatConditional();
-            $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
+            const sendAttempt = params?.composerSendAttempt;
+            const sentMessage = await sendMessageAsUser(userInput, bias.messageBias, null, false, name1, undefined, {
+                messageUuid: sendAttempt?.messageUuid,
+                sendDate: sendAttempt?.sendDate,
+                attachmentDraft: sendAttempt?.attachmentDraft,
+            });
+            if (!sentMessage) {
+                return Promise.resolve();
+            }
+            commitComposerSendAttempt(sendAttempt);
         }
         if (manualSpeakerQueueDraining) {
             updateManualSpeakerQueueOrder();
@@ -1472,7 +1484,7 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         }
         await eventSource.emit(event_types.GROUP_WRAPPER_STARTED, { selected_group, type });
         // now the real generation begins: cycle through every activated character
-        for (const chId of activatedMembers) {
+        for (const [memberIndex, chId] of activatedMembers.entries()) {
             throwIfAborted();
             deactivateSendButtons();
             setCharacterId(chId);
@@ -1482,7 +1494,11 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
 
             // Wait for generation to finish
             const generateType = ['swipe', 'impersonate', 'quiet', 'continue'].includes(type) ? type : 'normal';
-            textResult = await Generate(generateType, { automatic_trigger: by_auto_mode, ...(params || {}) });
+            textResult = await Generate(generateType, {
+                ...(params || {}),
+                automatic_trigger: by_auto_mode,
+                consumeComposer: params?.consumeComposer === true && memberIndex === 0 && !by_auto_mode,
+            });
             if (textResult?.generationParked) {
                 break;
             }
@@ -1490,7 +1506,7 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
 
             if (messageChunk) {
                 while (shouldAutoContinue(messageChunk, type === 'impersonate')) {
-                    textResult = await Generate('continue', { automatic_trigger: by_auto_mode, ...(params || {}) });
+                    textResult = await Generate('continue', { ...(params || {}), automatic_trigger: by_auto_mode, consumeComposer: false });
                     messageChunk = textResult?.messageChunk;
                 }
             }

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 
-import { shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from '../public/scripts/chat-persistence-policy.js';
+import { mergeRejectedSendDraft, shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from '../public/scripts/chat-persistence-policy.js';
 
 test('zero-message temporary character chats always stay client-only', () => {
     assert.equal(shouldSkipUnstartedCharacterChatSave({
@@ -95,4 +96,38 @@ test('first SQLite character-chat saves wait for and adopt the revision acknowle
         isTemporaryCharacterSave: true,
         isPendingSoloCharacterSave: true,
     }), false);
+});
+
+test('a rejected send is restored without overwriting newer composer input', () => {
+    assert.equal(mergeRejectedSendDraft('rejected message', ''), 'rejected message');
+    assert.equal(mergeRejectedSendDraft('rejected message', 'rejected message'), 'rejected message');
+    assert.equal(
+        mergeRejectedSendDraft('rejected message', 'newer draft'),
+        'rejected message\n\nnewer draft',
+    );
+    assert.equal(mergeRejectedSendDraft('', 'newer draft'), 'newer draft');
+});
+
+test('only an explicit normal Send owns and consumes the composer after persistence', () => {
+    const scriptSource = fs.readFileSync(new URL('../public/script.js', import.meta.url), 'utf8');
+    assert.match(scriptSource, /Generate\(generateType, { consumeComposer: generateType === 'normal' }\)/);
+    assert.match(scriptSource, /messageUuid: composerSendAttempt\?\.messageUuid/);
+    assert.match(scriptSource, /commitComposerSendAttempt\(composerSendAttempt\)/);
+    assert.match(scriptSource, /const attachmentDraft = sendOptions\?\.attachmentDraft \?\? capturePendingFileAttachmentDraft\(\)/);
+    assert.match(scriptSource, /consumePendingFileAttachmentDraft\(attachmentDraft\)/);
+    assert.match(scriptSource, /restorePendingFileAttachmentDraft\(attachmentDraft\);/);
+});
+
+test('background generation and failed edit transitions cannot consume user drafts', () => {
+    const scriptSource = fs.readFileSync(new URL('../public/script.js', import.meta.url), 'utf8');
+    const groupSource = fs.readFileSync(new URL('../public/scripts/group-chats.js', import.meta.url), 'utf8');
+    const slashSource = fs.readFileSync(new URL('../public/scripts/slash-commands.js', import.meta.url), 'utf8');
+    const extensionSlashSource = fs.readFileSync(new URL('../public/scripts/extensions-slashcommands.js', import.meta.url), 'utf8');
+    assert.match(scriptSource, /if \(consumeComposer && type === 'normal'/);
+    assert.match(scriptSource, /const saved = await messageEditDone\(mes_edited\);\s*if \(!saved\) {\s*return;/);
+    assert.doesNotMatch(scriptSource, /reasoningEditDone\.trigger\('click'\)/);
+    assert.match(groupSource, /consumeComposer: params\?\.consumeComposer === true && memberIndex === 0 && !by_auto_mode/);
+    assert.match(groupSource, /Generate\('continue', { [^\n]*consumeComposer: false }\)/);
+    assert.doesNotMatch(slashSource, /send_textarea.*\.val\(''\)/);
+    assert.doesNotMatch(extensionSlashSource, /send_textarea.*\.val\(''\)/);
 });

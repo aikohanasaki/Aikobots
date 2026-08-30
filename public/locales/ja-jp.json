@@ -6374,4 +6374,5 @@
   ,"Model response appears truncated (provider finish reason). Please increase Max Response Length.": "モデルの応答が途中で切れているようです（プロバイダーの終了理由）。最大応答長を増やしてください。"
   ,"Model response appears truncated (provider flag). Please increase Max Response Length.": "モデルの応答が途中で切れているようです（プロバイダーのフラグ）。最大応答長を増やしてください。"
   ,"Choose a Memory Book below to run consolidation without changing the chat assignment.": "チャットの割り当てを変更せずに統合を実行するには、下でMemory Bookを選択してください。"
+  ,"The user message could not be saved. Its text was restored to the composer.": "ユーザーメッセージを保存できませんでした。テキストを入力欄に復元しました。"
 }

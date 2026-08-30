@@ -241,7 +241,7 @@ import {
 import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_settings } from './scripts/backgrounds.js';
 import { deferLoader, ensureDeferredLoaderShown, hideLoader, isLoaderVisible, showLoader, waitForLoaderPaint } from './scripts/loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
-import { appendFileContent, backfillImageMediaIdsForMessages, createImageAttachmentFromUrl, getMediaAttachmentUrl, hasPendingFileAttachment, hydrateMediaAttachment, markImageAttachmentUnavailable, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks, sanitizeMessageHtml } from './scripts/chats.js';
+import { appendFileContent, backfillImageMediaIdsForMessages, capturePendingFileAttachmentDraft, consumePendingFileAttachmentDraft, createImageAttachmentFromUrl, getMediaAttachmentUrl, hasPendingFileAttachment, hydrateMediaAttachment, markImageAttachmentUnavailable, populateFileAttachment, restorePendingFileAttachmentDraft, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks, sanitizeMessageHtml } from './scripts/chats.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
 import { evaluateMacros, getLastMessageId, initMacros, MacrosParser } from './scripts/macros.js';
 import { currentUser, setUserControls, submitSelectedCharacterForReview } from './scripts/user.js';
@@ -260,7 +260,7 @@ import { applyBrowserFixes } from './scripts/browser-fixes.js';
 import { initServerHistory } from './scripts/server-history.js';
 import { initBulkEdit } from './scripts/bulk-edit.js';
 import { getContext } from './scripts/st-context.js';
-import { extractReasoningFromData, extractReasoningSignatureFromData, initReasoning, parseReasoningInSwipes, PromptReasoning, ReasoningHandler, ReasoningType, removeReasoningFromString, updateReasoningUI } from './scripts/reasoning.js';
+import { applyVisibleReasoningEditDraft, extractReasoningFromData, extractReasoningSignatureFromData, initReasoning, parseReasoningInSwipes, PromptReasoning, ReasoningHandler, ReasoningType, removeReasoningFromString, updateReasoningUI } from './scripts/reasoning.js';
 import { accountStorage } from './scripts/util/AccountStorage.js';
 import { initWelcomeScreen, openPermanentAssistantChat, getPermanentAssistantAvatar } from './scripts/welcome-screen.js';
 import { initDataMaid } from './scripts/data-maid.js';
@@ -279,7 +279,7 @@ import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
 import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter, shouldRestoreSwipeButtons } from './scripts/swipe-policy.js';
-import { shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence-policy.js';
+import { mergeRejectedSendDraft, shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence-policy.js';
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
@@ -1820,7 +1820,9 @@ export function queueAcknowledgedChatRevisionRequest(requestFactory) {
 
             if (response.ok) {
                 const acknowledgedRevision = Number(responseData?.chat_revision);
-                if (!Number.isInteger(acknowledgedRevision) || (acknowledgedRevision !== baseRevision && acknowledgedRevision !== baseRevision + 1)) {
+                const isIdempotentNoop = responseData?.status === 'noop' && responseData?.deduplicated_message === true;
+                if (!Number.isInteger(acknowledgedRevision)
+                    || (isIdempotentNoop ? acknowledgedRevision < baseRevision : (acknowledgedRevision !== baseRevision && acknowledgedRevision !== baseRevision + 1))) {
                     console.warn('Chat operation returned an invalid acknowledgement; retrying the same operation.', {
                         operationId,
                         baseRevision,
@@ -7489,7 +7491,7 @@ export async function sendTextareaMessage() {
             await newAssistantChat({ temporary: false });
         }
 
-        return await Generate(generateType);
+        return await Generate(generateType, { consumeComposer: generateType === 'normal' });
     } catch (error) {
         unblockGeneration();
 
@@ -10323,6 +10325,85 @@ async function restoreUnsavedDeletedLastMessage(messageId, message) {
     return true;
 }
 
+let rejectedComposerSendAttempt = null;
+
+function getAttachmentDraftSignature(draft) {
+    return JSON.stringify({
+        files: (Array.isArray(draft?.files) ? draft.files : []).map(file => [file.name, file.size, file.type, file.lastModified]),
+        images: (Array.isArray(draft?.imageAttachments) ? draft.imageAttachments : [])
+            .map(attachment => attachment?.media_id || attachment?.url || attachment?.originalUrl || ''),
+    });
+}
+
+function createComposerSendAttempt() {
+    const chatIdentity = getActiveChatIdentity();
+    const messageText = String($('#send_textarea').val());
+    const attachmentDraft = capturePendingFileAttachmentDraft();
+    const attachmentSignature = getAttachmentDraftSignature(attachmentDraft);
+    const retry = rejectedComposerSendAttempt;
+    const canRetry = retry
+        && retry.messageText === messageText
+        && retry.attachmentSignature === attachmentSignature
+        && isSameChatIdentity(retry.chatIdentity, chatIdentity);
+    return canRetry ? retry : {
+        messageText,
+        attachmentDraft,
+        attachmentSignature,
+        chatIdentity,
+        messageUuid: uuidv4(),
+        sendDate: getMessageTimeStamp(),
+    };
+}
+
+/** Restores a rejected send to the active chat composer without overwriting newer input. */
+function restoreRejectedSendDraft(messageText, attachmentDraft, chatIdentity, sendAttempt = null) {
+    if (!isSameChatIdentity(chatIdentity, getActiveChatIdentity())) {
+        return false;
+    }
+
+    const textarea = document.getElementById('send_textarea');
+    if (!(textarea instanceof HTMLTextAreaElement)) {
+        return false;
+    }
+
+    const restoredDraft = mergeRejectedSendDraft(messageText, textarea.value);
+    if (restoredDraft !== textarea.value) {
+        textarea.value = restoredDraft;
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.focus();
+    }
+
+    restorePendingFileAttachmentDraft(attachmentDraft);
+    if (sendAttempt) {
+        rejectedComposerSendAttempt = sendAttempt;
+    }
+    return true;
+}
+
+/** Restores command-provided user text when its message could not be saved. */
+export function restoreUserInputToComposer(messageText) {
+    return restoreRejectedSendDraft(messageText, null, getActiveChatIdentity());
+}
+
+/** Consumes only the composer draft that now belongs to a durably saved user message. */
+export function commitComposerSendAttempt(sendAttempt) {
+    if (!sendAttempt || !isSameChatIdentity(sendAttempt.chatIdentity, getActiveChatIdentity())) {
+        return false;
+    }
+
+    const textarea = document.getElementById('send_textarea');
+    if (textarea instanceof HTMLTextAreaElement && textarea.value === sendAttempt.messageText) {
+        textarea.value = '';
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    consumePendingFileAttachmentDraft(sendAttempt.attachmentDraft);
+    sendAttempt.committed = true;
+    if (rejectedComposerSendAttempt === sendAttempt) {
+        rejectedComposerSendAttempt = null;
+    }
+    return true;
+}
+
 /** Returns whether validation reached a foreground generation attempt that dirties a direct opening. */
 function isDirtyingForegroundGeneration(type, generationRecovery, dryRun) {
     return !dryRun
@@ -10436,6 +10517,8 @@ function discardSwitchedTemporaryGenerationAttempts() {
  * @property {JsonSchema} [jsonSchema] JSON schema to use for the structured generation. Usually requires a special instruction.
  * @property {object?} [swipeTarget] Captured swipe generation target with a preallocated swipe UUID.
  * @property {object?} [generationRecovery] Pending detached generation being resumed after a page reload.
+ * @property {boolean} [consumeComposer] Whether this explicit Send action owns the current composer draft.
+ * @property {object?} [composerSendAttempt] Stable identity and draft captured for an explicit Send action.
  */
 
 /**
@@ -10446,7 +10529,7 @@ function discardSwitchedTemporaryGenerationAttempts() {
  * @param {boolean} dryRun Whether to actually generate a message or just assemble the prompt
  * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
  */
-async function generateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, swipeTarget = null, generationRecovery = null } = {}, dryRun = false, temporaryGenerationAttempt = null) {
+async function generateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, swipeTarget = null, generationRecovery = null, consumeComposer = false, composerSendAttempt = null } = {}, dryRun = false, temporaryGenerationAttempt = null) {
     enforceChatCompletionsOnlyMode();
     console.log('Generate entered');
 
@@ -10517,7 +10600,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
     const isImpersonate = type == 'impersonate';
 
-    if (!(dryRun || generationRecovery || type == 'regenerate' || type == 'swipe' || type == 'quiet')) {
+    if (consumeComposer && !(dryRun || generationRecovery || type == 'regenerate' || type == 'swipe' || type == 'quiet')) {
         const interruptedByCommand = await processCommands(String($('#send_textarea').val()));
 
         if (interruptedByCommand) {
@@ -10559,7 +10642,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     if (selected_group && !is_group_generating) {
         if (!dryRun) {
             // Returns the promise that generateGroupWrapper returns; resolves when generation is done
-            return generateGroupWrapper(false, type, { quiet_prompt, force_chid, signal: abortController.signal, quietImage, swipeTarget, generationRecovery });
+            return generateGroupWrapper(false, type, { quiet_prompt, force_chid, signal: abortController.signal, quietImage, swipeTarget, generationRecovery, consumeComposer, composerSendAttempt });
         }
 
         const characterIndexMap = new Map(characters.map((char, index) => [char.avatar, index]));
@@ -10602,6 +10685,8 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     let textareaText;
+    let textareaAttachmentDraft = null;
+    let textareaChatIdentity = null;
     let generationStartMutatedChat = false;
     let generationStartDeletedId = null;
     let generationStartDeletedMessage = null;
@@ -10609,16 +10694,18 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     if (generationRecovery) {
         is_send_press = true;
         textareaText = '';
-    } else if (type !== 'regenerate' && type !== 'swipe' && type !== 'quiet' && !isImpersonate && !dryRun) {
+    } else if (consumeComposer && type === 'normal' && !isImpersonate && !dryRun) {
         is_send_press = true;
-        textareaText = String($('#send_textarea').val());
-        $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
+        composerSendAttempt ??= createComposerSendAttempt();
+        textareaChatIdentity = composerSendAttempt.chatIdentity;
+        textareaText = composerSendAttempt.messageText;
+        textareaAttachmentDraft = composerSendAttempt.attachmentDraft;
     } else {
         textareaText = '';
         if (chat.length && chat[chat.length - 1]['is_user']) {
             //do nothing? why does this check exist?
         }
-        else if (type !== 'quiet' && type !== 'swipe' && !isImpersonate && !dryRun && chat.length) {
+        else if (type === 'regenerate' && !dryRun && chat.length) {
             const deletedId = chat.length - 1;
             const deletedMessage = chat[deletedId];
             chat.length = chat.length - 1;
@@ -10693,28 +10780,41 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         'quiet',
         'continue',
     ];
+    const hasComposerAttachments = (textareaAttachmentDraft?.files?.length || 0) > 0
+        || (textareaAttachmentDraft?.imageAttachments?.length || 0) > 0;
     //for normal messages sent from user..
-    if ((textareaText != '' || (hasPendingFileAttachment() && !noAttachTypes.includes(type))) && !automatic_trigger && type !== 'quiet' && !dryRun) {
+    if ((textareaText != '' || (hasComposerAttachments && !noAttachTypes.includes(type))) && !automatic_trigger && type !== 'quiet' && !dryRun) {
         // If user message contains no text other than bias - send as a system message
-        if (messageBias && !removeMacros(textareaText)) {
+        if (messageBias && !removeMacros(textareaText) && !hasComposerAttachments) {
             const insertedMessageId = chat.length;
             sendSystemMessage(system_message_types.GENERIC, ' ', { bias: messageBias });
             const insertedMessage = chat[insertedMessageId];
+            if (insertedMessage && isValidAikobotsUuid(composerSendAttempt?.messageUuid)) {
+                insertedMessage[AIKOBOTS_MESSAGE_UUID_KEY] = composerSendAttempt.messageUuid;
+            }
             const saveResult = currentChatFileNameLooksSqlite()
                 ? await saveSqliteMessageAppend(insertedMessageId, insertedMessage)
                 : await saveChatConditional();
             if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
                 await rollbackUnsavedInsertedMessage(insertedMessageId, insertedMessage);
+                restoreRejectedSendDraft(textareaText, textareaAttachmentDraft, textareaChatIdentity, composerSendAttempt);
                 unblockGeneration(type);
                 return Promise.resolve();
             }
+            commitComposerSendAttempt(composerSendAttempt);
         }
         else {
-            const sentMessage = await sendMessageAsUser(textareaText, messageBias);
+            const sentMessage = await sendMessageAsUser(textareaText, messageBias, null, false, name1, user_avatar, {
+                messageUuid: composerSendAttempt?.messageUuid,
+                sendDate: composerSendAttempt?.sendDate,
+                attachmentDraft: textareaAttachmentDraft,
+            });
             if (!sentMessage) {
+                restoreRejectedSendDraft(textareaText, textareaAttachmentDraft, textareaChatIdentity, composerSendAttempt);
                 unblockGeneration(type);
                 return Promise.resolve();
             }
+            commitComposerSendAttempt(composerSendAttempt);
         }
     }
     else if (textareaText == '' && !automatic_trigger && !dryRun && type === undefined && main_api == 'openai' && oai_settings.send_if_empty.trim().length > 0) {
@@ -11718,7 +11818,11 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         });
 
         if (isImpersonate) {
-            $('#send_textarea').val(getMessage)[0].dispatchEvent(new Event('input', { bubbles: true }));
+            const textarea = document.getElementById('send_textarea');
+            if (textarea instanceof HTMLTextAreaElement) {
+                textarea.value = mergeRejectedSendDraft(getMessage, textarea.value);
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            }
             await eventSource.emit(event_types.IMPERSONATE_READY, getMessage);
             consumeOpenAIResponseData(openAIRequestId);
         }
@@ -12044,6 +12148,10 @@ export async function Generate(type, options = {}, dryRun = false) {
         return generateInternal(type, options, dryRun);
     }
 
+    if (options?.consumeComposer === true && !options.composerSendAttempt) {
+        options = { ...options, composerSendAttempt: createComposerSendAttempt() };
+    }
+
     const temporaryGenerationAttempt = takeDeferredTemporaryGenerationAttempt(options?.generationRecovery)
         || createTemporaryGenerationAttempt(type, options, dryRun);
 
@@ -12063,6 +12171,10 @@ export async function Generate(type, options = {}, dryRun = false) {
             if (error?.generationParked === true) {
                 deferTemporaryGenerationAttempt(temporaryGenerationAttempt, foregroundGenerationId);
                 return { generationParked: true };
+            }
+            if (options?.composerSendAttempt && !options.composerSendAttempt.committed) {
+                const attempt = options.composerSendAttempt;
+                restoreRejectedSendDraft(attempt.messageText, attempt.attachmentDraft, attempt.chatIdentity, attempt);
             }
             throw error;
         } finally {
@@ -12354,15 +12466,25 @@ export function removeMacros(str) {
  * @param {boolean} [compact] Send as a compact display message.
  * @param {string} [name] Name of the user sending the message. Defaults to name1.
  * @param {string} [avatar] Avatar of the user sending the message. Defaults to user_avatar.
+ * @param {{messageUuid?: string, sendDate?: string, attachmentDraft?: object}} [sendOptions] Stable explicit-send identity and attachments.
  * @returns {Promise<any>} A promise that resolves to the message when it is inserted.
  */
-export async function sendMessageAsUser(messageText, messageBias, insertAt = null, compact = false, name = name1, avatar = user_avatar) {
+export async function sendMessageAsUser(messageText, messageBias, insertAt = null, compact = false, name = name1, avatar = user_avatar, sendOptions = {}) {
     messageText = getRegexedString(messageText, regex_placement.USER_INPUT);
+    const callerOwnsAttachmentDraft = Boolean(sendOptions?.attachmentDraft);
+    const attachmentDraft = sendOptions?.attachmentDraft ?? capturePendingFileAttachmentDraft();
+    const requestedMessageUuid = isValidAikobotsUuid(sendOptions?.messageUuid) ? sendOptions.messageUuid : null;
+    if (requestedMessageUuid) {
+        const existingMessage = chat.find(item => item?.is_user === true && item?.[AIKOBOTS_MESSAGE_UUID_KEY] === requestedMessageUuid);
+        if (existingMessage) {
+            return existingMessage;
+        }
+    }
     const message = {
         name: name,
         is_user: true,
         is_system: false,
-        send_date: getMessageTimeStamp(),
+        send_date: sendOptions?.sendDate || getMessageTimeStamp(),
         mes: substituteParams(messageText),
         extra: {
             isSmallSys: compact,
@@ -12383,7 +12505,16 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
         message.mes = removeMacros(message.mes);
     }
 
-    await populateFileAttachment(message);
+    const attachmentsPopulated = await populateFileAttachment(message, 'file_form_input', {
+        draft: attachmentDraft,
+        resetInput: false,
+    });
+    if (!attachmentsPopulated) {
+        return null;
+    }
+    if (requestedMessageUuid) {
+        message[AIKOBOTS_MESSAGE_UUID_KEY] = requestedMessageUuid;
+    }
     ensureMessageIdentity(message, { generateUuid: uuidv4 });
     statMesProcess(message, 'user', characters, this_chid, '');
 
@@ -12406,9 +12537,16 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
         await syncLatestPromptInspectorAfterMessageInsertion(insertAt);
         await maintainPromptSnapshotKeys({ rekeys });
         await recomputeTimedWorldInfo();
-        await saveChatConditional();
+        const saveResult = await persistInsertedChatMessage(insertAt, message);
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            return null;
+        }
         await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
-        await reloadCurrentChat();
+        try {
+            await reloadCurrentChat();
+        } catch (error) {
+            console.error('Saved inserted user message, but failed to refresh the authoritative chat', error);
+        }
         await eventSource.emit(event_types.USER_MESSAGE_RENDERED, insertAt);
     } else {
         const wasViewingLiveTail = isViewingLiveTail();
@@ -12431,6 +12569,9 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
         }
     }
 
+    if (!callerOwnsAttachmentDraft) {
+        consumePendingFileAttachmentDraft(attachmentDraft);
+    }
     return message;
 }
 
@@ -15035,7 +15176,9 @@ function updateMessage(div) {
 }
 
 function openMessageDelete(fromSlashCommand) {
-    closeMessageEditor();
+    if (blockIfEditing('deleting messages')) {
+        return;
+    }
     hideSwipeButtons();
     if (fromSlashCommand || (!is_send_press) || (selected_group && !is_group_generating)) {
         $('#dialogue_del_mes').css('display', 'block');
@@ -15306,9 +15449,9 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
     appendMediaToMessage(chat[messageId], thisMesDiv, SCROLL_BEHAVIOR.NONE);
     addCopyToCodeBlocks(thisMesDiv);
 
-    const reasoningEditDone = thisMesBlock.find('.mes_reasoning_edit_cancel:visible');
-    if (reasoningEditDone.length > 0) {
-        reasoningEditDone.trigger('click');
+    const reasoningEditCancel = thisMesBlock.find('.mes_reasoning_edit_cancel:visible');
+    if (reasoningEditCancel.length > 0) {
+        reasoningEditCancel.trigger('click');
     }
 
     if (this_edit_mes_id >= 0 && messageId != this_edit_mes_id) {
@@ -15466,7 +15609,7 @@ async function cloneEditedMessage() {
     clone.order_index = cloneOrderIndex;
 
     // 5. Close the active message editor session using closeMessageEditor()
-    closeMessageEditor();
+    await closeMessageEditor();
 
     // 6. Insert the clone into the local chat array at target.index + 1
     const insertAt = target.index + 1;
@@ -15524,7 +15667,15 @@ async function cloneEditedMessage() {
         }
         chatElement.find(`.mes[mesid="${insertedId}"]`).remove();
         updateViewMessageIds(getFirstDisplayedMessageId());
-        await reloadCurrentChat();
+        try {
+            await reloadCurrentChat();
+        } finally {
+            const originalId = chat.findIndex(message => message?.[AIKOBOTS_MESSAGE_UUID_KEY] === target.session.messageUuid);
+            if (originalId >= 0) {
+                await messageEdit(originalId);
+                chatElement.find(`.mes[mesid="${originalId}"] .edit_textarea`).val(editText).trigger('input');
+            }
+        }
     }
 
     try {
@@ -15969,7 +16120,7 @@ async function messageEditDone(div) {
     } catch (error) {
         console.warn(error);
         toastr.warning(t`The message edit could not be applied safely. Your draft is still open; retry it, or copy it before canceling and reopening the edit.`);
-        return;
+        return false;
     }
 
     let { mesBlock, text, mes, bias, messageId, ordinaryTextEdit, selectedSwipeUuid } = updateResult;
@@ -15988,9 +16139,10 @@ async function messageEditDone(div) {
         if (editEventError) {
             throw editEventError;
         }
-        return;
+        return false;
     }
     text = chat[messageId]?.mes ?? text;
+    const reasoningEdit = applyVisibleReasoningEditDraft(mesBlock);
     mesBlock.find('.mes_text').empty();
     mesBlock.find('.mes_edit_buttons').css('display', 'none');
     mesBlock.find('.mes_buttons').css('display', '');
@@ -16011,11 +16163,6 @@ async function messageEditDone(div) {
     addCopyToCodeBlocks(div.closest('.mes'));
 
     messageEditSaveInFlight = true;
-    const reasoningEditDone = mesBlock.find('.mes_reasoning_edit_done:visible');
-    if (reasoningEditDone.length > 0) {
-        reasoningEditDone.trigger('click');
-    }
-
     this_edit_mes_id = undefined;
     clearActiveMessageEditSession();
     showSwipeButtons();
@@ -16032,7 +16179,7 @@ async function messageEditDone(div) {
     try {
         await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
         if (!isMessageEditChatIdentityActive(editChatIdentity)) {
-            return;
+            return false;
         }
         if (currentChatFileNameLooksSqlite()) {
             cancelPendingSqliteAutoEditSave();
@@ -16054,14 +16201,19 @@ async function messageEditDone(div) {
 
     if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
         if (!deferAuthoritativeReloadAfterMessageEdit(editChatIdentity)) {
-            return;
+            return false;
         }
         toastr.warning(t`The message edit could not be saved. Your draft was reopened; retry it, or copy it before canceling to reload the saved message.`);
         await messageEdit(messageId);
-        return;
+        return false;
     }
 
+    if (reasoningEdit?.changed) {
+        updateMessageBlock(messageId, mes);
+        await eventSource.emit(event_types.MESSAGE_REASONING_EDITED, messageId);
+    }
     await finishMessageEditProtection();
+    return true;
 }
 
 const pastCharacterChatsCache = new Map();
@@ -22110,7 +22262,9 @@ jQuery(async function () {
         }
 
         else if (id == 'option_regenerate') {
-            closeMessageEditor();
+            if (blockIfEditing('regenerating')) {
+                return;
+            }
             if (is_send_press == false) {
                 //hideSwipeButtons();
 
@@ -22385,7 +22539,10 @@ jQuery(async function () {
                         hideSwipeButtons();
                     }
                 }
-                await messageEditDone(mes_edited);
+                const saved = await messageEditDone(mes_edited);
+                if (!saved) {
+                    return;
+                }
             }
 
             await messageEdit(clickedMessageId);

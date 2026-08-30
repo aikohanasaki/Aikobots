@@ -3324,6 +3324,41 @@ export async function appendSqliteMessage({ filePath, requestBody, saveSessionId
         assertSupportedChatStorage(header);
         throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
+        const message = _.cloneDeep(requestBody.message);
+        delete message.id;
+        delete message.order_index;
+        normalizeChatIdentities([message], { generateUuid: uuidv4 });
+        const sanitizedMessage = sanitizeChatMessageForPersistence(message);
+        const messageUuid = getAikobotsMessageUuid(sanitizedMessage);
+        const existingRow = messageUuid ? getLogicalMessageRowByUuid(db, messageUuid) : null;
+        if (existingRow) {
+            if (!_.isEqual(sanitizeChatMessageForPersistence(existingRow.message), sanitizedMessage)) {
+                throw new ChatMutationError(409, 'message_uuid_conflict');
+            }
+            const currentRevision = getChatRevision(header);
+            const responseData = {
+                status: 'noop',
+                deduplicated_message: true,
+                message_uuid: messageUuid,
+                message_id: existingRow.logicalIndex,
+            };
+            if (getRequestOperationId(requestBody)) {
+                db.run('BEGIN TRANSACTION');
+                try {
+                    recordSqliteOperationReceipt(db, requestBody, currentRevision, responseData);
+                    db.run('COMMIT');
+                } catch (error) {
+                    db.run('ROLLBACK');
+                    throw error;
+                }
+                saveDb(db, sqlitePath);
+            }
+            return buildSqliteMutationPayload(db, header, existingRow.logicalIndex, displayCount, responseData);
+        }
+        if (!messageUuid) {
+            throw new ChatMutationError(409, 'message_uuid_conflict');
+        }
+
         const revisionCheck = requireSqliteMutationRequest(requestBody, header);
         const expectedTailUuid = String(requestBody?.expected_tail_uuid || '').trim();
         if (expectedTailUuid) {
@@ -3334,16 +3369,6 @@ export async function appendSqliteMessage({ filePath, requestBody, saveSessionId
             if (getAikobotsMessageUuid(tail) !== expectedTailUuid) {
                 throw new ChatMutationError(409, 'tail_mismatch');
             }
-        }
-
-        const message = _.cloneDeep(requestBody.message);
-        delete message.id;
-        delete message.order_index;
-        normalizeChatIdentities([message], { generateUuid: uuidv4 });
-        const sanitizedMessage = sanitizeChatMessageForPersistence(message);
-        const messageUuid = getAikobotsMessageUuid(sanitizedMessage);
-        if (!messageUuid || getLogicalMessageRowByUuid(db, messageUuid)) {
-            throw new ChatMutationError(409, 'message_uuid_conflict');
         }
         const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
         let insertedMessageId;

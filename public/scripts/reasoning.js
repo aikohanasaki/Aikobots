@@ -118,6 +118,27 @@ function updateReasoningTargetFromValue(target, value) {
     }
 }
 
+/** Applies the visible reasoning draft to its in-memory message without saving or closing the editor. */
+export function applyVisibleReasoningEditDraft(messageBlock) {
+    const editButton = messageBlock?.find?.('.mes_reasoning_edit_done:visible');
+    const target = editButton?.length ? getReasoningEditTarget(editButton[0]) : null;
+    if (!target?.message?.extra) {
+        return null;
+    }
+
+    const textarea = target.messageBlock.find('.reasoning_edit_textarea');
+    if (!textarea.length) {
+        return null;
+    }
+    const newReasoning = String(textarea.val());
+    const reasoningExtra = target.swipeInfo?.extra ?? target.message.extra;
+    const changed = newReasoning !== reasoningExtra.reasoning;
+    if (changed) {
+        updateReasoningTargetFromValue(target, newReasoning);
+    }
+    return { ...target, textarea, changed };
+}
+
 /**
  * Updates the reasoning block of a message from a value.
  * @param {object} message Message object (must have .extra)
@@ -1381,21 +1402,16 @@ function setReasoningEventHandlers() {
     $(document).on('click', '.mes_reasoning_edit_done', async function (e) {
         e.stopPropagation();
         e.preventDefault();
-        const target = getReasoningEditTarget(this);
+        const messageBlock = $(this).closest('.mes');
+        const target = applyVisibleReasoningEditDraft(messageBlock);
         if (!target) {
             return;
         }
-        const { message, messageId, messageBlock, swipeInfo, swipeIndex } = target;
-        if (!message?.extra) {
+        const { message, messageId, textarea, changed: reasoningChanged } = target;
+        const messageEditDone = messageBlock.find('.mes_edit_done:visible');
+        if (messageEditDone.length) {
+            messageEditDone.trigger('click');
             return;
-        }
-
-        const textarea = messageBlock.find('.reasoning_edit_textarea');
-        const newReasoning = String(textarea.val());
-        const reasoningExtra = swipeInfo?.extra ?? message.extra;
-        const reasoningChanged = newReasoning !== reasoningExtra.reasoning;
-        if (reasoningChanged) {
-            updateReasoningTargetFromValue({ message, messageId, messageBlock, swipeInfo, swipeIndex }, newReasoning);
         }
 
         const editChatIdentity = captureMessageEditChatIdentity();
@@ -1420,17 +1436,11 @@ function setReasoningEventHandlers() {
         textarea.remove();
         updateMessageBlock(messageId, message);
 
-        const messageEditDone = messageBlock.find('.mes_edit_done:visible');
-        messageEditDone.trigger('click');
-        if (!messageEditDone.length) {
-            clearActiveMessageEditSession();
-        }
+        clearActiveMessageEditSession();
         if (reasoningChanged) {
             await eventSource.emit(event_types.MESSAGE_REASONING_EDITED, messageId);
         }
-        if (!messageEditDone.length) {
-            await finishMessageEditProtection();
-        }
+        await finishMessageEditProtection();
     });
 
     $(document).on('click', '.mes_reasoning_edit_cancel', async function (e) {

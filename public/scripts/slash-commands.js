@@ -38,6 +38,7 @@ import {
     persistInsertedChatMessage,
     reloadCurrentChat,
     removeMacros,
+    restoreUserInputToComposer,
     renameCharacter,
     renameChat,
     saveChatConditional,
@@ -295,9 +296,6 @@ export function initDefaultSlashCommands() {
                     toastr.warning(t`Cannot run /impersonate command while the reply is being generated.`);
                     return '';
                 }
-
-                // Prevent generate recursion
-                $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
 
                 outerResolve(new Promise(innerResolve => setTimeout(() => innerResolve(Generate('impersonate', options)), 1)));
             }, 1));
@@ -3480,8 +3478,6 @@ async function generateRawCallback(args, value) {
         return '';
     }
 
-    // Prevent generate recursion
-    $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
     const lock = isTrueBoolean(args?.lock);
     const as = args?.as || 'system';
     const quietToLoud = as === 'char';
@@ -3526,8 +3522,6 @@ async function generateRawCallback(args, value) {
  * @returns {Promise<string>} The generated text
  */
 async function generateCallback(args, value) {
-    // Prevent generate recursion
-    $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
     const lock = isTrueBoolean(args?.lock);
     const trim = isTrueBoolean(args?.trim?.toString());
     const as = args?.as || 'system';
@@ -3727,9 +3721,6 @@ async function deleteSwipeCallback(_, arg) {
 }
 
 async function askCharacter(args, text) {
-    // Prevent generate recursion
-    $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
-
     // Not supported in group chats
     // TODO: Maybe support group chats?
     if (selected_group) {
@@ -3757,7 +3748,17 @@ async function askCharacter(args, text) {
         const mesText = getRegexedString(text.trim(), regex_placement.SLASH_COMMAND);
         // Sending a message implicitly saves the chat, so this needs to be done before changing the character
         // Otherwise, a corruption will occur
-        await sendMessageAsUser(mesText, '');
+        let sentMessage = null;
+        try {
+            sentMessage = await sendMessageAsUser(mesText, '');
+        } catch (error) {
+            console.error('/ask user message save failed', error);
+        }
+        if (!sentMessage) {
+            restoreUserInputToComposer(mesText);
+            toastr.warning(t`The user message could not be saved. Its text was restored to the composer.`);
+            return '';
+        }
     }
 
     // Override character and send a user message
@@ -4037,9 +4038,6 @@ async function triggerGenerationCallback(args, value) {
             return '';
         }
 
-        // Prevent generate recursion
-        $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
-
         let chid = undefined;
 
         if (selected_group && value) {
@@ -4091,14 +4089,22 @@ async function sendUserMessageCallback(args, text) {
         insertAt = chat.length + insertAt;
     }
 
-    let message;
-    if ('name' in args) {
-        const name = args.name || '';
-        const avatar = findPersonaByName(name) || user_avatar;
-        message = await sendMessageAsUser(text, bias, insertAt, compact, name, avatar);
+    let message = null;
+    try {
+        if ('name' in args) {
+            const name = args.name || '';
+            const avatar = findPersonaByName(name) || user_avatar;
+            message = await sendMessageAsUser(text, bias, insertAt, compact, name, avatar);
+        }
+        else {
+            message = await sendMessageAsUser(text, bias, insertAt, compact);
+        }
+    } catch (error) {
+        console.error('Slash command user message save failed', error);
     }
-    else {
-        message = await sendMessageAsUser(text, bias, insertAt, compact);
+    if (!message) {
+        restoreUserInputToComposer(text);
+        toastr.warning(t`The user message could not be saved. Its text was restored to the composer.`);
     }
 
     return await slashCommandReturnHelper.doReturn(args.return ?? 'none', message, { objectToStringFunc: x => x.mes });
@@ -4186,9 +4192,6 @@ async function continueChatCallback(args, prompt) {
         }
 
         try {
-            // Prevent infinite recursion
-            $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
-
             const options = prompt?.trim() ? { quiet_prompt: prompt.trim(), quietToLoud: true } : {};
             await Generate('continue', options);
         } catch (error) {
@@ -4205,8 +4208,6 @@ async function continueChatCallback(args, prompt) {
 }
 
 export async function generateSystemMessage(args, prompt) {
-    $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
-
     if (!prompt) {
         console.warn('WARN: No prompt provided for /sysgen command');
         toastr.warning(t`You must provide a prompt for the system message`);

@@ -48,9 +48,7 @@ function getExtensionActionCallback(action) {
         if (reload) {
             toastr.info(t`${action.charAt(0).toUpperCase() + action.slice(1)}ing extension ${extensionName} and reloading...`);
 
-            // Clear input, so it doesn't stay because the command didn't "finish",
-            // and wait for a bit to both show the toast and let the clear bubble through.
-            $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
+            // Let the command runner own its input; a delayed reload must not clear a newer draft.
             await new Promise(resolve => setTimeout(resolve, 100));
         }
 

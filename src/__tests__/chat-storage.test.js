@@ -1484,6 +1484,63 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('acknowledges an already-saved identical message UUID without appending it twice', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-idempotent-message-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 1 }), messages);
+            const message = {
+                aikobots_message_uuid: '99999999-9999-4999-8999-999999999998',
+                name: 'User',
+                is_user: true,
+                is_system: false,
+                mes: 'save this once',
+                send_date: 'stable send date',
+                extra: {},
+            };
+            const saveSessionId = '33333333-3333-4333-8333-333333333333';
+
+            const first = await appendSqliteMessage({
+                filePath: chatPath,
+                requestBody: {
+                    operation_id: '88888888-8888-4888-8888-888888888887',
+                    message,
+                    expected_tail_uuid: messages[1].aikobots_message_uuid,
+                    base_revision: 1,
+                    save_session_id: saveSessionId,
+                },
+                saveSessionId,
+                displayCount: 10,
+            });
+            const retry = await appendSqliteMessage({
+                filePath: chatPath,
+                requestBody: {
+                    operation_id: '88888888-8888-4888-8888-888888888886',
+                    message: structuredClone(message),
+                    expected_tail_uuid: messages[1].aikobots_message_uuid,
+                    base_revision: 1,
+                    save_session_id: saveSessionId,
+                },
+                saveSessionId,
+                displayCount: 10,
+            });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(first.chat_revision).toBe(2);
+            expect(retry).toMatchObject({
+                chat_revision: 2,
+                status: 'noop',
+                deduplicated_message: true,
+                message_uuid: message.aikobots_message_uuid,
+            });
+            expect(logicalChat.filter(item => item.aikobots_message_uuid === message.aikobots_message_uuid)).toHaveLength(1);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('rejects an operation UUID reused with a different payload', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-operation-reuse-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');

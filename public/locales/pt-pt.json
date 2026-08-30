@@ -1798,4 +1798,5 @@
   ,"Model response appears truncated (provider flag). Please increase Max Response Length.": "A resposta do modelo parece truncada (indicador do fornecedor). Aumente o comprimento máximo da resposta."
   ,"Choose a Memory Book below to run consolidation without changing the chat assignment.": "Escolha abaixo um Memory Book para executar a consolidação sem alterar a associação da conversa."
   ,"STMemoryBooks_TitleFormatTooltip": "Use [0], [00], [000] para numeração automática simples; use [[0]], [[00]], [[000]] para manter os parênteses retos. Disponível: {{title}}, {{scene}}, {{char}}, {{groupname}}, {{present}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}."
+  ,"The user message could not be saved. Its text was restored to the composer.": "Não foi possível guardar a mensagem do utilizador. O texto foi restaurado na caixa de composição."
 }

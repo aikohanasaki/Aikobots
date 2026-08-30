@@ -6371,4 +6371,5 @@
   ,"Model response appears truncated (provider finish reason). Please increase Max Response Length.": "Die Modellantwort scheint abgeschnitten zu sein (Beendigungsgrund des Anbieters). Erhöhen Sie die maximale Antwortlänge."
   ,"Model response appears truncated (provider flag). Please increase Max Response Length.": "Die Modellantwort scheint abgeschnitten zu sein (Anbieterkennzeichnung). Erhöhen Sie die maximale Antwortlänge."
   ,"Choose a Memory Book below to run consolidation without changing the chat assignment.": "Wählen Sie unten ein Memory Book aus, um die Konsolidierung auszuführen, ohne die Chat-Zuweisung zu ändern."
+  ,"The user message could not be saved. Its text was restored to the composer.": "Die Benutzernachricht konnte nicht gespeichert werden. Ihr Text wurde im Eingabefeld wiederhergestellt."
 }

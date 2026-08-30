@@ -734,17 +734,23 @@ export async function unhideChatMessage(messageId, _messageBlock) {
 /**
  * Adds a file attachment to the message.
  * @param {ChatMessage} message Message object
- * @returns {Promise<void>} A promise that resolves when file is uploaded.
+ * @param {string} [inputId] File input element ID.
+ * @param {{draft?: object, resetInput?: boolean}} [options] Attachment source and reset behavior.
+ * @returns {Promise<boolean>} Whether every pending attachment was populated successfully.
  */
-export async function populateFileAttachment(message, inputId = 'file_form_input') {
+export async function populateFileAttachment(message, inputId = 'file_form_input', { draft = null, resetInput = true } = {}) {
     try {
-        if (!message) return;
+        if (!message) return false;
         if (!message.extra || typeof message.extra !== 'object') message.extra = {};
         const fileInput = document.getElementById(inputId);
-        if (!(fileInput instanceof HTMLInputElement)) return;
+        if (!(fileInput instanceof HTMLInputElement)) return false;
         let addedMedia = false;
+        const files = Array.isArray(draft?.files) ? draft.files : Array.from(fileInput.files);
+        const imageAttachments = Array.isArray(draft?.imageAttachments)
+            ? draft.imageAttachments
+            : pendingImageAttachments;
 
-        for (const file of fileInput.files) {
+        for (const file of files) {
             const slug = getStringHash(file.name);
             const fileNamePrefix = `${Date.now()}_${slug}`;
             const fileBase64 = await getBase64Async(file);
@@ -786,13 +792,14 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
                     } catch (error) {
                         toastr.error(String(error), t`Could not convert file`);
                         console.error('Could not convert file', error);
+                        return false;
                     }
                 }
 
                 const fileUrl = await uploadFileAttachment(uniqueFileName, base64Data);
 
                 if (!fileUrl) {
-                    continue;
+                    return false;
                 }
 
                 if (!Array.isArray(message.extra.files)) {
@@ -808,12 +815,12 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
             }
         }
 
-        if (inputId === 'file_form_input' && pendingImageAttachments.length > 0) {
+        if (inputId === 'file_form_input' && imageAttachments.length > 0) {
             if (!Array.isArray(message.extra.media)) {
                 message.extra.media = [];
             }
 
-            message.extra.media.push(...pendingImageAttachments.map(attachment => hydrateMediaAttachment({ ...attachment })));
+            message.extra.media.push(...imageAttachments.map(attachment => hydrateMediaAttachment({ ...attachment })));
             addedMedia = true;
         }
 
@@ -821,11 +828,18 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
             message.extra.media_index = message.extra.media.length - 1;
             message.extra.inline_image = true;
         }
+        if (resetInput) {
+            if (inputId === 'file_form_input') {
+                $('#file_form').trigger('reset');
+            } else {
+                fileInput.value = '';
+            }
+        }
+        return true;
     } catch (error) {
         console.error('Could not upload file', error);
         toastr.error(t`Either the file is corrupted or its format is not supported.`, t`Could not upload the file`);
-    } finally {
-        $('#file_form').trigger('reset');
+        return false;
     }
 }
 
@@ -913,6 +927,81 @@ export function hasPendingFileAttachment() {
     const fileInput = document.getElementById('file_form_input');
     if (!(fileInput instanceof HTMLInputElement)) return false;
     return fileInput.files.length > 0 || pendingImageAttachments.length > 0;
+}
+
+/** Captures pending composer attachments so a rejected send can restore them. */
+export function capturePendingFileAttachmentDraft() {
+    const fileInput = document.getElementById('file_form_input');
+    return {
+        files: fileInput instanceof HTMLInputElement ? Array.from(fileInput.files) : [],
+        imageAttachments: pendingImageAttachments.map(attachment => structuredClone(attachment)),
+    };
+}
+
+/** Restores rejected attachments without replacing files added while the save was pending. */
+export function restorePendingFileAttachmentDraft(draft) {
+    if (!draft || typeof draft !== 'object') {
+        return false;
+    }
+
+    const fileInput = document.getElementById('file_form_input');
+    if (fileInput instanceof HTMLInputElement) {
+        const dataTransfer = new DataTransfer();
+        for (const file of [...(Array.isArray(draft.files) ? draft.files : []), ...Array.from(fileInput.files)]) {
+            if (file instanceof File && !Array.from(dataTransfer.files).some(existing => isSameFile(existing, file))) {
+                dataTransfer.items.add(file);
+            }
+        }
+        fileInput.files = dataTransfer.files;
+    }
+
+    const restoredImages = Array.isArray(draft.imageAttachments) ? draft.imageAttachments : [];
+    for (const attachment of restoredImages.toReversed()) {
+        const identity = String(attachment?.media_id || attachment?.url || attachment?.originalUrl || '');
+        const alreadyPending = identity && pendingImageAttachments.some(current => (
+            String(current?.media_id || current?.url || current?.originalUrl || '') === identity
+        ));
+        if (!alreadyPending) {
+            pendingImageAttachments.unshift(structuredClone(attachment));
+        }
+    }
+
+    updateFileFormUi();
+    registerFileFormResetOnChatChange();
+    return true;
+}
+
+/** Removes only the attachments owned by a successfully saved composer draft. */
+export function consumePendingFileAttachmentDraft(draft) {
+    if (!draft || typeof draft !== 'object') {
+        return false;
+    }
+
+    const filesToRemove = Array.isArray(draft.files) ? draft.files : [];
+    const fileInput = document.getElementById('file_form_input');
+    if (fileInput instanceof HTMLInputElement) {
+        const dataTransfer = new DataTransfer();
+        for (const file of Array.from(fileInput.files)) {
+            if (!filesToRemove.some(sentFile => sentFile instanceof File && isSameFile(sentFile, file))) {
+                dataTransfer.items.add(file);
+            }
+        }
+        fileInput.files = dataTransfer.files;
+    }
+
+    const imagesToRemove = new Set((Array.isArray(draft.imageAttachments) ? draft.imageAttachments : [])
+        .map(attachment => String(attachment?.media_id || attachment?.url || attachment?.originalUrl || ''))
+        .filter(Boolean));
+    for (let index = pendingImageAttachments.length - 1; index >= 0; index--) {
+        const attachment = pendingImageAttachments[index];
+        const identity = String(attachment?.media_id || attachment?.url || attachment?.originalUrl || '');
+        if (identity && imagesToRemove.has(identity)) {
+            pendingImageAttachments.splice(index, 1);
+        }
+    }
+
+    updateFileFormUi();
+    return true;
 }
 
 /**
@@ -1058,10 +1147,20 @@ function embedMessageFile(messageId, messageBlock) {
             }
         }
 
-        await populateFileAttachment(message, 'embed_file_input');
+        const originalExtra = structuredClone(message.extra);
+        const populated = await populateFileAttachment(message, 'embed_file_input', { resetInput: false });
+        if (!populated) {
+            return;
+        }
+        const saveResult = await saveSingleMessageMutation(messageId, message);
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            message.extra = originalExtra;
+            appendMediaToMessage(message, messageBlock, SCROLL_BEHAVIOR.KEEP);
+            return;
+        }
+        e.target.value = '';
         await eventSource.emit(event_types.MESSAGE_FILE_EMBEDDED, messageId);
         appendMediaToMessage(message, messageBlock, SCROLL_BEHAVIOR.KEEP);
-        await saveSingleMessageMutation(messageId, message);
     }
 }
 

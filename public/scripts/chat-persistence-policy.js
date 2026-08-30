@@ -35,3 +35,18 @@ export function shouldSkipUnstartedCharacterChatSave({ isTemporary, hasLocalPris
 export function shouldQueueAcknowledgedChatSave({ shouldTrackRevision, isSqlite, isTemporaryCharacterSave, isPendingSoloCharacterSave }) {
     return Boolean(shouldTrackRevision && (isSqlite || isTemporaryCharacterSave || isPendingSoloCharacterSave));
 }
+
+/**
+ * Restores a rejected send without overwriting text entered while its save was pending.
+ * @param {string} rejectedText Text removed from the composer for the rejected send.
+ * @param {string} currentText Current composer contents.
+ * @returns {string}
+ */
+export function mergeRejectedSendDraft(rejectedText, currentText) {
+    const rejectedDraft = String(rejectedText || '');
+    const currentDraft = String(currentText || '');
+    if (!rejectedDraft || currentDraft === rejectedDraft) {
+        return currentDraft;
+    }
+    return currentDraft ? `${rejectedDraft}\n\n${currentDraft}` : rejectedDraft;
+}
