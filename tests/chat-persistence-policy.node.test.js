@@ -132,6 +132,26 @@ test('a posted send can commit after its temporary chat receives a persistent na
     ), false);
 });
 
+test('a posted group send can commit while generation temporarily selects a member', () => {
+    const messageUuid = '11111111-1111-4111-8111-111111111111';
+    const sendAttempt = {
+        chatIdentity: { groupId: 'group-1', characterId: '', chatId: 'chat-1' },
+        messageUuid,
+    };
+    const messages = [{ aikobots_message_uuid: messageUuid }];
+
+    assert.equal(canCommitComposerSendAttempt(
+        sendAttempt,
+        { groupId: 'group-1', characterId: '4', chatId: 'chat-1' },
+        messages,
+    ), true);
+    assert.equal(canCommitComposerSendAttempt(
+        sendAttempt,
+        { groupId: 'group-2', characterId: '4', chatId: 'chat-1' },
+        messages,
+    ), false);
+});
+
 test('only an explicit normal Send owns and consumes the composer after persistence', () => {
     const scriptSource = fs.readFileSync(new URL('../public/script.js', import.meta.url), 'utf8');
     assert.match(scriptSource, /Generate\(generateType, { consumeComposer: generateType === 'normal' }\)/);

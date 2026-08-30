@@ -54,7 +54,7 @@ export function mergeRejectedSendDraft(rejectedText, currentText) {
 }
 
 /**
- * Allows a saved composer send to commit after the same chat receives its first persistent name.
+ * Allows a saved composer send to commit after a benign active-identity change.
  * @param {object|null|undefined} sendAttempt Captured composer send attempt.
  * @param {object|null|undefined} currentChatIdentity Current active chat identity.
  * @param {object[]} messages Current active chat messages.
@@ -69,8 +69,10 @@ export function canCommitComposerSendAttempt(sendAttempt, currentChatIdentity, m
         return true;
     }
 
-    const hasSameOwner = sendAttempt.chatIdentity?.groupId === currentChatIdentity.groupId
-        && sendAttempt.chatIdentity?.characterId === currentChatIdentity.characterId;
+    const groupId = sendAttempt.chatIdentity?.groupId;
+    const hasSameOwner = groupId
+        ? groupId === currentChatIdentity.groupId
+        : !currentChatIdentity.groupId && sendAttempt.chatIdentity?.characterId === currentChatIdentity.characterId;
     if (!hasSameOwner) {
         return false;
     }
