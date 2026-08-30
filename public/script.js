@@ -279,7 +279,7 @@ import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
 import { canGenerateHistoricalSwipe, shouldDisplaySwipeCounter, shouldRestoreSwipeButtons } from './scripts/swipe-policy.js';
-import { mergeRejectedSendDraft, shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence-policy.js';
+import { canCommitComposerSendAttempt, mergeRejectedSendDraft, shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from './scripts/chat-persistence-policy.js';
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
@@ -10387,7 +10387,7 @@ export function restoreUserInputToComposer(messageText) {
 
 /** Consumes only the composer draft that now belongs to a durably saved user message. */
 export function commitComposerSendAttempt(sendAttempt) {
-    if (!sendAttempt || !isSameChatIdentity(sendAttempt.chatIdentity, getActiveChatIdentity())) {
+    if (!canCommitComposerSendAttempt(sendAttempt, getActiveChatIdentity(), chat)) {
         return false;
     }
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { mergeRejectedSendDraft, shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from '../public/scripts/chat-persistence-policy.js';
+import { canCommitComposerSendAttempt, mergeRejectedSendDraft, shouldQueueAcknowledgedChatSave, shouldSkipUnstartedCharacterChatSave } from '../public/scripts/chat-persistence-policy.js';
 
 test('zero-message temporary character chats always stay client-only', () => {
     assert.equal(shouldSkipUnstartedCharacterChatSave({
@@ -106,6 +106,30 @@ test('a rejected send is restored without overwriting newer composer input', () 
         'rejected message\n\nnewer draft',
     );
     assert.equal(mergeRejectedSendDraft('', 'newer draft'), 'newer draft');
+});
+
+test('a posted send can commit after its temporary chat receives a persistent name', () => {
+    const messageUuid = '11111111-1111-4111-8111-111111111111';
+    const sendAttempt = {
+        chatIdentity: { groupId: '', characterId: '3', chatId: 'temporary-chat' },
+        messageUuid,
+    };
+
+    assert.equal(canCommitComposerSendAttempt(
+        sendAttempt,
+        { groupId: '', characterId: '3', chatId: 'saved-chat' },
+        [{ aikobots_message_uuid: messageUuid }],
+    ), true);
+    assert.equal(canCommitComposerSendAttempt(
+        sendAttempt,
+        { groupId: '', characterId: '3', chatId: 'other-chat' },
+        [],
+    ), false);
+    assert.equal(canCommitComposerSendAttempt(
+        sendAttempt,
+        { groupId: '', characterId: '4', chatId: 'saved-chat' },
+        [{ aikobots_message_uuid: messageUuid }],
+    ), false);
 });
 
 test('only an explicit normal Send owns and consumes the composer after persistence', () => {

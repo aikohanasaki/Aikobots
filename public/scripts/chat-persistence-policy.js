@@ -1,3 +1,5 @@
+import { findMessageByAikobotsUuid, isSameChatIdentity } from './chat-identities.js';
+
 /**
  * Returns whether an unpersisted character chat must remain client-only.
  * @param {object} options Persistence context.
@@ -49,4 +51,30 @@ export function mergeRejectedSendDraft(rejectedText, currentText) {
         return currentDraft;
     }
     return currentDraft ? `${rejectedDraft}\n\n${currentDraft}` : rejectedDraft;
+}
+
+/**
+ * Allows a saved composer send to commit after the same chat receives its first persistent name.
+ * @param {object|null|undefined} sendAttempt Captured composer send attempt.
+ * @param {object|null|undefined} currentChatIdentity Current active chat identity.
+ * @param {object[]} messages Current active chat messages.
+ * @returns {boolean} Whether the send still belongs to the active chat.
+ */
+export function canCommitComposerSendAttempt(sendAttempt, currentChatIdentity, messages) {
+    if (!sendAttempt || !currentChatIdentity) {
+        return false;
+    }
+
+    if (isSameChatIdentity(sendAttempt.chatIdentity, currentChatIdentity)) {
+        return true;
+    }
+
+    const hasSameOwner = sendAttempt.chatIdentity?.groupId === currentChatIdentity.groupId
+        && sendAttempt.chatIdentity?.characterId === currentChatIdentity.characterId;
+    if (!hasSameOwner) {
+        return false;
+    }
+
+    const postedMessage = findMessageByAikobotsUuid(messages, sendAttempt.messageUuid);
+    return postedMessage.ok;
 }
