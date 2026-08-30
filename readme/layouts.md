@@ -756,6 +756,12 @@ Each compact `.top_chat_tab` contains the character or group avatar, an accessib
 
 Standard users see the same top-bar entry in its locked state. The explanation is local UI only and does not include a billing link. Tab identities and labels are content-free and session-scoped; generated content never belongs in layout state.
 
+## 26. Notification history
+
+The core `#toast-history-trigger` is inserted at the start of `#top-settings-holder` after localization initializes. It stays hidden until a notification is recorded and then shows separate counts for info, success, warning, and error notifications. Layouts may adjust spacing, but must preserve the trigger's keyboard focus, accessible summary, and native `hidden` state.
+
+The `.toast-history-list` and `.toast-history-suppressions` surfaces use standard popups and SmartTheme colors from `public/style.css`. History cards keep their severity border, plain-text title and message, timestamp, and suppression control readable on desktop and mobile. History and suppressions are current-tab state only; layouts must not copy their content into attributes, generated CSS, logs, or persistent layout state.
+
 ## Frontend production bundles
 
 The v5 client serves committed production bundles from `public/dist`; server and PM2 startup never compile frontend assets. After changing frontend JavaScript, static CSS, built-in extension manifests/resources, or startup templates, run `npm run build:frontend` and commit the generated files. CI and release checks should run `npm run check:frontend-build` to rebuild in a temporary directory and verify that the committed output is current.

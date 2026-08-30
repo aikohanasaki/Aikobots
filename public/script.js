@@ -287,6 +287,9 @@ import { clearPendingGeneration, getSupersededFailedGenerationIds, isSameGenerat
 import { createGenerationReadinessSignal, waitForGenerationReadiness, waitForGenerationSettlement } from './scripts/generation-readiness.js';
 import { captureChatWorkspaceTabFocus, getChatWorkspaceRecoveryRefreshDelay, getLatestChatWorkspaceRecovery, listChatWorkspaceTabs, removeChatWorkspaceTab, removeChatWorkspaceTabByIdentity, restoreChatWorkspaceTabFocus, upsertChatWorkspaceTab } from './scripts/chat-workspace-tabs.js';
 import { initWorldInfoLocks, loadWorldInfoLocksSettings } from './scripts/world-info-locks.js';
+import { SlashCommand } from './scripts/slash-commands/SlashCommand.js';
+import { SlashCommandParser } from './scripts/slash-commands/SlashCommandParser.js';
+import { ToastHistoryStore, initToastHistoryUi, installToastHistoryCapture } from './scripts/notification-history.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
 
@@ -923,6 +926,9 @@ toastr.options = {
         $(this).attr('title', t`Tap to close`);
     },
 };
+
+const toastHistoryStore = new ToastHistoryStore();
+installToastHistoryCapture({ toastr, store: toastHistoryStore });
 
 export const characterGroupOverlay = new BulkEditOverlay();
 
@@ -4589,6 +4595,16 @@ async function firstLoadInit() {
     await initSecrets();
     await readSecretState();
     await initLocales({ registerDebugFunction, onLocaleApplied: updateSecretDisplay });
+    initToastHistoryUi({
+        store: toastHistoryStore,
+        documentRef: document,
+        Popup,
+        POPUP_RESULT,
+        POPUP_TYPE,
+        SlashCommand,
+        SlashCommandParser,
+        translate,
+    });
     initChatUtilities();
     initDefaultSlashCommands();
     initOpenAI();

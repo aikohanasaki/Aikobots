@@ -30,6 +30,7 @@ Additional Aikobots Credits
 * [@Cohee1207](https://github.com/Cohee1207) for Top Info Bar aka Chat Top Bar (AGPL-3.0 License)
 * [Favorites Carousel](https://github.com/subzero5544/favorites-carousel) by [@subzero5544](https://github.com/subzero5544) (AGPL-3.0 License)
 * [Silence Player](https://github.com/SillyTavern/Extension-Silence) by [@Cohee1207](https://github.com/Cohee1207) (AGPL-3.0 License)
+* [Toast History](https://github.com/LenAnderson/SillyTavern-ToastHistory) by [@LenAnderson](https://github.com/LenAnderson/)
 
 ## Documentation Links
 
