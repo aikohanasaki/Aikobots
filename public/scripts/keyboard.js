@@ -233,6 +233,7 @@ function handleGlobalKeyDown(event) {
                 return;
             }
 
+            event.preventDefault();
             console.debug('Triggering click on keyboard-focused interactable control via Enter', target);
             target.click();
         }
