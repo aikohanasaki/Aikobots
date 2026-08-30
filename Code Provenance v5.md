@@ -2,7 +2,7 @@
 
 Aikobots v5 began by changing how the browser application is delivered. Earlier versions served roughly 200 or more individual JavaScript and CSS files during startup. v5 builds those sources ahead of time into a small, deterministic set of production bundles committed under `public/dist`.
 
-The current v5.1 line also adds a shared detached-generation scheduler, server-authoritative prompt preparation for ordinary SQLite chats, resumable patron chat tabs, safer new-chat persistence, cross-worker user-record updates, administrative session reset, Data Maid lorebook cleanup, Russian localization, and a unified test toolchain.
+The current v5.1 line also adds a shared detached-generation scheduler, server-authoritative prompt preparation for ordinary SQLite chats, resumable patron chat tabs, safer new-chat persistence, cross-worker user-record updates, administrative session reset, Data Maid lorebook cleanup, tab-local notification history, Russian localization, and a unified test toolchain.
 
 This is not a chat-storage reset. v5 carries forward the native SQLite chat format, transaction, identity, locking, and recovery architecture documented in [Code Provenance v4](Code%20Provenance%20v4.md). The original v5.0 bundle work did not change application APIs or persistent payloads. Later v5.x work adds generation-job APIs and a separate content-restricted job database, but does not replace or expose chat, secure-lorebook, or character storage.
 
@@ -154,6 +154,12 @@ The Memory Books help drawer now links directly to the AI Reference Manual match
 
 Russian is now a maintained Aikobots UI locale alongside German, French, Japanese, and Portuguese. The localization audit checks all five supported non-English locale files for current tagged UI coverage. Memory Assistance translations specifically credited to the STMB reference remain the German, French, Japanese, and Portuguese copies described in the overall provenance guide; Russian UI coverage is part of the later Aikobots integration work.
 
+### Toast History is independently implemented core UI
+
+v5.1 adds a frontend-only notification history inspired by the observable behavior of Len Anderson's `SillyTavern-ToastHistory`. The referenced repository did not include a license file when this feature was implemented, so its source code was not copied, adapted, bundled, or treated as licensed input. The Aikobots implementation was written independently against the existing core Toastr and popup interfaces; the external project is credited as the behavioral reference rather than as a source-code dependency.
+
+The core feature retains up to 200 plain-text notification records and exact-match suppressions only in the current browser tab. It does not persist or transmit history, suppress live toasts, or retain and replay historical callbacks. Its source, tests, supported-locale strings, SmartTheme styling, layout documentation, and generated frontend bundle changes are Aikobots v5 work.
+
 ### The test toolchain is explicit and reproducible
 
 v5.1 pins Node.js 24.18.0 and npm 12.0.1, records dependency install-script policy, and separates `node:test` files from Jest files by filename. `npm test` runs a read-only environment doctor, both unit-test runners, the committed frontend comparison, and the self-contained Chromium smoke test. `npm run verify` adds ESLint and full localization coverage.
@@ -162,7 +168,7 @@ The Selenium harness remains explicit because it requires a running server, a de
 
 ## Summary
 
-v5 turns Aikobots from a source-file-heavy browser startup into a prebuilt application release. v5.1 extends that release with content-restricted detached generation jobs, fair shared scheduling, server-authoritative prompt preparation, request-scoped model-aware World Info scanning, and a patron tab workspace that reuses the existing chat runtime.
+v5 turns Aikobots from a source-file-heavy browser startup into a prebuilt application release. v5.1 extends that release with content-restricted detached generation jobs, fair shared scheduling, server-authoritative prompt preparation, request-scoped model-aware World Info scanning, a patron tab workspace that reuses the existing chat runtime, and independently implemented tab-local notification history.
 
 The practical result is fewer startup round trips and the ability to park, queue, resume, and safely commit generation work across chats without replacing the v4 chat format or widening secure lorebook access. The same line also strengthens pristine-chat persistence, account/session concurrency, lorebook cleanup, localization, and verification.
 

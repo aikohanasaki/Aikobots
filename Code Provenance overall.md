@@ -196,6 +196,12 @@ After integration into Aikobots, the feature initially retained the extension li
 
 The current v5.1 implementation removes the integrated Model Injection client module, slash-command pipeline, generation event hook, and metadata write. Core server prompt assembly now derives `MODEL=<model ID>` from the model frozen for that generation request and adds it directly as a request-scoped World Info scan input. It remains hidden from assembled model messages, is never written to chat storage, and overrides any legacy persisted `core-model-tag` value in memory so stale metadata cannot select the wrong model-specific lorebook entry.
 
+### 27. Core Toast History
+
+Aikobots v5.1 adds a frontend-only notification history inspired by the observable behavior of Len Anderson's `SillyTavern-ToastHistory`. The referenced repository did not include a license file when this feature was implemented. No source from that repository was copied, adapted, bundled, or used as licensed input; the Aikobots core implementation was written independently against the existing Toastr, popup, localization, and slash-command interfaces. The external project is credited as the behavioral reference.
+
+History and exact-match suppressions exist only in the current browser tab. Stored records are capped at 200 and contain only notification severity, plain-text title and message, and timestamp; options, DOM nodes, and callbacks are not retained. The feature does not suppress live toasts, persist or transmit notification content, or replay historical actions.
+
 ## Forked or Integrated Third-Party Work
 
 Aikobots credits upstream and third-party work where used. Relevant examples include:
@@ -206,6 +212,7 @@ Aikobots credits upstream and third-party work where used. Relevant examples inc
 * Chat Top Bar / Top Info Bar by Cohee1207.
 * Favorites Carousel by subzero5544.
 * SillyTavern-ModelInjection by Aiko Hanasaki, subsequently integrated and refactored into request-scoped core World Info scanning.
+* SillyTavern-ToastHistory by Len Anderson as a behavioral reference for an independently written core feature; its source was not incorporated.
 * Other credited extensions, UI components, or features listed in the main README License and Credits section.
 
 Where Aikobots forks or modifies third-party extensions, the relevant extension repository should identify the upstream project and summarize Aikobots-specific changes.
