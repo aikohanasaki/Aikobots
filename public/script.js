@@ -6405,6 +6405,10 @@ function getServerGenerationSource(type) {
     };
 }
 
+/**
+ * Applies a server chat chunk only while its captured chat identity is active.
+ * @returns {object|null|false} The accepted header, null for an accepted empty chat, or false for a different chat.
+ */
 export function applyChunkedChatPayload(response, { replace = false, currentView = null } = {}) {
     const payload = validateChunkedChatPayload(response, {
         requireLatestTail: replace && currentView === 'tail',
@@ -6417,7 +6421,7 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
             chatKey,
             activeChatKey,
         });
-        return null;
+        return false;
     }
 
     setChatSaveRevision(header?.chat_revision ?? response?.chat_revision);
@@ -14571,6 +14575,9 @@ export async function getChat() {
         }
         // A brand-new chat may not have a file on disk yet. Treat that as a valid empty chat.
         const header = applyChunkedChatPayload(response, { replace: true, currentView: 'tail' });
+        if (header === false) {
+            return false;
+        }
         if (header) {
             clearTemporaryCharacterChat();
         } else {

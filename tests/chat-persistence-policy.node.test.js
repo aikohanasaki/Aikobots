@@ -98,6 +98,20 @@ test('first SQLite character-chat saves wait for and adopt the revision acknowle
     }), false);
 });
 
+test('a rejected cross-chat hydration cannot mark the active chat temporary', () => {
+    const scriptSource = fs.readFileSync(new URL('../public/script.js', import.meta.url), 'utf8');
+    const hydrationStart = scriptSource.indexOf('export function applyChunkedChatPayload');
+    const loadStart = scriptSource.indexOf('export async function getChat()');
+    const rejectedResult = scriptSource.indexOf('return false;', hydrationStart);
+    const applyResult = scriptSource.indexOf("const header = applyChunkedChatPayload(response, { replace: true, currentView: 'tail' });", loadStart);
+    const rejectedGuard = scriptSource.indexOf('if (header === false)', applyResult);
+    const temporaryTransition = scriptSource.indexOf('setTemporaryCharacterChat(characters[this_chid]?.chat);', rejectedGuard);
+
+    assert.ok(hydrationStart >= 0 && rejectedResult > hydrationStart);
+    assert.ok(loadStart >= 0 && applyResult > loadStart);
+    assert.ok(rejectedGuard > applyResult && temporaryTransition > rejectedGuard);
+});
+
 test('a rejected send is restored without overwriting newer composer input', () => {
     assert.equal(mergeRejectedSendDraft('rejected message', ''), 'rejected message');
     assert.equal(mergeRejectedSendDraft('rejected message', 'rejected message'), 'rejected message');
