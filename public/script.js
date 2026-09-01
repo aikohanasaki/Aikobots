@@ -10888,6 +10888,9 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         creatorNotes,
     } = getCharacterCardFields();
     const serverPreparationSource = !dryRun ? getServerGenerationSource(type) : null;
+    const serverPreparedContinueBase = serverPreparationSource && isContinue
+        ? String(chat.at(-1)?.mes || '')
+        : '';
 
     // Depth prompt (character-specific A/N)
     removeDepthPrompts();
@@ -11079,7 +11082,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     let chat2 = [];
-    let continue_mag = '';
+    let continue_mag = serverPreparedContinueBase;
     let userMessageIndices = [];
     for (let i = coreChat.length - 1, j = 0; i >= 0; i--, j++) {
         if (main_api == 'openai') {
@@ -11124,7 +11127,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
     let examplesString = '';
     let chatString = addChatsPreamble(addChatsSeparator(''));
-    let cyclePrompt = serverPreparationSource && isContinue ? String(chat.at(-1)?.mes || '') : '';
+    let cyclePrompt = serverPreparedContinueBase;
     const addUserAlignment = false;
     const userAlignmentMessage = '';
 

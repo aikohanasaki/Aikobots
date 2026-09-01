@@ -218,3 +218,16 @@ test('background generation and failed edit transitions cannot consume user draf
     assert.doesNotMatch(slashSource, /send_textarea.*\.val\(''\)/);
     assert.doesNotMatch(extensionSlashSource, /send_textarea.*\.val\(''\)/);
 });
+
+test('server-prepared Continue preserves the existing message as its merge base', () => {
+    const scriptSource = fs.readFileSync(new URL('../public/script.js', import.meta.url), 'utf8');
+
+    assert.match(
+        scriptSource,
+        /const serverPreparedContinueBase = serverPreparationSource && isContinue\s*\?\s*String\(chat\.at\(-1\)\?\.mes \|\| ''\)\s*:\s*'';/,
+    );
+    assert.match(scriptSource, /let continue_mag = serverPreparedContinueBase;/);
+    assert.match(scriptSource, /let cyclePrompt = serverPreparedContinueBase;/);
+    assert.match(scriptSource, /this\.continueMessage \+ text/);
+    assert.match(scriptSource, /getMessage = continue_mag \+ getMessage/);
+});
