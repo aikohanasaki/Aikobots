@@ -6458,7 +6458,8 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
 }
 
 
-function chunkedPayloadIncludesLatestTail(response) {
+/** Returns whether a chunked chat payload includes its authoritative last message. */
+export function chunkedPayloadIncludesLatestTail(response) {
     const totalMessages = Number(response?.totalMessages);
     const loadedRangeEnd = Number(response?.loadedRangeEnd);
 
@@ -6469,7 +6470,8 @@ function chunkedPayloadIncludesLatestTail(response) {
     return loadedRangeEnd === totalMessages - 1;
 }
 
-async function fetchLatestTailForPayload(response, options = {}) {
+/** Refetches the latest chat window using the total reported by an earlier payload. */
+export async function fetchLatestTailForPayload(response, options = {}) {
     const totalMessages = Number(response?.totalMessages);
     const optionCount = Number(options?.count);
     const count = Number.isFinite(optionCount) && optionCount > 0

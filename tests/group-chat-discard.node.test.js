@@ -24,3 +24,18 @@ test('new group chats flush pending changes without a second whole-chat save', a
     assert.match(createNewGroupChatSource, /const pendingSaveResult = await flushDebouncedChatSave\(\)/u);
     assert.ok(createNewGroupChatSource.indexOf('flushDebouncedChatSave()') < createNewGroupChatSource.indexOf('group.chat_id = newChatName'));
 });
+
+test('group chat loading refetches a missing latest tail before recovery can inspect it', async () => {
+    const source = await fs.readFile(path.join(import.meta.dirname, '..', 'public', 'scripts', 'group-chats.js'), 'utf8');
+    const functionStart = source.indexOf('export async function getGroupChat');
+    const functionEnd = source.indexOf('\n/**\n * Retrieves the members of a group', functionStart);
+    const getGroupChatSource = source.slice(functionStart, functionEnd);
+    const initialLoad = getGroupChatSource.indexOf('await loadGroupChat');
+    const tailCheck = getGroupChatSource.indexOf('if (!chunkedPayloadIncludesLatestTail(payload))');
+    const tailRefetch = getGroupChatSource.indexOf('await fetchLatestTailForPayload');
+    const payloadApply = getGroupChatSource.indexOf('applyChunkedChatPayload');
+
+    assert.ok(initialLoad >= 0 && initialLoad < tailCheck);
+    assert.ok(tailCheck < tailRefetch);
+    assert.ok(tailRefetch < payloadApply);
+});

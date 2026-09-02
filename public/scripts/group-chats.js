@@ -99,6 +99,8 @@ import {
     blockMessageEditNavigation,
     flushDebouncedChatSave,
     applyChunkedChatPayload,
+    chunkedPayloadIncludesLatestTail,
+    fetchLatestTailForPayload,
     getConfiguredLongChatDisplayCount,
     getInitialChatDisplayCount,
     prefetchCurrentChatTailBuffer,
@@ -511,9 +513,21 @@ export async function getGroupChat(groupId, reload = false) {
     await unshallowGroupMembers(groupId);
 
     const chat_id = group.chat_id;
+    const initialCount = getInitialChatDisplayCount();
     let payload;
     try {
         payload = await loadGroupChat(chat_id, { withMetadata: true, chunked: true });
+        if (!chunkedPayloadIncludesLatestTail(payload)) {
+            console.warn('Initial group chat payload did not include the latest tail. Refetching latest tail before render.', {
+                totalMessages: payload?.totalMessages,
+                loadedRangeStart: payload?.loadedRangeStart,
+                loadedRangeEnd: payload?.loadedRangeEnd,
+            });
+            payload = await fetchLatestTailForPayload(payload, { count: initialCount });
+            if (!chunkedPayloadIncludesLatestTail(payload)) {
+                throw new Error('Latest group chat tail could not be loaded');
+            }
+        }
     } catch (error) {
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be loaded`);
         console.error('Group chat could not be loaded', error);
