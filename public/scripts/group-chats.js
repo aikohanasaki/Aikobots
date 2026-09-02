@@ -1012,15 +1012,6 @@ async function saveGroupChat(groupId, shouldSaveGroup, { force = false, forcePus
     return CHAT_SAVE_RESULT.SAVED;
 }
 
-async function persistActiveGroupChat(groupId) {
-    const group = groups.find(x => x.id === groupId);
-    if (!group?.chat_id || String(selected_group) !== String(groupId)) {
-        return CHAT_SAVE_RESULT.SAVED;
-    }
-
-    return await saveGroupChat(groupId, false);
-}
-
 async function getGroupChatDeleteRevisionFields(groupId, chatId) {
     const isActiveChat = String(selected_group || '') === String(groupId || '')
         && String(getCurrentChatId() || '') === String(chatId || '');
@@ -2487,10 +2478,6 @@ export async function createNewGroupChat(groupId) {
     const newChatName = humanizedDateTime();
     const hadExistingChats = group.chats.length > 0;
 
-    const saveResult = await persistActiveGroupChat(groupId);
-    if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-        return false;
-    }
     await clearChat();
     chat.length = 0;
     group.chats.push(newChatName);
@@ -2530,7 +2517,7 @@ export async function getGroupPastChats(groupId) {
     }
 }
 
-export async function openGroupChat(groupId, chatId, { skipClear = false, flushPendingSave = true, persistCurrentChat = true } = {}) {
+export async function openGroupChat(groupId, chatId, { skipClear = false, flushPendingSave = true } = {}) {
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
     const group = groups.find(x => x.id === groupId);
 
@@ -2552,9 +2539,6 @@ export async function openGroupChat(groupId, chatId, { skipClear = false, flushP
     const deferredLoader = deferLoader();
 
     try {
-        if (flushPendingSave && persistCurrentChat) {
-            await persistActiveGroupChat(groupId);
-        }
         if (!skipClear) {
             await clearChat({ flushPendingSave });
         }
