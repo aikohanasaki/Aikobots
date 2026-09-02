@@ -16964,6 +16964,7 @@ export async function openManageChatsOwnerChat(ownerContext, fileName, { discard
         await openGroupChat(String(normalizedOwner.id), fileName, {
             skipClear: !ownerAlreadyActive,
             flushPendingSave: !discardCurrentChat,
+            persistCurrentChat: ownerAlreadyActive,
         });
     } else {
         await openCharacterChat(fileName, {

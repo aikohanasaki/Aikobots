@@ -2530,7 +2530,7 @@ export async function getGroupPastChats(groupId) {
     }
 }
 
-export async function openGroupChat(groupId, chatId, { skipClear = false, flushPendingSave = true } = {}) {
+export async function openGroupChat(groupId, chatId, { skipClear = false, flushPendingSave = true, persistCurrentChat = true } = {}) {
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
     const group = groups.find(x => x.id === groupId);
 
@@ -2552,7 +2552,7 @@ export async function openGroupChat(groupId, chatId, { skipClear = false, flushP
     const deferredLoader = deferLoader();
 
     try {
-        if (flushPendingSave) {
+        if (flushPendingSave && persistCurrentChat) {
             await persistActiveGroupChat(groupId);
         }
         if (!skipClear) {
