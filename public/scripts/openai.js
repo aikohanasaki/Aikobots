@@ -32,6 +32,7 @@ import {
 import { getGroupMacroValues, getGroupNames, groups, selected_group } from './group-chats.js';
 import { extension_settings } from './extensions.js';
 import { clearForcedActivationEntries, world_info_overflow_alert } from './world-info.js';
+import { accumulateClaudeToolTurnBlock } from './claude.js';
 
 import {
     chatCompletionDefaultPrompts,
@@ -486,6 +487,8 @@ function getUnknownModelMaxContext(model, defaultContext = max_128k) {
 
 let biasCache = undefined;
 export let model_list = [];
+let claudeCatalogAuthoritative = false;
+let claudeCatalogAvailable = false;
 
 export const chat_completion_sources = {
     OPENAI: 'openai',
@@ -838,7 +841,7 @@ const providerConfigs = {
         apiKey: SECRET_KEYS.CLAUDE,
         apiKeySelector: '#api_key_claude',
         supportsReverseProxy: true,
-        supportsStatusCheck: false,
+        supportsStatusCheck: true,
     },
     [chat_completion_sources.OPENROUTER]: {
         modelSetting: 'openrouter_model',
@@ -1201,6 +1204,9 @@ function setOpenAIMessages(chat) {
         const originModel = chat[i]?.extra?.model;
         const isSameModel = originApi === currentApi && originModel === currentModel;
         const signature = isSameModel ? chat[i]?.extra?.reasoning_signature : null;
+        const claudeToolTurnBlocks = isSameModel && currentApi === chat_completion_sources.CLAUDE
+            ? structuredClone(chat[i]?.extra?.claude_tool_turn_blocks || null)
+            : null;
 
         if (Array.isArray(invocations) && invocations.length > 0 && !isSameModel) {
             invocations.forEach((invocation, index) => {
@@ -1212,7 +1218,7 @@ function setOpenAIMessages(chat) {
             });
         }
 
-        messages.push({ 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations, 'signature': signature });
+        messages.push({ 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations, 'signature': signature, 'claude_tool_turn_blocks': claudeToolTurnBlocks });
     }
 
     return messages;
@@ -2033,9 +2039,20 @@ function getPreferredOpenAIModel(models, currentModel) {
     return models[0].id;
 }
 
-function saveModelList(data) {
+function saveModelList(data, responseData = {}) {
     model_list = data.map((model) => ({ ...model }));
-    model_list.sort((a, b) => a?.id && b?.id && a.id.localeCompare(b.id));
+    if (oai_settings.chat_completion_source !== chat_completion_sources.CLAUDE) {
+        model_list.sort((a, b) => a?.id && b?.id && a.id.localeCompare(b.id));
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE) {
+        claudeCatalogAvailable = true;
+        claudeCatalogAuthoritative = !oai_settings.reverse_proxy && !responseData.bypass && !responseData.error && !responseData.stale;
+        const suggestions = $('#model_claude_suggestions').empty();
+        model_list.forEach(model => suggestions.append(new Option(model.display_name || model.id, model.id)));
+        $('#model_claude_select').val(oai_settings.claude_model);
+        updateClaudeModelSupport({ bypass: Boolean(responseData.bypass), stale: Boolean(responseData.stale) });
+    }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.OPENROUTER) {
         model_list = openRouterSortBy(model_list, oai_settings.openrouter_sort_models);
@@ -2694,6 +2711,7 @@ function getVerbosity() {
 async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {}) {
     const promptContext = !Array.isArray(messages) && messages && typeof messages === 'object' ? messages.promptContext : null;
     const model = promptContext && Object.hasOwn(promptContext, 'model') ? promptContext.model : getChatCompletionModel();
+    assertClaudeModelAvailable();
     const requestId = beginOpenAIResponseMetadata(type);
     storeServerAssemblyPromptContext(promptContext);
 
@@ -2776,7 +2794,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
         'group_names': getGroupNames(),
         'include_reasoning': Boolean(oai_settings.show_thoughts),
         'reasoning_effort': getReasoningEffort(),
-        'verbosity': getVerbosity(),
+        'verbosity': isClaude ? undefined : getVerbosity(),
         'enable_web_search': Boolean(oai_settings.enable_web_search),
         'request_images': Boolean(oai_settings.request_images),
         'custom_prompt_post_processing': getEffectivePromptPostProcessing(),
@@ -3427,6 +3445,8 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
     state.toolSignatures ??= {};
 
     if (chat_completion_source === chat_completion_sources.CLAUDE) {
+        accumulateClaudeToolTurnBlock(state, data);
+        if (typeof data?.delta?.stop_reason === 'string') state.stopReason = data.delta.stop_reason;
         if (show_thoughts) {
             state.reasoning += data?.delta?.thinking || '';
         }
@@ -4578,6 +4598,9 @@ function isCurrentStatusCheck(statusCheckId, statusCheckController) {
 }
 
 async function runStatusOpen(statusCheckId, statusCheckController) {
+    if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE) {
+        invalidateClaudeCatalogSupport();
+    }
     const providerConfig = providerConfigs[oai_settings.chat_completion_source];
     if (providerConfig?.supportsStatusCheck === false) {
         let status = t`Key saved; press \"Test Message\" to verify.`;
@@ -4662,7 +4685,7 @@ async function runStatusOpen(statusCheckId, statusCheckController) {
         }
 
         if ('data' in responseData && Array.isArray(responseData.data)) {
-            saveModelList(responseData.data);
+            saveModelList(responseData.data, responseData);
         }
         if (!('error' in responseData)) {
             setOnlineStatus(t`Valid`);
@@ -4677,6 +4700,11 @@ async function runStatusOpen(statusCheckId, statusCheckController) {
         }
 
         console.error(error);
+
+        if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE) {
+            invalidateClaudeCatalogSupport();
+            updateClaudeModelSupport({ bypass: Boolean(oai_settings.reverse_proxy), discoveryFailed: true });
+        }
 
         if (!canBypass) {
             setOnlineStatus('no_connection');
@@ -5320,6 +5348,72 @@ function getMaxContextOpenAI(value) {
     }
 }
 
+/** Applies catalog-driven Claude limits, validation, and control availability. */
+function updateClaudeModelSupport({ bypass = false, stale = false, discoveryFailed = false } = {}) {
+    const input = /** @type {HTMLInputElement} */ ($('#model_claude_select')[0]);
+    if (!input) return;
+    const model = claudeCatalogAvailable ? model_list.find(record => record.id === oai_settings.claude_model) : undefined;
+    const isProxy = Boolean(oai_settings.reverse_proxy);
+    const unavailable = claudeCatalogAuthoritative && !isProxy && !model;
+    input.setCustomValidity(unavailable ? translate('This Claude model is unavailable. Select a model returned by Anthropic.') : '');
+
+    const hint = $('#claude_model_discovery_hint');
+    if (bypass || (isProxy && !model)) {
+        hint.text(t`Claude model discovery is unavailable; custom proxy model IDs remain enabled.`).removeClass('displayNone');
+    } else if (discoveryFailed) {
+        hint.text(t`Claude model discovery is unavailable; the saved model remains enabled with conservative compatibility.`).removeClass('displayNone');
+    } else if (stale) {
+        hint.text(t`Claude model discovery failed; cached capabilities are being used.`).removeClass('displayNone');
+    } else if (unavailable) {
+        hint.text(t`This Claude model is unavailable. Select a model returned by Anthropic.`).removeClass('displayNone');
+    } else {
+        hint.text('').addClass('displayNone');
+    }
+
+    const contextLimit = model?.max_input_tokens;
+    const outputLimit = model?.max_tokens;
+    if (contextLimit) {
+        $('#openai_max_context').attr('max', oai_settings.max_context_unlocked ? unlocked_max : contextLimit);
+        oai_settings.openai_max_context = Math.min(oai_settings.openai_max_context, Number($('#openai_max_context').attr('max')));
+        $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
+    }
+    if (outputLimit) {
+        $('#openai_max_tokens').attr('max', outputLimit);
+        oai_settings.openai_max_tokens = Math.min(oai_settings.openai_max_tokens, outputLimit);
+        $('#openai_max_tokens').val(oai_settings.openai_max_tokens).trigger('input');
+    }
+
+    const adaptive = model?.capabilities?.thinking?.types?.adaptive === true;
+    const manualThinking = model?.capabilities?.thinking?.types?.enabled === true && oai_settings.reasoning_effort !== reasoning_effort_types.auto;
+    const conservative = !model;
+    const samplingDisabled = adaptive || manualThinking || conservative;
+    const disabledReason = translate('Disabled because the selected Claude model does not support this request option.');
+    $('#temp_openai, #top_p_openai, #top_k_openai').prop('disabled', samplingDisabled).attr('title', samplingDisabled ? disabledReason : '');
+    $('#claude_assistant_prefill, #claude_assistant_impersonation').prop('disabled', adaptive || manualThinking || conservative).attr('title', adaptive || manualThinking || conservative ? disabledReason : '');
+    const hasThinking = model?.capabilities?.thinking?.types?.adaptive === true || model?.capabilities?.thinking?.types?.enabled === true;
+    $('#openai_reasoning_effort').prop('disabled', Boolean(model) && !hasThinking).attr('title', model && !hasThinking ? disabledReason : '');
+}
+
+/** Invalidates frontend Claude metadata when its endpoint or credentials change. */
+function invalidateClaudeCatalogSupport() {
+    claudeCatalogAvailable = false;
+    claudeCatalogAuthoritative = false;
+    model_list = [];
+    $('#model_claude_suggestions').empty();
+    if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE) updateClaudeModelSupport();
+}
+
+/** Blocks only a directly connected model rejected by an authoritative catalog. */
+function assertClaudeModelAvailable() {
+    if (oai_settings.chat_completion_source !== chat_completion_sources.CLAUDE) return;
+    updateClaudeModelSupport();
+    const input = /** @type {HTMLInputElement} */ ($('#model_claude_select')[0]);
+    if (input && !input.checkValidity()) {
+        input.reportValidity();
+        throw new Error(translate('This Claude model is unavailable. Select a model returned by Anthropic.'));
+    }
+}
+
 /**
  * Get the maximum context size for the Mistral model
  * @param {string} model Model identifier
@@ -5597,17 +5691,14 @@ function getNanoGptMaxContext(model, isUnlocked) {
 async function onModelChange() {
     biasCache = undefined;
     let value = String($(this).val() || '');
+    if (oai_settings.chat_completion_source !== chat_completion_sources.CLAUDE) {
+        $('#temp_openai, #top_p_openai, #top_k_openai, #openai_reasoning_effort').prop('disabled', false).attr('title', '');
+    }
 
     if ($(this).is('#model_claude_select')) {
-        if (value.includes('-v')) {
-            value = value.replace('-v', '-');
-        } else if (value === '' || value === 'claude-2') {
-            value = default_settings.claude_model;
-        }
-        console.log('Claude model changed to', value);
         oai_settings.claude_model = value;
         $('#model_claude_select').val(oai_settings.claude_model);
-
+        updateClaudeModelSupport();
     }
 
     if ($(this).is('#model_openai_select')) {
@@ -5861,22 +5952,7 @@ async function onModelChange() {
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.CLAUDE) {
-        if (oai_settings.max_context_unlocked) {
-            $('#openai_max_context').attr('max', unlocked_max);
-        }
-        else if (/^claude-(sonnet-4-5|sonnet-4-6|opus-4-6)/.test(value)) {
-            $('#openai_max_context').attr('max', max_1mil);
-        }
-        else if (/^claude-(3|opus|haiku|sonnet)/.test(value)) {
-            $('#openai_max_context').attr('max', max_200k);
-        }
-        else {
-            $('#openai_max_context').attr('max', getUnknownModelMaxContext(value, max_200k));
-        }
-
-        oai_settings.openai_max_context = Math.min(oai_settings.openai_max_context, Number($('#openai_max_context').attr('max')));
-        $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
-
+        updateClaudeModelSupport();
         $('#openai_reverse_proxy').attr('placeholder', 'https://api.anthropic.com/v1');
 
         oai_settings.temp_openai = Math.min(claude_max_temp, oai_settings.temp_openai);
@@ -6185,6 +6261,7 @@ function onReverseProxyInput() {
     }
 
     oai_settings.reverse_proxy = value;
+    if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE) invalidateClaudeCatalogSupport();
     $('.reverse_proxy_warning').toggle(oai_settings.reverse_proxy != '');
     saveSettingsDebounced();
 }
@@ -6425,11 +6502,6 @@ export function isImageInliningSupported() {
         'o1',
         'o3',
         'o4-mini',
-        // Claude
-        'claude-3',
-        'claude-opus-4',
-        'claude-sonnet-4',
-        'claude-haiku-4',
         // Cohere
         'c4ai-aya-vision',
         'command-a-vision',
@@ -6486,7 +6558,7 @@ export function isImageInliningSupported() {
         case chat_completion_sources.VERTEXAI:
             return visionSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
         case chat_completion_sources.CLAUDE:
-            return visionSupportedModels.some(model => oai_settings.claude_model.includes(model));
+            return claudeCatalogAvailable && model_list.find(model => model.id === oai_settings.claude_model)?.capabilities?.image_input?.supported === true;
         case chat_completion_sources.OPENROUTER:
             return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.openrouter_model)?.architecture?.input_modalities?.includes('image'));
         case chat_completion_sources.CUSTOM:
@@ -7096,6 +7168,7 @@ export function initOpenAI() {
 
     $('#chat_completion_source').on('change', function () {
         oai_settings.chat_completion_source = String($(this).find(':selected').val());
+        if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE) invalidateClaudeCatalogSupport();
         toggleChatCompletionForms();
         saveSettingsDebounced();
         reconnectOpenAi();
@@ -7114,6 +7187,7 @@ export function initOpenAI() {
 
     $('#openai_proxy_password').on('input', function () {
         oai_settings.proxy_password = String($(this).val());
+        if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE) invalidateClaudeCatalogSupport();
         saveSettingsDebounced();
     });
 
@@ -7338,6 +7412,7 @@ export function initOpenAI() {
 
     $('#openai_reasoning_effort').on('input', function () {
         oai_settings.reasoning_effort = String($(this).val());
+        if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE) updateClaudeModelSupport();
         saveSettingsDebounced();
     });
 
@@ -7433,7 +7508,7 @@ export function initOpenAI() {
     $('#api_button_openai').on('click', onConnectButtonClick);
     $('#openai_reverse_proxy').on('input', onReverseProxyInput);
     $('#model_openai_select').on('change', onModelChange);
-    $('#model_claude_select').on('change', onModelChange);
+    $('#model_claude_select').on('input change', onModelChange);
     $('#model_google_select').on('change', onModelChange);
     $('#model_vertexai_select').on('change', onModelChange);
     $('#vertexai_auth_mode').on('change', onVertexAIAuthModeChange);

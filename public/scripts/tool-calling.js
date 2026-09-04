@@ -942,8 +942,10 @@ export class ToolManager {
     /**
      * Saves function tool invocations to the last user chat message extra metadata.
      * @param {ToolInvocation[]} invocations Successful tool invocations
+     * @param {object} [options] Provider-specific continuation metadata
+     * @param {object[]} [options.claudeToolTurnBlocks] Ordered Claude thinking and tool blocks
      */
-    static async saveFunctionToolInvocations(invocations) {
+    static async saveFunctionToolInvocations(invocations, { claudeToolTurnBlocks = [] } = {}) {
         if (!Array.isArray(invocations) || invocations.length === 0) {
             return;
         }
@@ -960,6 +962,9 @@ export class ToolManager {
                 model: getGeneratingModel(),
             },
         };
+        if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE && Array.isArray(claudeToolTurnBlocks) && claudeToolTurnBlocks.length) {
+            message.extra.claude_tool_turn_blocks = structuredClone(claudeToolTurnBlocks);
+        }
         chat.push(message);
         await eventSource.emit(event_types.TOOL_CALLS_PERFORMED, invocations);
         addOneMessage(message);

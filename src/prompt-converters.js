@@ -226,12 +226,17 @@ export function convertClaudeMessages(messages, prefillString, useSysPrompt, use
     const parse = (str) => typeof str === 'string' ? JSON.parse(str) : str;
     messages.forEach((message) => {
         if (message.role === 'assistant' && message.tool_calls) {
-            message.content = message.tool_calls.map((tc) => ({
-                type: 'tool_use',
-                id: tc.id,
-                name: tc.function.name,
-                input: parse(tc.function.arguments),
-            }));
+            const claudeBlocks = Array.isArray(message.claude_tool_turn_blocks)
+                ? message.claude_tool_turn_blocks.filter(block => ['thinking', 'redacted_thinking', 'tool_use'].includes(block?.type))
+                : [];
+            message.content = useTools && claudeBlocks.length
+                ? structuredClone(claudeBlocks)
+                : message.tool_calls.map((tc) => ({
+                    type: 'tool_use',
+                    id: tc.id,
+                    name: tc.function.name,
+                    input: parse(tc.function.arguments),
+                }));
         }
 
         if (message.role === 'tool') {
@@ -303,6 +308,7 @@ export function convertClaudeMessages(messages, prefillString, useSysPrompt, use
         delete message.name;
         delete message.tool_calls;
         delete message.tool_call_id;
+        delete message.claude_tool_turn_blocks;
     });
 
     // Images in assistant messages should be moved to the next user message

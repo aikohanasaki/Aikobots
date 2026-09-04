@@ -359,6 +359,9 @@ function buildOpenAIMessagesFromCoreChat(promptContext) {
             mediaIndex,
             invocations,
             signature: sameModel ? item.extra?.reasoning_signature : null,
+            claude_tool_turn_blocks: sameModel && promptContext.chatCompletionSource === 'claude'
+                ? structuredClone(item.extra?.claude_tool_turn_blocks || null)
+                : null,
         });
     }
 

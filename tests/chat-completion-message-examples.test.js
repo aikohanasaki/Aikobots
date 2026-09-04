@@ -71,4 +71,27 @@ describe('chat completion message examples', () => {
             expect(result.examplesCount).toBe(0);
         }
     });
+
+    it('preserves ordered Claude tool-turn blocks through prompt assembly', async () => {
+        const blocks = [
+            { type: 'thinking', thinking: 'synthetic thought', signature: 'synthetic signature' },
+            { type: 'redacted_thinking', data: 'synthetic redacted data' },
+            { type: 'tool_use', id: 'tool-1', name: 'lookup', input: { q: 'test' } },
+        ];
+        const payload = makePayload('');
+        payload.chatCompletionSource = 'claude';
+        payload.canUseTools = true;
+        payload.serviceSettings.prompts.push({ identifier: 'chatHistory', role: 'system', content: '' });
+        payload.serviceSettings.prompt_order[0].order.push({ identifier: 'chatHistory', enabled: true });
+        payload.messages = [{
+            role: 'assistant',
+            content: '',
+            invocations: [{ id: 'tool-1', name: 'lookup', parameters: '{"q":"test"}', result: 'result' }],
+            claude_tool_turn_blocks: blocks,
+        }];
+
+        const result = await assembleChatCompletionPrompt(payload);
+        const toolMessage = result.chat.find(message => Array.isArray(message.tool_calls));
+        expect(toolMessage.claude_tool_turn_blocks).toEqual(blocks);
+    });
 });

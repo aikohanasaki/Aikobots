@@ -231,6 +231,7 @@ class Message {
         this.tokens = 0;
         this.tokenHandler = tokenHandler;
         this.signature = null;
+        this.claudeToolTurnBlocks = null;
     }
 
     static async createAsync(role, content, identifier, tokenHandler, contentSegments = undefined) {
@@ -270,6 +271,7 @@ class Message {
             ...(this.name ? { name: this.name } : {}),
             ...(this.tool_calls ? { tool_calls: this.tool_calls } : {}),
             ...(this.signature ? { signature: this.signature } : {}),
+            ...(this.claudeToolTurnBlocks ? { claude_tool_turn_blocks: this.claudeToolTurnBlocks } : {}),
         };
         this.tokens = await this.tokenHandler.countAsync(payload);
     }
@@ -565,6 +567,7 @@ class ChatCompletion {
                         ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
                         ...(message.role === 'tool' ? { tool_call_id: message.identifier } : {}),
                         ...(message.signature ? { signature: message.signature } : {}),
+                        ...(message.claudeToolTurnBlocks ? { claude_tool_turn_blocks: message.claudeToolTurnBlocks } : {}),
                     });
                 }
             }
@@ -597,6 +600,7 @@ function serializeMessageNode(node) {
         sourceMessageId: Number.isInteger(node.sourceMessageId) ? node.sourceMessageId : undefined,
         tool_calls: node.tool_calls,
         signature: node.signature,
+        claudeToolTurnBlocks: node.claudeToolTurnBlocks,
     };
 }
 
@@ -2024,6 +2028,10 @@ async function populateChatHistory(messages, prompts, chatCompletion, context) {
             const toolCallMessage = await Message.createAsync(chatMessage.role, undefined, `toolCall-${chatMessage.identifier}`, context.tokenHandler);
             const toolResultMessages = await Promise.all(chatPrompt.invocations.slice().reverse().map(invocation => Message.createAsync('tool', invocation.result || '[No content]', invocation.id, context.tokenHandler)));
             await toolCallMessage.setToolCalls(chatPrompt.invocations, includeSignature);
+            if (context.chatCompletionSource === 'claude' && Array.isArray(chatPrompt.claude_tool_turn_blocks)) {
+                toolCallMessage.claudeToolTurnBlocks = structuredClone(chatPrompt.claude_tool_turn_blocks);
+                await toolCallMessage.refreshTokens();
+            }
             if (chatCompletion.canAffordAll([toolCallMessage, ...toolResultMessages])) {
                 for (const resultMessage of toolResultMessages) {
                     chatCompletion.insertAtStart(resultMessage, 'chatHistory');

@@ -11,6 +11,7 @@ import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '
 import { commonEnumProviders } from '../../slash-commands/SlashCommandCommonEnumsProvider.js';
 import { callGenericPopup, Popup, POPUP_TYPE } from '../../popup.js';
 import { MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR } from '../../constants.js';
+import { oai_settings } from '../../openai.js';
 
 const MODULE_NAME = 'caption';
 
@@ -569,7 +570,7 @@ jQuery(async function () {
     async function switchMultimodalBlocks() {
         await addRemoteEndpointModels();
         const isMultimodal = extension_settings.caption.source === 'multimodal';
-        if (!extension_settings.caption.multimodal_model) {
+        if (!extension_settings.caption.multimodal_model && extension_settings.caption.multimodal_api !== 'anthropic') {
             const dropdown = $('#caption_multimodal_model');
             const options = dropdown.find(`option[data-type="${extension_settings.caption.multimodal_api}"]`);
             extension_settings.caption.multimodal_model = String(options.first().val());
@@ -578,6 +579,8 @@ jQuery(async function () {
         $('#caption_prompt_block').toggle(isMultimodal);
         $('#caption_multimodal_api').val(extension_settings.caption.multimodal_api);
         $('#caption_multimodal_model').val(extension_settings.caption.multimodal_model);
+        $('#caption_claude_model').val(extension_settings.caption.multimodal_model);
+        $('#caption_multimodal_model').toggle(extension_settings.caption.multimodal_api !== 'anthropic');
         $('#caption_multimodal_block [data-type]').each(function () {
             const type = $(this).data('type');
             const types = type.split(',');
@@ -628,6 +631,29 @@ jQuery(async function () {
         await processEndpoint('electronhub', '/api/backends/chat-completions/multimodal-models/electronhub');
         await processEndpoint('mistral', '/api/backends/chat-completions/multimodal-models/mistral');
         await processEndpoint('xai', '/api/backends/chat-completions/multimodal-models/xai');
+
+        if (extension_settings.caption.source === 'multimodal' && extension_settings.caption.multimodal_api === 'anthropic') {
+            try {
+                const useProxy = extension_settings.caption.allow_reverse_proxy && oai_settings.reverse_proxy;
+                const response = await fetch('/api/backends/chat-completions/status', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({
+                        chat_completion_source: 'claude',
+                        reverse_proxy: useProxy ? oai_settings.reverse_proxy : '',
+                        proxy_password: useProxy ? oai_settings.proxy_password : '',
+                    }),
+                });
+                if (response.ok) {
+                    const payload = await response.json();
+                    const datalist = $('#caption_claude_models').empty();
+                    payload.data?.filter(model => model?.capabilities?.image_input?.supported === true)
+                        .forEach(model => datalist.append(new Option(model.display_name || model.id, model.id)));
+                }
+            } catch {
+                // Caption model discovery is optional; keep the configured editable model.
+            }
+        }
     }
 
     await addSettings();
@@ -681,12 +707,16 @@ jQuery(async function () {
         extension_settings.caption.multimodal_model = String($('#caption_multimodal_model').val());
         saveSettingsDebounced();
     });
+    $('#caption_claude_model').on('input change', () => {
+        extension_settings.caption.multimodal_model = String($('#caption_claude_model').val());
+        saveSettingsDebounced();
+    });
     $('#caption_show_in_chat').prop('checked', !!(extension_settings.caption.show_in_chat)).on('input', () => {
         extension_settings.caption.show_in_chat = !!$('#caption_show_in_chat').prop('checked');
         saveSettingsDebounced();
     });
     $('#caption_refresh_models').on('click', async () => {
-        extension_settings.caption.multimodal_model = '';
+        if (extension_settings.caption.multimodal_api !== 'anthropic') extension_settings.caption.multimodal_model = '';
         await switchMultimodalBlocks();
         saveSettingsDebounced();
     });

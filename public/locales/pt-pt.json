@@ -1813,4 +1813,12 @@
   ,"Allow matching notifications in history": "Permitir notificações correspondentes no histórico"
   ,"Hide matching notifications from history": "Ocultar notificações correspondentes do histórico"
   ,"Manage notifications excluded from notification history.": "Gerir notificações excluídas do histórico de notificações."
+  ,"Enter a Claude model ID": "Introduza um ID de modelo Claude"
+  ,"This Claude model is unavailable. Select a model returned by Anthropic.": "Este modelo Claude não está disponível. Selecione um modelo devolvido pela Anthropic."
+  ,"Claude model discovery is unavailable; custom proxy model IDs remain enabled.": "A descoberta de modelos Claude não está disponível; os IDs de modelos de proxy personalizados continuam ativos."
+  ,"Claude model discovery is unavailable; the saved model remains enabled with conservative compatibility.": "A descoberta de modelos Claude não está disponível; o modelo guardado continua ativo com compatibilidade conservadora."
+  ,"Claude model discovery failed; cached capabilities are being used.": "A descoberta de modelos Claude falhou; estão a ser usadas as capacidades em cache."
+  ,"Disabled because the selected Claude model does not support this request option.": "Desativado porque o modelo Claude selecionado não suporta esta opção de pedido."
+  ,"Claude capabilities determine whether adaptive or manual thinking is used. Auto leaves thinking and effort at Anthropic's defaults.": "As capacidades do Claude determinam se é usado pensamento adaptativo ou manual. Automático mantém os valores predefinidos da Anthropic."
+  ,"Claude refused this request.": "O Claude recusou este pedido."
 }

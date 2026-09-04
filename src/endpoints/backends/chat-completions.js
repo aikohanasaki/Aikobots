@@ -96,6 +96,11 @@ import {
     getWebTokenizer,
 } from '../tokenizers.js';
 import { getVertexAIAuth, getProjectIdFromServiceAccount } from '../google.js';
+import {
+    CLAUDE_API_VERSION,
+    getClaudeRequestPolicy,
+    resolveClaudeCatalog,
+} from '../../claude.js';
 
 const API_OPENAI = 'https://api.openai.com/v1';
 const API_CLAUDE = 'https://api.anthropic.com/v1';
@@ -1132,18 +1137,17 @@ async function sendProviderDispatchResult(result, request, response, {
  * @param {express.Request} request Express request
  */
 async function sendClaudeRequest(request) {
-    const apiUrl = new URL(request.body.reverse_proxy || API_CLAUDE).toString();
+    const apiUrl = new URL(request.body.reverse_proxy || API_CLAUDE).toString().replace(/\/$/, '');
     const apiKey = request.body.reverse_proxy ? request.body.proxy_password : readRequestSecret(request, SECRET_KEYS.CLAUDE);
     const divider = '-'.repeat(process.stdout.columns);
     const enableSystemPromptCache = getConfigValue('claude.enableSystemPromptCache', false, 'boolean');
-    const enableAdaptiveThinking = getConfigValue('claude.enableAdaptiveThinking', true, 'boolean');
     let cachingAtDepth = getConfigValue('claude.cachingAtDepth', -1, 'number');
     // Disabled if not an integer or negative
     if (!Number.isInteger(cachingAtDepth) || cachingAtDepth < 0) {
         cachingAtDepth = -1;
     }
 
-    if (!apiKey) {
+    if (!apiKey && !request.body.reverse_proxy) {
         console.warn(color.red(`Claude API key is missing.\n${divider}`));
         return createProviderJsonResult({ error: true }, { status: 400, ok: false });
     }
@@ -1151,19 +1155,40 @@ async function sendClaudeRequest(request) {
     try {
         const controller = new AbortController();
         bindAbortControllerToRequestSocket(request, controller);
-        const additionalHeaders = {};
-        const betaHeaders = ['output-128k-2025-02-19', 'context-1m-2025-08-07'];
         const useTools = Array.isArray(request.body.tools) && request.body.tools.length > 0;
         const useSystemPrompt = Boolean(request.body.claude_use_sysprompt);
-        const convertedPrompt = convertClaudeMessages(request.body.messages, request.body.assistant_prefill, useSystemPrompt, useTools, getPromptNames(request));
-        const useThinking = /^claude-(3-7|opus-4|sonnet-4|haiku-4-5|opus-4-5|opus-4-6|sonnet-4-6)/.test(request.body.model);
-        const useWebSearch = /^claude-(3-5|3-7|opus-4|sonnet-4|haiku-4-5|opus-4-5|opus-4-6|sonnet-4-6)/.test(request.body.model) && Boolean(request.body.enable_web_search);
-        const isLimitedSampling = /^claude-(opus-4-1|sonnet-4-5|haiku-4-5|opus-4-5|opus-4-6|sonnet-4-6)/.test(request.body.model);
-        const useVerbosity = /^claude-(opus-4-5|opus-4-6|sonnet-4-6)/.test(request.body.model);
-        const noPrefillModel = /^claude-(opus-4-6|sonnet-4-6)/.test(request.body.model);
-        const isAdaptiveModel = enableAdaptiveThinking && /^claude-(opus-4-6|sonnet-4-6)/.test(request.body.model);
         const cacheTTL = getConfigValue('claude.extendedTTL', false, 'boolean') ? '1h' : '5m';
-        let fixThinkingPrefill = false;
+        let catalog = null;
+        try {
+            catalog = await resolveClaudeCatalog(apiUrl, apiKey);
+        } catch {
+            // Catalog failures must not reveal upstream content or block a proxy model.
+        }
+        const modelInfo = catalog?.data?.find(model => model.id === request.body.model);
+        if (!request.body.reverse_proxy && catalog && !catalog.stale && !modelInfo) {
+            return createProviderJsonResult({ error: { message: 'The selected Claude model is unavailable. Select a model returned by Anthropic.' } }, { status: 400, ok: false });
+        }
+        const effectiveMaxTokens = modelInfo?.max_tokens && Number.isFinite(request.body.max_tokens)
+            ? Math.min(request.body.max_tokens, modelInfo.max_tokens)
+            : request.body.max_tokens;
+        const policy = getClaudeRequestPolicy({
+            model: modelInfo,
+            reasoningEffort: request.body.reasoning_effort,
+            includeReasoning: Boolean(request.body.include_reasoning),
+            maxTokens: effectiveMaxTokens,
+            stream: Boolean(request.body.stream),
+            temperature: request.body.temperature,
+            topP: request.body.top_p,
+            topK: request.body.top_k,
+            prefill: request.body.assistant_prefill,
+            hasTools: useTools || Boolean(request.body.enable_web_search),
+            jsonSchema: request.body.json_schema,
+            calculateBudget: calculateClaudeBudgetTokens,
+        });
+        if (policy.error) {
+            return createProviderJsonResult({ error: { message: policy.error } }, { status: 400, ok: false });
+        }
+        const convertedPrompt = convertClaudeMessages(request.body.messages, policy.prefill, useSystemPrompt, useTools, getPromptNames(request));
         // Add custom stop sequences
         const stopSequences = [];
         if (Array.isArray(request.body.stop)) {
@@ -1174,13 +1199,12 @@ async function sendClaudeRequest(request) {
             /** @type {any} */ system: [],
             messages: convertedPrompt.messages,
             model: request.body.model,
-            max_tokens: request.body.max_tokens,
+            max_tokens: effectiveMaxTokens,
             stop_sequences: stopSequences,
-            temperature: request.body.temperature,
-            top_p: request.body.top_p,
-            top_k: request.body.top_k,
             stream: request.body.stream,
+            ...policy.body,
         };
+        delete requestBody.jsonTool;
         if (useSystemPrompt) {
             if (enableSystemPromptCache && Array.isArray(convertedPrompt.systemPrompt) && convertedPrompt.systemPrompt.length) {
                 convertedPrompt.systemPrompt[convertedPrompt.systemPrompt.length - 1]['cache_control'] = { type: 'ephemeral', ttl: cacheTTL };
@@ -1191,7 +1215,6 @@ async function sendClaudeRequest(request) {
             delete requestBody.system;
         }
         if (useTools) {
-            betaHeaders.push('tools-2024-05-16');
             requestBody.tool_choice = { type: request.body.tool_choice };
             requestBody.tools = request.body.tools
                 .filter(tool => tool.type === 'function')
@@ -1203,18 +1226,12 @@ async function sendClaudeRequest(request) {
             }
         }
 
-        // Structured output is a forced tool
-        if (request.body.json_schema) {
-            const jsonTool = {
-                name: request.body.json_schema.name,
-                description: request.body.json_schema.description || 'Well-formed JSON object',
-                input_schema: request.body.json_schema.value,
-            };
-            requestBody.tools = [...(requestBody.tools || []), jsonTool];
-            requestBody.tool_choice = { type: 'tool', name: request.body.json_schema.name };
+        if (policy.body.jsonTool) {
+            requestBody.tools = [...(requestBody.tools || []), policy.body.jsonTool];
+            requestBody.tool_choice = { type: 'tool', name: policy.body.jsonTool.name };
         }
 
-        if (useWebSearch) {
+        if (request.body.enable_web_search) {
             const webSearchTool = [{
                 'type': 'web_search_20250305',
                 'name': 'web_search',
@@ -1226,32 +1243,7 @@ async function sendClaudeRequest(request) {
             cachingAtDepthForClaude(convertedPrompt.messages, cachingAtDepth, cacheTTL);
         }
 
-        if (enableSystemPromptCache || cachingAtDepth !== -1) {
-            betaHeaders.push('prompt-caching-2024-07-31');
-            betaHeaders.push('extended-cache-ttl-2025-04-11');
-        }
-
-        if (isLimitedSampling) {
-            if (requestBody.top_p < 1) {
-                delete requestBody.temperature;
-            } else {
-                delete requestBody.top_p;
-            }
-        }
-
-        const reasoningEffort = request.body.reasoning_effort;
-        const budgetTokens = calculateClaudeBudgetTokens(requestBody.max_tokens, reasoningEffort, requestBody.stream, isAdaptiveModel);
-
-        if (useThinking && typeof budgetTokens === 'string') {
-            // No prefill when thinking
-            fixThinkingPrefill = true;
-            requestBody.thinking = { type: 'adaptive' };
-            requestBody.output_config ??= {};
-            requestBody.output_config.effort = budgetTokens;
-            delete requestBody.top_k;
-        } else if (useThinking && Number.isInteger(budgetTokens)) {
-            // No prefill when thinking
-            fixThinkingPrefill = true;
+        if (requestBody.thinking?.type === 'enabled') {
             const minThinkTokens = 1024;
             if (requestBody.max_tokens <= minThinkTokens) {
                 const newValue = requestBody.max_tokens + minThinkTokens;
@@ -1259,43 +1251,18 @@ async function sendClaudeRequest(request) {
                 console.info(color.blue(`Increasing response length to ${newValue}.`));
                 requestBody.max_tokens = newValue;
             }
-            requestBody.thinking = {
-                type: 'enabled',
-                budget_tokens: budgetTokens,
-            };
-
-            // NO I CAN'T SILENTLY IGNORE THE TEMPERATURE.
-            delete requestBody.temperature;
-            delete requestBody.top_p;
-            delete requestBody.top_k;
-        }
-
-        if ((fixThinkingPrefill || noPrefillModel) && convertedPrompt.messages.length && convertedPrompt.messages[convertedPrompt.messages.length - 1].role === 'assistant') {
-            convertedPrompt.messages[convertedPrompt.messages.length - 1].role = 'user';
-        }
-
-        // Verbosity = 'effort' (same values as OpenAI) - only if not already set by adaptive thinking
-        if (useVerbosity && request.body.verbosity && !requestBody.output_config?.effort) {
-            betaHeaders.push('effort-2025-11-24');
-            requestBody.output_config ??= {};
-            requestBody.output_config.effort = request.body.verbosity;
-        }
-
-        if (betaHeaders.length) {
-            additionalHeaders['anthropic-beta'] = betaHeaders.join(',');
         }
 
         console.debug('Claude request:', getSafeProviderRequestLog(requestBody));
 
-        const generateResponse = await fetch(apiUrl + '/messages', {
+        const generateResponse = await fetch(`${apiUrl}/messages`, {
             method: 'POST',
             signal: controller.signal,
             body: JSON.stringify(requestBody),
             headers: {
                 'Content-Type': 'application/json',
-                'anthropic-version': '2023-06-01',
-                'x-api-key': apiKey,
-                ...additionalHeaders,
+                'anthropic-version': CLAUDE_API_VERSION,
+                ...(apiKey ? { 'x-api-key': apiKey } : {}),
             },
         });
 
@@ -1308,11 +1275,15 @@ async function sendClaudeRequest(request) {
 
             /** @type {any} */
             const generateResponseJson = await generateResponse.json();
-            const responseText = generateResponseJson?.content?.[0]?.text || '';
-            console.debug('Claude response:', generateResponseJson);
+            const responseText = generateResponseJson?.content?.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text).join('') || '';
 
             // Wrap it back to OAI format + save the original content
-            const reply = { choices: [{ 'message': { 'content': responseText } }], content: generateResponseJson.content };
+            const reply = {
+                choices: [{ 'message': { 'content': responseText } }],
+                content: generateResponseJson.content,
+                stop_reason: generateResponseJson.stop_reason,
+                model: generateResponseJson.model,
+            };
             return createProviderJsonResult(reply, { cacheUsage: extractPromptCacheUsage(generateResponseJson) });
         }
     } catch (error) {
@@ -3471,6 +3442,23 @@ router.post('/status', async function (request, statusResponse) {
         apiUrl = new URL(request.body.reverse_proxy || API_OPENAI).toString();
         apiKey = request.body.reverse_proxy ? request.body.proxy_password : readRequestSecret(request, SECRET_KEYS.OPENAI);
         headers = {};
+    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CLAUDE) {
+        apiUrl = new URL(request.body.reverse_proxy || API_CLAUDE).toString().replace(/\/$/, '');
+        apiKey = request.body.reverse_proxy ? request.body.proxy_password : readRequestSecret(request, SECRET_KEYS.CLAUDE);
+        if (!apiKey && !request.body.reverse_proxy) {
+            console.warn('Claude API key is missing.');
+            return statusResponse.status(400).send({ error: true });
+        }
+        try {
+            const catalog = await resolveClaudeCatalog(apiUrl, apiKey);
+            return statusResponse.send({ data: catalog.data, stale: Boolean(catalog.stale) });
+        } catch {
+            console.warn('Claude model discovery failed.');
+            if (request.body.reverse_proxy) {
+                return statusResponse.send({ error: true, bypass: true, data: [] });
+            }
+            return statusResponse.status(502).send({ error: true, data: [] });
+        }
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENROUTER) {
         apiUrl = 'https://openrouter.ai/api/v1';
         apiKey = readRequestSecret(request, SECRET_KEYS.OPENROUTER);

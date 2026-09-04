@@ -255,6 +255,7 @@ import { initInputMarkdown } from './scripts/input-md-formatting.js';
 import { AbortReason } from './scripts/util/AbortReason.js';
 import { registerExtensionSlashCommands as initExtensionSlashCommands } from './scripts/extensions-slashcommands.js';
 import { ToolManager } from './scripts/tool-calling.js';
+import { extractClaudeToolTurnBlocks, getCompletedClaudeToolTurnBlocks } from './scripts/claude.js';
 import { addShowdownPatch } from './scripts/util/showdown-patch.js';
 import { applyBrowserFixes } from './scripts/browser-fixes.js';
 import { initServerHistory } from './scripts/server-history.js';
@@ -9514,6 +9515,8 @@ class StreamingProcessor {
         this.images = [];
         /** @type {string?} */
         this.reasoningSignature = null;
+        this.claudeToolTurnBlocks = [];
+        this.stopReason = null;
     }
 
     /**
@@ -9920,6 +9923,8 @@ class StreamingProcessor {
                 if (typeof state?.signature === 'string' && state.signature.length > 0) {
                     this.reasoningSignature = state.signature;
                 }
+                this.claudeToolTurnBlocks = getCompletedClaudeToolTurnBlocks(state);
+                this.stopReason = state?.stopReason || this.stopReason;
                 if (logprobs) {
                     this.messageLogprobs.push(...(Array.isArray(logprobs) ? logprobs : [logprobs]));
                 }
@@ -11692,6 +11697,10 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
             hideSwipeButtons();
             let getMessage = await streamingProcessor.generate();
+            if (streamingProcessor.stopReason === 'refusal' && !String(getMessage || '').trim() && !ToolManager.hasToolCalls(streamingProcessor.toolCalls)) {
+                getMessage = t`Claude refused this request.`;
+                streamingProcessor.result = getMessage;
+            }
             if (streamingProcessor?.detachedRecoveryPending) {
                 deferTemporaryGenerationAttempt(temporaryGenerationAttempt, streamingProcessor.generator?.generationId);
                 const parkedDetachedGeneration = streamingProcessor.detachedRecoveryParked;
@@ -11723,6 +11732,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                     await streamingProcessor.resolveGenerationRecovery();
                 }
                 const invocationResult = await ToolManager.invokeFunctionTools(streamingProcessor.toolCalls);
+                const claudeToolTurnBlocks = streamingProcessor.claudeToolTurnBlocks;
                 const shouldStopGeneration = (!invocationResult.invocations.length && shouldDeleteMessage) || invocationResult.stealthCalls.length;
                 if (hasToolCalls) {
                     if (shouldStopGeneration) {
@@ -11736,7 +11746,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
                     streamingProcessor = null;
                     depth = depth + 1;
-                    await ToolManager.saveFunctionToolInvocations(invocationResult.invocations);
+                    await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, { claudeToolTurnBlocks });
                     return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
                 }
             }
@@ -11822,6 +11832,9 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         let getMessage = extractMessageFromData(data);
         let title = extractTitleFromData(data);
         let reasoning = extractReasoningFromData(data);
+        if (data?.stop_reason === 'refusal' && !String(getMessage || '').trim() && !ToolManager.hasToolCalls(data)) {
+            getMessage = t`Claude refused this request.`;
+        }
         const reasoningSignature = extractReasoningSignatureFromData(data);
         let imageUrls = extractImagesFromData(data);
 
@@ -11906,7 +11919,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 }
 
                 depth = depth + 1;
-                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations);
+                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, { claudeToolTurnBlocks: extractClaudeToolTurnBlocks(data?.content) });
                 return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
             }
         }
@@ -12838,7 +12851,7 @@ export function extractMessageFromData(data, activeApi = null) {
 
         switch (activeApi ?? main_api) {
             case 'openai':
-                return data?.content?.find(p => p.type === 'text')?.text ?? data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text ?? data?.text ?? data?.message?.content?.[0]?.text ?? data?.message?.tool_plan ?? '';
+                return data?.content?.filter(p => p.type === 'text' && typeof p.text === 'string').map(p => p.text).join('') || data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || data?.text || data?.message?.content?.[0]?.text || data?.message?.tool_plan || '';
             default:
                 return '';
         }
@@ -12872,7 +12885,7 @@ export function extractJsonFromData(data, { mainApi = null, chatCompletionSource
             const text = extractMessageFromData(data, mainApi);
             switch (chatCompletionSource) {
                 case chat_completion_sources.CLAUDE:
-                    result = data?.content?.find(x => x.type === 'tool_use')?.input;
+                    result = data?.content?.find(x => x.type === 'tool_use')?.input ?? tryParse(text);
                     break;
                 case chat_completion_sources.PERPLEXITY:
                     result = tryParse(removeReasoningFromString(text));

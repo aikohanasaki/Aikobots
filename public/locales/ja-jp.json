@@ -6389,4 +6389,12 @@
   ,"Allow matching notifications in history": "一致する通知を履歴に記録する"
   ,"Hide matching notifications from history": "一致する通知を履歴から除外する"
   ,"Manage notifications excluded from notification history.": "通知履歴から除外された通知を管理します。"
+  ,"Enter a Claude model ID": "ClaudeモデルIDを入力"
+  ,"This Claude model is unavailable. Select a model returned by Anthropic.": "このClaudeモデルは利用できません。Anthropicから返されたモデルを選択してください。"
+  ,"Claude model discovery is unavailable; custom proxy model IDs remain enabled.": "Claudeモデルの検出を利用できません。カスタムプロキシのモデルIDは引き続き使用できます。"
+  ,"Claude model discovery is unavailable; the saved model remains enabled with conservative compatibility.": "Claudeモデルの検出を利用できません。保存済みモデルは保守的な互換設定で引き続き使用できます。"
+  ,"Claude model discovery failed; cached capabilities are being used.": "Claudeモデルの検出に失敗したため、キャッシュされた機能を使用しています。"
+  ,"Disabled because the selected Claude model does not support this request option.": "選択したClaudeモデルがこのリクエストオプションをサポートしていないため無効です。"
+  ,"Claude capabilities determine whether adaptive or manual thinking is used. Auto leaves thinking and effort at Anthropic's defaults.": "Claudeの機能に応じて適応型または手動思考が使用されます。自動では思考とエフォートをAnthropicの既定値に任せます。"
+  ,"Claude refused this request.": "Claudeがこのリクエストを拒否しました。"
 }
