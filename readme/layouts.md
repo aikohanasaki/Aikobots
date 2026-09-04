@@ -762,9 +762,9 @@ The core `#toast-history-trigger` is inserted at the start of `#top-settings-hol
 
 The `.toast-history-list` and `.toast-history-suppressions` surfaces use standard popups and SmartTheme colors from `public/style.css`. History cards keep their severity border, plain-text title and message, timestamp, and suppression control readable on desktop and mobile. History and suppressions are current-tab state only; layouts must not copy their content into attributes, generated CSS, logs, or persistent layout state.
 
-## 27. Floating World Info source badges
+## 27. Floating World Info source icons
 
-Grouped lorebook headings in the floating World Info panel place a compact `.wi-floating-book-group-source` badge after the lorebook name. The badge identifies the generation-time activation source as Global, Chat, Persona, Character, or Background, uses smart-theme colors from `public/style.css`, and remains absent for ungrouped entries, inaccessible secure entries, and snapshots without provenance. Layouts may adjust spacing but should keep the lorebook name readable and the source badge on one line.
+Grouped lorebook headings in the floating World Info panel place a compact `.wi-floating-book-group-source` Font Awesome icon after the lorebook name. The icon identifies the generation-time activation source as Global, Chat, Persona, Character, or Background, while priority classes 1 through 5 color it with the corresponding red, yellow, body, blue, or green smart-theme color. Its localized tooltip and accessible label contain the effective STLO level and source. The icon remains absent for ungrouped entries, inaccessible secure entries, and snapshots without both provenance fields. Layouts may adjust spacing but should keep the lorebook name and icon readable on one line.
 
 ## Frontend production bundles
 

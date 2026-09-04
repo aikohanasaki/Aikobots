@@ -68,6 +68,8 @@ function makeNormalRecursiveEntry(uid = 100) {
         keysecondary: [],
         selective: false,
         content: INSERTED_FROM_SENTINEL,
+        lorebookSource: 'chat',
+        lorebookPriority: 4,
         lorebookSettings: { budgetMode: 'default' },
     };
 }
@@ -135,6 +137,8 @@ describe('activation-only world info entries', () => {
             activationOnly: false,
             inserted: true,
             status: 'admitted',
+            lorebookSource: 'chat',
+            lorebookPriority: 4,
         });
     });
 

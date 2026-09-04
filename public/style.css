@@ -8139,16 +8139,28 @@ p.stmb-help-drawer-copy {
 
 .wi-floating-book-group-source {
     flex: 0 0 auto;
-    padding: 1px 5px;
-    color: var(--SmartThemeBodyColor);
-    border: 1px solid var(--SmartThemeBorderColor);
-    border-radius: 999px;
-    background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 75%, transparent);
-    font-size: 0.7em;
-    font-weight: 500;
-    line-height: 1.35;
-    opacity: 0.72;
-    white-space: nowrap;
+    font-size: 0.8em;
+    line-height: 1;
+}
+
+.wi-floating-book-group-source-priority-1 {
+    color: var(--SmartThemeRedColor, #ff6b6b);
+}
+
+.wi-floating-book-group-source-priority-2 {
+    color: var(--SmartThemeEmColor, #f0c36d);
+}
+
+.wi-floating-book-group-source-priority-3 {
+    color: var(--SmartThemeBodyColor, #fff);
+}
+
+.wi-floating-book-group-source-priority-4 {
+    color: var(--SmartThemeQuoteColor, #4f8cff);
+}
+
+.wi-floating-book-group-source-priority-5 {
+    color: var(--SmartThemeGreenColor, #64c27b);
 }
 
 @media (max-width: 600px) {

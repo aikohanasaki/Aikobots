@@ -406,6 +406,7 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
         for (const entry of sourceEntries) {
             if (entry && typeof entry === 'object') {
                 entry.lorebookSource = lorebookSource;
+                delete entry.lorebookPriority;
             }
         }
         return sourceEntries;
@@ -477,6 +478,7 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
             return {
                 ...entry,
                 lorebookSettings: resolved.settings,
+                lorebookPriority: resolved.settings.priority,
                 order: effectiveOrder,
                 sourceIndex: index,
             };

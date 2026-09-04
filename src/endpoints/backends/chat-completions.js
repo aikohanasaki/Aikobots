@@ -2880,6 +2880,7 @@ function sanitizeWorldInfoEntryForResponse(entry, user) {
         sanitizedEntry.matchedPrimaryKey = null;
         sanitizedEntry.matchedSecondaryKeys = [];
         delete sanitizedEntry.lorebookSource;
+        delete sanitizedEntry.lorebookPriority;
     }
 
     return sanitizedEntry;
@@ -3181,6 +3182,7 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
             key: entry.key,
             book: entry.book,
             lorebookSource: entry.lorebookSource,
+            lorebookPriority: entry.lorebookPriority,
             uid: entry.uid,
             storage: entry.storage,
             ownerHandle: entry.ownerHandle,

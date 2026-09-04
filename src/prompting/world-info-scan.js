@@ -371,6 +371,7 @@ async function buildWorldInfoDebugSummary(entryDebugMap, payload, tokenCountCach
             key: getWorldInfoEntryKey(entry),
             book: entry.world ?? null,
             lorebookSource: entry.lorebookSource,
+            lorebookPriority: entry.lorebookPriority,
             uid: entry.uid ?? null,
             storage: entry.storage === 'secure' ? 'secure' : 'user',
             ownerHandle: String(entry.ownerHandle || ''),

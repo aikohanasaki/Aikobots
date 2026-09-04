@@ -27,6 +27,7 @@ import {
     getStloSettingsFromLorebook,
     setStloSettingsOnLorebook,
 } from './stlo-utils.js';
+import { getFloatingLorebookSourcePresentation } from './world-info-source.js';
 import { STMB_MANAGED_FLAG } from './stmb-core.js';
 import {
     buildRegenerationIndexes,
@@ -2247,6 +2248,7 @@ function buildFloatingBookEntryRows(snapshot, settings) {
             keywordText: hidden ? '' : getWorldInfoReportKeywordText(entry).replace(/^\s*/, ''),
             book: String(entry?.book || '').trim(),
             lorebookSource: hidden ? '' : String(entry?.lorebookSource || '').trim(),
+            lorebookPriority: hidden ? null : entry?.lorebookPriority,
             groupName: String(entry?.book || '').trim() || FLOATING_BOOK_HIDDEN_GROUP_NAME,
             placementLabel: hidden ? '' : getFloatingBookPlacementLabel(entry),
             position: hidden ? Number.MAX_SAFE_INTEGER : getFloatingBookEntryPosition(entry),
@@ -2342,6 +2344,7 @@ function buildFloatingBookPanelModel(snapshot, settings) {
             .map(([name, rows]) => ({
                 name,
                 lorebookSource: rows.find(row => !row.hidden)?.lorebookSource || '',
+                lorebookPriority: rows.find(row => !row.hidden)?.lorebookPriority ?? null,
                 rows,
                 count: rows.filter(row => row.type === 'entry').length,
                 tokens: rows.reduce((sum, row) => sum + (row.hidden ? 0 : row.tokens), 0),
@@ -2649,11 +2652,15 @@ function createWorldInfoFloatingBookController() {
                     name.textContent = group.name;
                     label.append(name);
 
+                    const sourcePresentation = getFloatingLorebookSourcePresentation(group.lorebookSource, group.lorebookPriority);
                     const sourceLabel = getFloatingBookLorebookSourceLabel(group.lorebookSource);
-                    if (sourceLabel) {
-                        const source = document.createElement('small');
-                        source.className = 'wi-floating-book-group-source';
-                        source.textContent = sourceLabel;
+                    if (sourcePresentation && sourceLabel) {
+                        const source = document.createElement('i');
+                        const sourceDescription = `${sourcePresentation.priority} - ${sourceLabel}`;
+                        source.className = `wi-floating-book-group-source fa-solid ${sourcePresentation.iconClass} ${sourcePresentation.priorityClass}`;
+                        source.title = sourceDescription;
+                        source.setAttribute('role', 'img');
+                        source.setAttribute('aria-label', sourceDescription);
                         label.append(source);
                     }
 
@@ -2746,7 +2753,7 @@ function createWorldInfoFloatingBookController() {
                 totalCount: model.totalCount,
                 hiddenBookCount: model.hiddenBookCount,
                 rows: controller.settings.group
-                    ? model.groups.map(group => [group.name, group.lorebookSource, group.rows.filter(row => !row.hidden).map(row => row.title), group.rows.some(row => row.hidden) ? 'hidden' : ''])
+                    ? model.groups.map(group => [group.name, group.lorebookSource, group.lorebookPriority, group.rows.filter(row => !row.hidden).map(row => row.title), group.rows.some(row => row.hidden) ? 'hidden' : ''])
                     : model.rows.map(row => row.type === 'chat' ? `chat:${row.from}-${row.to}` : row.title),
             }));
             controller.ensurePanelsVisible();
