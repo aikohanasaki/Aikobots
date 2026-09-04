@@ -6558,7 +6558,6 @@ export async function prefetchCurrentChatTailBuffer(chatId) {
 
 
 async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull = false } = {}) {
-    const revisionChatKey = getActiveChatRevisionKey();
     const normalizedCount = Number(count);
     const requestedCount = count !== null
         && count !== undefined
@@ -6568,6 +6567,7 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
         : getConfiguredLongChatDisplayCount();
 
     if (selected_group) {
+        const revisionChatKey = getActiveChatRevisionKey();
         const response = await fetch('/api/chats/group/get', {
             method: 'POST',
             headers: getRequestHeaders(),
@@ -6590,16 +6590,24 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
         return { ...await response.json(), revisionChatKey };
     }
 
-    await unshallowCharacter(this_chid);
+    const characterId = this_chid;
+    const characterAvatar = characters[characterId]?.avatar;
+    await unshallowCharacter(characterId);
+    if (selected_group || this_chid !== characterId || characters[characterId]?.avatar !== characterAvatar) {
+        return { revisionChatKey: '' };
+    }
+
+    const character = characters[characterId];
+    const revisionChatKey = getActiveChatRevisionKey();
 
     const response = await fetch('/api/chats/get', {
         method: 'POST',
         headers: getRequestHeaders(),
         cache: 'no-cache',
         body: JSON.stringify({
-            ch_name: characters[this_chid].name,
-            file_name: characters[this_chid].chat,
-            avatar_url: characters[this_chid].avatar,
+            ch_name: character.name,
+            file_name: character.chat,
+            avatar_url: character.avatar,
             chunked: true,
             range_start: rangeStart,
             count: requestedCount,

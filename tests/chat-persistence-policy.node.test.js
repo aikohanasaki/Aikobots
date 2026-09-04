@@ -112,6 +112,22 @@ test('a rejected cross-chat hydration cannot mark the active chat temporary', ()
     assert.ok(rejectedGuard > applyResult && temporaryTransition > rejectedGuard);
 });
 
+test('direct chat hydration captures its revision key after expanding a shallow character', () => {
+    const scriptSource = fs.readFileSync(new URL('../public/script.js', import.meta.url), 'utf8');
+    const fetchStart = scriptSource.indexOf('async function fetchChunkedChat');
+    const characterCapture = scriptSource.indexOf('const characterId = this_chid;', fetchStart);
+    const unshallow = scriptSource.indexOf('await unshallowCharacter(characterId);', characterCapture);
+    const navigationGuard = scriptSource.indexOf('if (selected_group || this_chid !== characterId', unshallow);
+    const revisionCapture = scriptSource.indexOf('const revisionChatKey = getActiveChatRevisionKey();', navigationGuard);
+    const directFetch = scriptSource.indexOf("fetch('/api/chats/get'", revisionCapture);
+
+    assert.ok(fetchStart >= 0 && characterCapture > fetchStart);
+    assert.ok(unshallow > characterCapture);
+    assert.ok(navigationGuard > unshallow);
+    assert.ok(revisionCapture > navigationGuard);
+    assert.ok(directFetch > revisionCapture);
+});
+
 test('a rejected send is restored without overwriting newer composer input', () => {
     assert.equal(mergeRejectedSendDraft('rejected message', ''), 'rejected message');
     assert.equal(mergeRejectedSendDraft('rejected message', 'rejected message'), 'rejected message');
