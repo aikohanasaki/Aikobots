@@ -2879,12 +2879,14 @@ function sanitizeWorldInfoEntryForResponse(entry, user) {
         sanitizedEntry.comment = null;
         sanitizedEntry.matchedPrimaryKey = null;
         sanitizedEntry.matchedSecondaryKeys = [];
+        delete sanitizedEntry.lorebookSource;
     }
 
     return sanitizedEntry;
 }
 
-function sanitizeWorldInfoDebugDataForResponse(worldInfo, user) {
+/** Redacts World Info debug data, including activation provenance, for the requesting user. */
+export function sanitizeWorldInfoDebugDataForResponse(worldInfo, user) {
     if (!worldInfo || typeof worldInfo !== 'object') {
         return null;
     }
@@ -3178,6 +3180,7 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
         activeEntries: admittedEntries.map(entry => ({
             key: entry.key,
             book: entry.book,
+            lorebookSource: entry.lorebookSource,
             uid: entry.uid,
             storage: entry.storage,
             ownerHandle: entry.ownerHandle,

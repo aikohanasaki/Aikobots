@@ -762,6 +762,10 @@ The core `#toast-history-trigger` is inserted at the start of `#top-settings-hol
 
 The `.toast-history-list` and `.toast-history-suppressions` surfaces use standard popups and SmartTheme colors from `public/style.css`. History cards keep their severity border, plain-text title and message, timestamp, and suppression control readable on desktop and mobile. History and suppressions are current-tab state only; layouts must not copy their content into attributes, generated CSS, logs, or persistent layout state.
 
+## 27. Floating World Info source badges
+
+Grouped lorebook headings in the floating World Info panel place a compact `.wi-floating-book-group-source` badge after the lorebook name. The badge identifies the generation-time activation source as Global, Chat, Persona, Character, or Background, uses smart-theme colors from `public/style.css`, and remains absent for ungrouped entries, inaccessible secure entries, and snapshots without provenance. Layouts may adjust spacing but should keep the lorebook name readable and the source badge on one line.
+
 ## Frontend production bundles
 
 The v5 client serves committed production bundles from `public/dist`; server and PM2 startup never compile frontend assets. After changing frontend JavaScript, static CSS, built-in extension manifests/resources, or startup templates, run `npm run build:frontend` and commit the generated files. CI and release checks should run `npm run check:frontend-build` to rebuild in a temporary directory and verify that the committed output is current.

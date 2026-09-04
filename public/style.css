@@ -8137,6 +8137,20 @@ p.stmb-help-drawer-copy {
     min-height: 2rem;
 }
 
+.wi-floating-book-group-source {
+    flex: 0 0 auto;
+    padding: 1px 5px;
+    color: var(--SmartThemeBodyColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 999px;
+    background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 75%, transparent);
+    font-size: 0.7em;
+    font-weight: 500;
+    line-height: 1.35;
+    opacity: 0.72;
+    white-space: nowrap;
+}
+
 @media (max-width: 600px) {
     .world-info-locks-bar {
         align-items: stretch;

@@ -400,16 +400,32 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
         return claimed;
     }
 
+    /** Stamps server-derived activation provenance onto request-local lorebook entries. */
+    function stampLorebookSource(entries, lorebookSource) {
+        const sourceEntries = Array.isArray(entries) ? entries : [];
+        for (const entry of sourceEntries) {
+            if (entry && typeof entry === 'object') {
+                entry.lorebookSource = lorebookSource;
+            }
+        }
+        return sourceEntries;
+    }
+
     const globalWorldNames = claimWorldNames(selectedWorldSet);
     const chatWorldNames = claimWorldNames(chatWorld ? [chatWorld] : []);
     const personaWorldNames = claimWorldNames(personaWorld ? [personaWorld] : []);
     const visibleCharacterWorldNames = claimWorldNames(visibleCharacterBooks);
     const hiddenCharacterWorldNames = claimWorldNames(hiddenCharacterBooks);
 
-    const globalLore = (await Promise.all(globalWorldNames.map(worldName => readEntries(user, worldName)))).flat();
+    const globalLore = stampLorebookSource(
+        (await Promise.all(globalWorldNames.map(worldName => readEntries(user, worldName)))).flat(),
+        'global',
+    );
 
-    const visibleCharacterLore = (await Promise.all(visibleCharacterWorldNames
-        .map(worldName => readEntries(user, worldName)))).flat();
+    const visibleCharacterLore = stampLorebookSource(
+        (await Promise.all(visibleCharacterWorldNames.map(worldName => readEntries(user, worldName)))).flat(),
+        'character',
+    );
 
     const hiddenCharacterLoreResults = await Promise.all(hiddenCharacterWorldNames
         .map(async worldName => {
@@ -419,7 +435,11 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
             }
 
             try {
-                return { worldName, entries: await readEntries(user, worldName), included: true };
+                return {
+                    worldName,
+                    entries: stampLorebookSource(await readEntries(user, worldName), 'background'),
+                    included: true,
+                };
             } catch (error) {
                 if (error instanceof LorebookRepositoryError && error.type === 'LorebookNotFound') {
                     return { worldName, entries: [], included: false };
@@ -435,11 +455,11 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
     const characterLore = [...visibleCharacterLore, ...hiddenCharacterLore];
 
     const chatLore = chatWorldNames.length
-        ? await readEntries(user, chatWorldNames[0])
+        ? stampLorebookSource(await readEntries(user, chatWorldNames[0]), 'chat')
         : [];
 
     const personaLore = personaWorldNames.length
-        ? await readEntries(user, personaWorldNames[0])
+        ? stampLorebookSource(await readEntries(user, personaWorldNames[0]), 'persona')
         : [];
 
     let entries = [...globalLore, ...characterLore, ...chatLore, ...personaLore]

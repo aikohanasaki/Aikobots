@@ -1456,6 +1456,18 @@ const FLOATING_BOOK_MOBILE_MEDIA = '(max-width: 700px)';
 
 let worldInfoFloatingBookController = null;
 
+/** Returns the localized label for a server-derived lorebook activation source. */
+function getFloatingBookLorebookSourceLabel(source) {
+    switch (source) {
+        case 'global': return translate('Global');
+        case 'chat': return translate('Chat');
+        case 'persona': return translate('Persona');
+        case 'character': return translate('Character');
+        case 'background': return translate('Background');
+        default: return '';
+    }
+}
+
 function isWorldInfoFloatingBookEnabled() {
     return power_user.show_floating_wi_book !== false;
 }
@@ -2234,6 +2246,7 @@ function buildFloatingBookEntryRows(snapshot, settings) {
             strategyType: hidden ? '' : getFloatingBookStrategyType(entry),
             keywordText: hidden ? '' : getWorldInfoReportKeywordText(entry).replace(/^\s*/, ''),
             book: String(entry?.book || '').trim(),
+            lorebookSource: hidden ? '' : String(entry?.lorebookSource || '').trim(),
             groupName: String(entry?.book || '').trim() || FLOATING_BOOK_HIDDEN_GROUP_NAME,
             placementLabel: hidden ? '' : getFloatingBookPlacementLabel(entry),
             position: hidden ? Number.MAX_SAFE_INTEGER : getFloatingBookEntryPosition(entry),
@@ -2328,6 +2341,7 @@ function buildFloatingBookPanelModel(snapshot, settings) {
         const groups = [...grouped.entries()]
             .map(([name, rows]) => ({
                 name,
+                lorebookSource: rows.find(row => !row.hidden)?.lorebookSource || '',
                 rows,
                 count: rows.filter(row => row.type === 'entry').length,
                 tokens: rows.reduce((sum, row) => sum + (row.hidden ? 0 : row.tokens), 0),
@@ -2635,6 +2649,14 @@ function createWorldInfoFloatingBookController() {
                     name.textContent = group.name;
                     label.append(name);
 
+                    const sourceLabel = getFloatingBookLorebookSourceLabel(group.lorebookSource);
+                    if (sourceLabel) {
+                        const source = document.createElement('small');
+                        source.className = 'wi-floating-book-group-source';
+                        source.textContent = sourceLabel;
+                        label.append(source);
+                    }
+
                     if (group.tokens > 0) {
                         const tokens = document.createElement('small');
                         tokens.className = 'wi-floating-book-group-tokens';
@@ -2724,7 +2746,7 @@ function createWorldInfoFloatingBookController() {
                 totalCount: model.totalCount,
                 hiddenBookCount: model.hiddenBookCount,
                 rows: controller.settings.group
-                    ? model.groups.map(group => [group.name, group.rows.filter(row => !row.hidden).map(row => row.title), group.rows.some(row => row.hidden) ? 'hidden' : ''])
+                    ? model.groups.map(group => [group.name, group.lorebookSource, group.rows.filter(row => !row.hidden).map(row => row.title), group.rows.some(row => row.hidden) ? 'hidden' : ''])
                     : model.rows.map(row => row.type === 'chat' ? `chat:${row.from}-${row.to}` : row.title),
             }));
             controller.ensurePanelsVisible();
