@@ -73,6 +73,16 @@ test('startup HTML references bundles and only retained dynamic stylesheets', as
     assert.doesNotMatch(html, /src="(?:script\.js|scripts\/|lib\/)/u);
 });
 
+test('Claude uses the searchable editable model selector', async () => {
+    const [html, source] = await Promise.all([
+        fs.readFile(path.join(publicDirectory, 'index.html'), 'utf8'),
+        fs.readFile(path.join(publicDirectory, 'scripts', 'openai.js'), 'utf8'),
+    ]);
+    assert.match(html, /<select id="model_claude_select" required><\/select>/u);
+    assert.doesNotMatch(html, /model_claude_suggestions/u);
+    assert.match(source, /\$\('#model_claude_select'\)\.select2\(\{[\s\S]*?tags: true,/u);
+});
+
 test('v5 client excludes third-party discovery, controls, and runtime compilation', async () => {
     const [extensions, assets, backgrounds, server] = await Promise.all([
         fs.readFile(path.join(publicDirectory, 'scripts', 'extensions.js'), 'utf8'),

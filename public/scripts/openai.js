@@ -2048,9 +2048,7 @@ function saveModelList(data, responseData = {}) {
     if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE) {
         claudeCatalogAvailable = true;
         claudeCatalogAuthoritative = !oai_settings.reverse_proxy && !responseData.bypass && !responseData.error && !responseData.stale;
-        const suggestions = $('#model_claude_suggestions').empty();
-        model_list.forEach(model => suggestions.append(new Option(model.display_name || model.id, model.id)));
-        $('#model_claude_select').val(oai_settings.claude_model);
+        rebuildClaudeModelSelect(model_list);
         updateClaudeModelSupport({ bypass: Boolean(responseData.bypass), stale: Boolean(responseData.stale) });
     }
 
@@ -5350,7 +5348,7 @@ function getMaxContextOpenAI(value) {
 
 /** Applies catalog-driven Claude limits, validation, and control availability. */
 function updateClaudeModelSupport({ bypass = false, stale = false, discoveryFailed = false } = {}) {
-    const input = /** @type {HTMLInputElement} */ ($('#model_claude_select')[0]);
+    const input = /** @type {HTMLSelectElement} */ ($('#model_claude_select')[0]);
     if (!input) return;
     const model = claudeCatalogAvailable ? model_list.find(record => record.id === oai_settings.claude_model) : undefined;
     const isProxy = Boolean(oai_settings.reverse_proxy);
@@ -5399,15 +5397,28 @@ function invalidateClaudeCatalogSupport() {
     claudeCatalogAvailable = false;
     claudeCatalogAuthoritative = false;
     model_list = [];
-    $('#model_claude_suggestions').empty();
+    rebuildClaudeModelSelect();
     if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE) updateClaudeModelSupport();
+}
+
+/** Rebuilds Claude choices while retaining an unavailable or proxy-provided model ID. */
+function rebuildClaudeModelSelect(models = []) {
+    const select = $('#model_claude_select').empty();
+    const selectedModel = String(oai_settings.claude_model || '');
+    const modelIds = new Set(models.map(model => model.id));
+    models.forEach(model => select.append(new Option(model.display_name || model.id, model.id, false, model.id === selectedModel)));
+    if (selectedModel && !modelIds.has(selectedModel)) {
+        select.append(new Option(selectedModel, selectedModel, true, true));
+    }
+    select.val(selectedModel || null);
+    if (select.hasClass('select2-hidden-accessible')) select.trigger('change.select2');
 }
 
 /** Blocks only a directly connected model rejected by an authoritative catalog. */
 function assertClaudeModelAvailable() {
     if (oai_settings.chat_completion_source !== chat_completion_sources.CLAUDE) return;
     updateClaudeModelSupport();
-    const input = /** @type {HTMLInputElement} */ ($('#model_claude_select')[0]);
+    const input = /** @type {HTMLSelectElement} */ ($('#model_claude_select')[0]);
     if (input && !input.checkValidity()) {
         input.reportValidity();
         throw new Error(translate('This Claude model is unavailable. Select a model returned by Anthropic.'));
@@ -7437,6 +7448,16 @@ export function initOpenAI() {
             resetScrollHeight($(this));
         });
     }
+
+    rebuildClaudeModelSelect();
+    $('#model_claude_select').select2({
+        placeholder: t`Select a model`,
+        searchInputPlaceholder: t`Search models...`,
+        searchInputCssClass: 'text_pole',
+        width: '100%',
+        matcher: textValueMatcher,
+        tags: true,
+    });
 
     if (!isMobile()) {
         $('#model_openrouter_select').select2({
