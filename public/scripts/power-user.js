@@ -1077,6 +1077,7 @@ function switchMovingUI() {
             saveSettingsDebounced();
         }
     }
+    syncChatWidthControls();
 }
 
 function applyNoShadows() {
@@ -1381,6 +1382,11 @@ function ruleDeclaresAnyProperty(rule, propertyNames = []) {
 function collectLayoutThemeDeclarations(cssRules, declarations = { variables: new Set(), controlKeys: new Set() }) {
     for (const rule of cssRules) {
         if (rule?.style && smartThemeDeclarationTargetsActiveTheme(rule)) {
+            const chatWidth = rule.style.getPropertyValue('--aiko-layout-chat-width');
+            // Only direct slider delegation is supported; resolve indirect aliases here if needed later.
+            if (chatWidth && !/var\(\s*--sheldWidth\s*[,)]/.test(chatWidth)) {
+                declarations.controlKeys.add('chat_width');
+            }
             for (const control of layoutThemeVariableControls) {
                 for (const variable of getLayoutThemeControlVariables(control)) {
                     if (rule.style.getPropertyValue(variable)) {
@@ -1456,9 +1462,30 @@ function isLayoutThemeControlLocked(control) {
         || getLayoutThemeControlVariables(control).some(variable => layoutLockedThemeVariables.has(variable));
 }
 
+/** Saved or dragged shell widths take precedence over the layout's width variable. */
+function isMovableChatWidthLocked() {
+    return power_user.movingUI && !!document.getElementById('sheld')?.style.width;
+}
+
+/** Combines width restrictions without treating movable geometry as a theme declaration. */
+function isChatWidthLocked() {
+    return layoutLockedThemeControlKeys.has('chat_width')
+        || layoutLockedThemeVariables.has('--sheldWidth')
+        || isMovableChatWidthLocked();
+}
+
+/** Refreshes only the width inputs after shell geometry changes. */
+function syncChatWidthControls() {
+    syncLayoutLockedStandardControls(uiThemeCssControls.find(control => control.key === 'chat_width'));
+}
+
 function syncLayoutLockedStandardControls(control) {
-    const locked = isLayoutThemeControlLocked(control);
-    const title = `Disabled because ${control.label} is controlled by the active layout CSS.`;
+    const locked = control.key === 'chat_width' ? isChatWidthLocked() : isLayoutThemeControlLocked(control);
+    const title = control.key === 'chat_width'
+        ? (isLayoutThemeControlLocked(control)
+            ? t`Disabled because Chat Width is controlled by the active layout CSS.`
+            : t`Disabled because the chat has a movable panel width. Reset movable panels to restore layout sizing.`)
+        : `Disabled because ${control.label} is controlled by the active layout CSS.`;
 
     for (const selector of control.selectors ?? []) {
         const target = $(selector);
@@ -1592,6 +1619,9 @@ function applyChatWidth(type) {
             // This is a hack for Firefox to let it render before applying the block width.
             // Otherwise it takes the incorrect slider position with the new value AFTER the resizing.
             await delay(1);
+            if (isChatWidthLocked()) {
+                return;
+            }
             document.documentElement.style.setProperty('--sheldWidth', `${power_user.chat_width}vw`);
             await delay(1);
         });
@@ -3782,6 +3812,11 @@ export function forceCharacterEditorTokenize() {
 }
 
 jQuery(() => {
+    const shell = document.getElementById('sheld');
+    if (shell) {
+        new MutationObserver(syncChatWidthControls).observe(shell, { attributes: true, attributeFilter: ['style'] });
+    }
+    eventSource.on(event_types.MOVABLE_PANELS_RESET, syncChatWidthControls);
     const adjustAutocompleteDebounced = debounce(() => {
         $('.ui-autocomplete-input').each(function () {
             const isOpen = $(this).autocomplete('widget')[0].style.display !== 'none';
@@ -4047,6 +4082,10 @@ jQuery(() => {
     });
 
     $('#chat_width_slider').on('input', function (e, data) {
+        if (isChatWidthLocked()) {
+            $('#chat_width_slider, #chat_width_slider_counter').val(power_user.chat_width);
+            return;
+        }
         const applyMode = data?.forced ? 'forced' : 'normal';
         power_user.chat_width = Number($(this).val());
         applyChatWidth(applyMode);

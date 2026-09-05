@@ -11,10 +11,12 @@ import { fileURLToPath } from 'node:url';
 import { chromium, firefox, webkit } from 'playwright';
 import { resolveSystemChromiumPath } from '../scripts/browser-path.mjs';
 import { defaultOutputDirectory, hashDirectory } from '../scripts/frontend-build-lib.mjs';
+import { testLayoutSizing } from './layout-sizing-smoke.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const serverStartAttempts = 3;
 const browserName = process.env.FRONTEND_SMOKE_BROWSER || 'chromium';
+const layoutsOnly = process.argv.includes('--layouts');
 const extensionsEnabled = process.env.FRONTEND_SMOKE_DISABLE_EXTENSIONS !== '1';
 const browserType = { chromium, firefox, webkit }[browserName];
 if (!browserType) {
@@ -551,32 +553,43 @@ try {
     await page.waitForSelector('#top_chat_bar');
     await page.waitForFunction(() => Boolean(globalThis.SillyTavern?.getContext().SlashCommandParser.commands['stmb-highest']), null, { timeout: 30_000 });
 
-    assert.deepEqual(fatalBrowserDiagnostics, [], `Fatal browser diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
     const requests = [...applicationRequests].sort();
-    assert.ok(requests.length <= 12, `Expected at most 12 startup JS/CSS requests, got ${requests.length}: ${requests.join(', ')}`);
-    assert.deepEqual(pageErrors, [], `Browser page errors: ${pageErrors.join('\n')}\nRequests: ${requests.join(', ')}`);
-    assert.ok(requests.includes('/dist/stmb.js'), `STMB bundle was not loaded. Requests: ${requests.join(', ')}`);
-    assert.equal(requests.includes('/dist/chunks/builtins.js'), extensionsEnabled, `Built-ins bundle loading did not match the extension setting. Requests: ${requests.join(', ')}`);
-    assert.ok(requests.every(request => request.startsWith('/dist/') || request.startsWith('/css/layouts/') || request === '/css/user.css'), `Unexpected source request: ${requests.join(', ')}`);
-    assert.ok(requests.every(request => !/(?:kokoro|pdf|epub)/iu.test(request)), `Optional engine loaded during startup: ${requests.join(', ')}`);
-    assert.equal(await page.locator('#tts_provider').count(), 0, 'Disabled TTS built-in executed.');
-    assert.equal(await page.locator('#tts-css').count(), 0, 'Disabled TTS built-in style was applied.');
-    assert.equal(await page.evaluate(() => Boolean(globalThis.SillyTavern)), true, 'globalThis.SillyTavern is unavailable.');
-    assert.equal(await page.locator('#world_info_locks_bar').count(), 1, 'Core World Info Locks bar was not initialized exactly once with extensions disabled.');
-    assert.equal(await page.evaluate(() => Boolean(globalThis.SillyTavern.getContext().SlashCommandParser.commands.wipreset)), true, 'Core /wipreset command was not registered with extensions disabled.');
-    assert.equal(await page.locator('#stmb-menu-item').count(), 1, 'STMB menu was not initialized.');
-    assert.equal(await page.locator('#stmb-jobs-topbar-button[aria-controls="top_chat_stmb_jobs"]').count(), 1, 'STMB jobs UI was not initialized.');
-    assert.equal(await page.locator('#aiko-layout-css[href="css/layouts/classic.css"]').count(), 1, 'Selected runtime layout link was not retained.');
-    await testDataMaidMultiSelect(page, fatalBrowserDiagnostics);
-    assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected Data Maid browser diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
-    await testWorldInfoPresetSelectionUi(page);
-    await testWorldInfoBulkDelete(page, fatalBrowserDiagnostics);
-    assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected World Info bulk-delete diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
+    if (layoutsOnly) {
+        await page.evaluate(() => new Promise(resolve => {
+            const context = globalThis.SillyTavern.getContext();
+            context.eventSource.once(context.eventTypes.APP_READY, resolve);
+        }));
+        await testLayoutSizing(page);
+        assert.deepEqual(pageErrors, [], 'Layout checks produced browser errors.');
+    } else {
+        assert.deepEqual(fatalBrowserDiagnostics, [], `Fatal browser diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
+        assert.ok(requests.length <= 12, `Expected at most 12 startup JS/CSS requests, got ${requests.length}: ${requests.join(', ')}`);
+        assert.deepEqual(pageErrors, [], `Browser page errors: ${pageErrors.join('\n')}\nRequests: ${requests.join(', ')}`);
+        assert.ok(requests.includes('/dist/stmb.js'), `STMB bundle was not loaded. Requests: ${requests.join(', ')}`);
+        assert.equal(requests.includes('/dist/chunks/builtins.js'), extensionsEnabled, `Built-ins bundle loading did not match the extension setting. Requests: ${requests.join(', ')}`);
+        assert.ok(requests.every(request => request.startsWith('/dist/') || request.startsWith('/css/layouts/') || request === '/css/user.css'), `Unexpected source request: ${requests.join(', ')}`);
+        assert.ok(requests.every(request => !/(?:kokoro|pdf|epub)/iu.test(request)), `Optional engine loaded during startup: ${requests.join(', ')}`);
+        assert.equal(await page.locator('#tts_provider').count(), 0, 'Disabled TTS built-in executed.');
+        assert.equal(await page.locator('#tts-css').count(), 0, 'Disabled TTS built-in style was applied.');
+        assert.equal(await page.evaluate(() => Boolean(globalThis.SillyTavern)), true, 'globalThis.SillyTavern is unavailable.');
+        assert.equal(await page.locator('#world_info_locks_bar').count(), 1, 'Core World Info Locks bar was not initialized exactly once with extensions disabled.');
+        assert.equal(await page.evaluate(() => Boolean(globalThis.SillyTavern.getContext().SlashCommandParser.commands.wipreset)), true, 'Core /wipreset command was not registered with extensions disabled.');
+        assert.equal(await page.locator('#stmb-menu-item').count(), 1, 'STMB menu was not initialized.');
+        assert.equal(await page.locator('#stmb-jobs-topbar-button[aria-controls="top_chat_stmb_jobs"]').count(), 1, 'STMB jobs UI was not initialized.');
+        assert.equal(await page.locator('#aiko-layout-css[href="css/layouts/classic.css"]').count(), 1, 'Selected runtime layout link was not retained.');
+        await testDataMaidMultiSelect(page, fatalBrowserDiagnostics);
+        assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected Data Maid browser diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
+        await testWorldInfoPresetSelectionUi(page);
+        await testWorldInfoBulkDelete(page, fatalBrowserDiagnostics);
+        assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected World Info bulk-delete diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
+        await testLayoutSizing(page);
+        assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected layout diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
+    }
     assert.equal(await page.evaluate(async () => (await (await globalThis.fetch('/version')).json()).pkgVersion), '5.1.0', 'Runtime version is not v5.');
     assert.deepEqual(await hashDirectory(defaultOutputDirectory), committedBundleHashes, 'Production startup modified committed frontend artifacts.');
     console.log(`Frontend ${browserName} smoke passed with ${requests.length} JS/CSS requests: ${requests.join(', ')}`);
 } catch (error) {
-    throw new Error(`${error.message}\nPage errors:\n${pageErrors.join('\n')}\nBrowser diagnostics:\n${browserDiagnostics.join('\n')}\n${getServerOutput()}`);
+    throw new Error(`${error.message}\nPage errors:\n${pageErrors.join('\n')}\nBrowser diagnostics:\n${browserDiagnostics.join('\n')}\n${getServerOutput()}`, { cause: error });
 } finally {
     await browser?.close();
     await stopServer(server);

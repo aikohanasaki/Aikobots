@@ -6469,5 +6469,7 @@
   ,"Claude model discovery failed; cached capabilities are being used.": "Не удалось получить модели Claude; используются кэшированные возможности."
   ,"Disabled because the selected Claude model does not support this request option.": "Отключено, поскольку выбранная модель Claude не поддерживает этот параметр запроса."
   ,"Claude capabilities determine whether adaptive or manual thinking is used. Auto leaves thinking and effort at Anthropic's defaults.": "Возможности Claude определяют использование адаптивного или ручного мышления. Авто оставляет мышление и усилие со значениями Anthropic по умолчанию."
-  ,"Claude refused this request.": "Claude отклонил этот запрос."
+  ,"Claude refused this request.": "Claude отклонил этот запрос.",
+    "Disabled because Chat Width is controlled by the active layout CSS.": "Отключено, поскольку ширина чата задаётся CSS активного макета.",
+    "Disabled because the chat has a movable panel width. Reset movable panels to restore layout sizing.": "Отключено, поскольку ширина чата задана перемещаемой панелью. Сбросьте перемещаемые панели, чтобы восстановить размеры макета."
 }

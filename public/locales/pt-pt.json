@@ -1824,5 +1824,7 @@
   ,"Claude model discovery failed; cached capabilities are being used.": "A descoberta de modelos Claude falhou; estão a ser usadas as capacidades em cache."
   ,"Disabled because the selected Claude model does not support this request option.": "Desativado porque o modelo Claude selecionado não suporta esta opção de pedido."
   ,"Claude capabilities determine whether adaptive or manual thinking is used. Auto leaves thinking and effort at Anthropic's defaults.": "As capacidades do Claude determinam se é usado pensamento adaptativo ou manual. Automático mantém os valores predefinidos da Anthropic."
-  ,"Claude refused this request.": "O Claude recusou este pedido."
+  ,"Claude refused this request.": "O Claude recusou este pedido.",
+    "Disabled because Chat Width is controlled by the active layout CSS.": "Desativado porque a largura do chat é controlada pelo CSS do esquema ativo.",
+    "Disabled because the chat has a movable panel width. Reset movable panels to restore layout sizing.": "Desativado porque o chat tem uma largura definida por um painel móvel. Reponha os painéis móveis para restaurar as dimensões do esquema."
 }

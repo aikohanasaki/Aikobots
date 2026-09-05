@@ -1,5 +1,8 @@
 # Custom Layouts in Aikobots
 
+See [layout sizing compatibility](layout.md) for the built-in sizing release note,
+width-control precedence, and guidance on custom CSS variable dependencies.
+
 Aikobots layouts let you change how the chat screen is arranged without replacing the app itself.
 
 A layout is a CSS file. It can adjust things like:

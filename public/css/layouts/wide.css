@@ -6,4 +6,8 @@ body[data-aiko-layout="wide"] {
     --aiko-layout-right-panel-width: max(30dvw, calc((100dvw - var(--aiko-layout-chat-width) - 2px) / 2));
     --aiko-layout-right-panel-width-fallback: max(30vw, calc((100vw - var(--aiko-layout-chat-width) - 2px) / 2));
     --aiko-layout-drawer-width: var(--aiko-layout-chat-width);
+
+    /* Resolve inherited dependencies where this preset overrides their inputs. */
+    --aiko-layout-floating-panel-width: calc(((100dvw - var(--aiko-layout-chat-width)) / 2) - 1px);
+    --aiko-layout-floating-panel-width-fallback: calc(((100vw - var(--aiko-layout-chat-width)) / 2) - 1px);
 }

@@ -8380,6 +8380,31 @@ body[data-generating="true"] #chat .last_mes .mes_reasoning_actions {
     opacity: 0.6;
 }
 
+/* Capture preset widths on body before applying the desktop floor on each panel.
+ * Keeping this out of the root contract preserves uploaded layouts and lets
+ * mobile/iOS structural widths and inline movable widths retain precedence.
+ */
+@media screen and (min-width: 1000.01px) {
+    body:is([data-aiko-layout="classic"], [data-aiko-layout="wide"], [data-aiko-layout="compact"], [data-aiko-layout="leftDock"], [data-aiko-layout="workspaceRight"], [data-aiko-layout="compactOps"], [data-aiko-layout="topComposer"]) {
+        --aiko-builtin-left-width: var(--aiko-layout-left-panel-width);
+        --aiko-builtin-right-width: var(--aiko-layout-right-panel-width);
+        --aiko-builtin-floating-width: var(--aiko-layout-floating-panel-width);
+        --aiko-builtin-panel-space: calc(100dvw - var(--aiko-layout-workspace-gap, 0px));
+
+        & #left-nav-panel {
+            --aiko-layout-left-panel-width: min(var(--aiko-builtin-panel-space), max(450px, var(--aiko-builtin-left-width)));
+        }
+
+        & #right-nav-panel {
+            --aiko-layout-right-panel-width: min(var(--aiko-builtin-panel-space), max(450px, var(--aiko-builtin-right-width)));
+        }
+
+        & :is(#floatingPrompt, #cfgConfig) {
+            --aiko-layout-floating-panel-width: min(var(--aiko-builtin-panel-space), max(450px, var(--aiko-builtin-floating-width)));
+        }
+    }
+}
+
 .aiko-layout-theme-control-locked {
     opacity: 0.55;
     cursor: help;

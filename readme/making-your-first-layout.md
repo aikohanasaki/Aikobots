@@ -1,5 +1,9 @@
 # Making Your First Aikobots Layout
 
+See [layout sizing compatibility](layout.md) when changing widths: body overrides
+do not automatically recalculate dependencies inherited from the root contract.
+That guide also explains how to keep the Chat Width slider active.
+
 So you want to customize how Aikobots looks. Good news: you don't need to touch any HTML or JavaScript. A custom layout is just a single CSS file that you upload through Settings.
 
 This guide walks you through everything you need to go from zero to a working layout.

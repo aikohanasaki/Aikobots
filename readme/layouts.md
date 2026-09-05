@@ -1,5 +1,8 @@
 # Aikobots Layout Template Guide
 
+See [layout sizing compatibility](layout.md) for width precedence, slider delegation,
+variable inheritance, and the built-in desktop panel overlay behavior.
+
 Aikobots layouts are CSS-only templates. A layout does **not** replace the chat HTML. Instead, it changes CSS variables and selected classes that the app already provides.
 
 Memory Books keeps its primary popup focused on scene, lorebook, profile, and prompt-manager actions. General preferences and automatic-memory controls open as separate sub-popups. Per-member group lorebook bindings use a responsive grid that collapses to one column below 600px and inherits the active smart-theme control colors. Narrator Mode adds a movable Active Cast drawer using SmartTheme colors; its expanded width is viewport-limited, its cast manager collapses to one column below 600px, and its normalized position and collapse state are saved in STMB settings.

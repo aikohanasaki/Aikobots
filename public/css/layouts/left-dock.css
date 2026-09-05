@@ -15,6 +15,14 @@ body[data-aiko-layout="leftDock"] {
     --aiko-layout-drawer-left: var(--aiko-layout-dock-gap);
     --aiko-layout-drawer-right: auto;
     --aiko-layout-drawer-margin-inline: 0;
+
+    /* Resolve inherited dependencies where this preset overrides their inputs. */
+    --aiko-layout-left-panel-width: calc((100dvw - var(--aiko-layout-chat-width) - 2px) / 2);
+    --aiko-layout-left-panel-width-fallback: calc((100vw - var(--aiko-layout-chat-width) - 2px) / 2);
+    --aiko-layout-right-panel-width: calc((100dvw - var(--aiko-layout-chat-width) - 2px) / 2);
+    --aiko-layout-right-panel-width-fallback: calc((100vw - var(--aiko-layout-chat-width) - 2px) / 2);
+    --aiko-layout-floating-panel-width: calc(((100dvw - var(--aiko-layout-chat-width)) / 2) - 1px);
+    --aiko-layout-floating-panel-width-fallback: calc(((100vw - var(--aiko-layout-chat-width)) / 2) - 1px);
 }
 
 @media screen and (max-width: 1000px) {

@@ -12,6 +12,31 @@ body[data-aiko-layout="compactOps"] {
     --aiko-layout-drawer-width: var(--aiko-layout-chat-width);
     --aiko-layout-message-padding-block-start: 3px;
     --aiko-layout-message-padding-inline: 5px;
+
+    /* Resolve inherited dependencies where this preset overrides their inputs. */
+    --mainFontSize: calc(var(--fontScale) * 15px);
+    --bottomFormIconSize: calc(var(--mainFontSize) * 1.9);
+    --bottomFormBlockSize: calc(var(--bottomFormIconSize) + var(--bottomFormBlockPadding));
+    --topBarIconSize: calc(var(--mainFontSize) * 2 * var(--topBarIconScale));
+    --topBarBlockPadding: calc(var(--mainFontSize) / 3);
+    --topBarBlockSize: calc(var(--topBarIconSize) + var(--topBarBlockPadding));
+    --aiko-layout-chat-top: var(--topBarBlockSize);
+    --aiko-layout-chat-height: calc(100dvh - var(--topBarBlockSize) - 1px);
+    --aiko-layout-chat-height-fallback: calc(100vh - var(--topBarBlockSize) - 1px);
+    --aiko-layout-chat-max-height: calc(100dvh - var(--topBarBlockSize) - 1px);
+    --aiko-layout-chat-scroll-max-height: calc(100dvh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
+    --aiko-layout-chat-scroll-max-height-fallback: calc(100vh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
+    --aiko-layout-drawer-top: var(--topBarBlockSize);
+    --aiko-layout-drawer-max-height: calc(100dvh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
+    --aiko-layout-drawer-max-height-fallback: calc(100vh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
+    --aiko-layout-panel-max-height: calc(100dvh - var(--topBarBlockSize));
+    --aiko-layout-panel-max-height-fallback: calc(100vh - var(--topBarBlockSize));
+    --aiko-layout-left-panel-width: calc((100dvw - var(--aiko-layout-chat-width) - 2px) / 2);
+    --aiko-layout-left-panel-width-fallback: calc((100vw - var(--aiko-layout-chat-width) - 2px) / 2);
+    --aiko-layout-right-panel-width: calc((100dvw - var(--aiko-layout-chat-width) - 2px) / 2);
+    --aiko-layout-right-panel-width-fallback: calc((100vw - var(--aiko-layout-chat-width) - 2px) / 2);
+    --aiko-layout-floating-panel-width: calc(((100dvw - var(--aiko-layout-chat-width)) / 2) - 1px);
+    --aiko-layout-floating-panel-width-fallback: calc(((100vw - var(--aiko-layout-chat-width)) / 2) - 1px);
 }
 
 body[data-aiko-layout="compactOps"] #top_chat_bar,

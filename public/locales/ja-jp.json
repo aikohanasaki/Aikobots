@@ -6397,5 +6397,7 @@
   ,"Claude model discovery failed; cached capabilities are being used.": "Claudeモデルの検出に失敗したため、キャッシュされた機能を使用しています。"
   ,"Disabled because the selected Claude model does not support this request option.": "選択したClaudeモデルがこのリクエストオプションをサポートしていないため無効です。"
   ,"Claude capabilities determine whether adaptive or manual thinking is used. Auto leaves thinking and effort at Anthropic's defaults.": "Claudeの機能に応じて適応型または手動思考が使用されます。自動では思考とエフォートをAnthropicの既定値に任せます。"
-  ,"Claude refused this request.": "Claudeがこのリクエストを拒否しました。"
+  ,"Claude refused this request.": "Claudeがこのリクエストを拒否しました。",
+    "Disabled because Chat Width is controlled by the active layout CSS.": "チャットの幅は現在のレイアウトのCSSで制御されているため、無効になっています。",
+    "Disabled because the chat has a movable panel width. Reset movable panels to restore layout sizing.": "移動可能なパネルの幅がチャットに設定されているため、無効になっています。レイアウトのサイズに戻すには、移動可能なパネルをリセットしてください。"
 }
