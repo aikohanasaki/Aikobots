@@ -17051,11 +17051,17 @@ function escapeManageChatsHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+/** Formats exported Markdown and CSS through the chat sanitizer without active-chat mutations. */
 function formatManageChatsHtmlText(text) {
-    let formatted = escapeManageChatsHtml(text);
-    formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    formatted = formatted.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    return formatted;
+    let formatted = converter.makeHtml(String(text ?? ''));
+    formatted = encodeStyleTags(formatted);
+    formatted = sanitizeMessageHtml(formatted, {
+        RETURN_DOM: false,
+        RETURN_DOM_FRAGMENT: false,
+        RETURN_TRUSTED_TYPE: false,
+        ADD_TAGS: ['custom-style'],
+    });
+    return decodeStyleTags(formatted, { prefix: '.message-text ' });
 }
 
 function toManageChatsAbsoluteAssetUrl(url) {
@@ -17557,7 +17563,7 @@ async function exportManageChatsChatAsHtml(rowContext, filename) {
     await saveChatConditional();
     const messages = await fetchManageChatsHtmlExportMessages(rowContext, filename);
     const html = await buildManageChatsHtmlExport(rowContext, filename, messages);
-    download(html, `${filename}.html`, 'text/html');
+    download(html, `${filename.replace(/\.(jsonl|sqlite)$/i, '')}.html`, 'text/html');
     await delay(250);
     toastr.success(t`Chat saved to HTML`);
 }
