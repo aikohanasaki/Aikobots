@@ -79,16 +79,29 @@ class DataMaidDialog {
      * @private
      */
     async getReport() {
-        const response = await fetch('/api/data-maid/report', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-        });
-
-        if (!response.ok) {
-            throw new Error(`Error fetching Data Maid report: ${response.statusText}`);
+        let token;
+        while (!this.closed) {
+            const response = await fetch('/api/data-maid/report', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ batched: true, token }),
+            });
+            if (!response.ok) {
+                throw new Error(`Error fetching Data Maid report: HTTP ${response.status}`);
+            }
+            const result = await response.json();
+            this.token = token = result.token;
+            if (this.closed) {
+                await this.finalize();
+                return null;
+            }
+            if (result.report) return result;
+            const progress = result.progress;
+            this.container.querySelector('.dataMaidProgress').textContent = progress.phase === 'chats'
+                ? t`Scanning chats: ${progress.completed} of ${progress.total}; ${progress.records} records checked.`
+                : t`Checking cleanup candidates...`;
         }
-
-        return await response.json();
+        return null;
     }
 
     /**
@@ -139,6 +152,7 @@ class DataMaidDialog {
             this.isScanning = true;
 
             const report = await this.getReport();
+            if (!report || this.closed) return;
 
             this.hideSpinner();
             await this.renderReport(report, resultsList);
@@ -161,6 +175,7 @@ class DataMaidDialog {
         const placeholder = this.container.querySelector('.dataMaidPlaceholder');
         placeholder.classList.add('displayNone');
         spinner.classList.remove('displayNone');
+        this.container.querySelector('.dataMaidProgress').textContent = t`Checking cleanup candidates...`;
     }
 
     /**
@@ -190,6 +205,12 @@ class DataMaidDialog {
             const warning = document.createElement('div');
             warning.classList.add('info-block', 'warning', 'margin0');
             warning.textContent = t`Lorebooks could not be checked safely and were omitted. Rescan before trying again.`;
+            resultsList.appendChild(warning);
+        }
+        if (report.unavailableCategories?.some(category => category === 'images' || category === 'files')) {
+            const warning = document.createElement('div');
+            warning.classList.add('info-block', 'warning', 'margin0');
+            warning.textContent = t`Some image or file references could not be checked safely, or chats changed during the scan. Affected categories were omitted. Rescan before trying again.`;
             resultsList.appendChild(warning);
         }
         this.displayEmptyPlaceholder();
@@ -503,6 +524,7 @@ class DataMaidDialog {
     async open() {
         await this.setupDialogUI();
         await callGenericPopup(this.container, POPUP_TYPE.TEXT, '', { wide: true, large: true });
+        this.closed = true;
 
         if (this.token) {
             await this.finalize();

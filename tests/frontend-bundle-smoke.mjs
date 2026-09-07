@@ -135,6 +135,18 @@ async function testDataMaidMultiSelect(page, fatalBrowserDiagnostics) {
     const finalized = new Promise(resolve => resolveFinalized = resolve);
 
     await page.route('**/api/data-maid/report', async route => {
+        const body = route.request().postDataJSON();
+        assert.equal(body.batched, true);
+        if (!body.token) {
+            await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+                done: false, token: 'data-maid-smoke-token',
+                progress: { phase: 'chats', completed: 1, total: 2, records: 500 },
+            }) });
+            return;
+        }
+        assert.equal(body.token, 'data-maid-smoke-token');
+        assert.equal(await page.locator('.dataMaidProgress').textContent(), 'Scanning chats: 1 of 2; 500 records checked.');
+        assert.equal(await page.locator('.dataMaidCategory').count(), 0, 'Partial scans must not expose cleanup actions.');
         await route.fulfill({
             status: 200,
             contentType: 'application/json',

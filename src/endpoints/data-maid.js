@@ -9,6 +9,7 @@ import { tryParse } from '../util.js';
 import { SETTINGS_FILE } from '../constants.js';
 import { deleteChatStorageCompanions, getChatStorageCompanionPaths, withChatSaveLock } from '../chat-storage.js';
 import { exportDatabaseFile } from '../sqlite-manager.js';
+import { advanceDataMaidScan, finalizeDataMaidScan, getDataMaidScanPaths, hashDataMaidReference } from '../data-maid-scan.js';
 import {
     deleteUnboundUserLorebooks,
     listUnboundUserLorebooks,
@@ -69,6 +70,9 @@ const buildTokenPathsFromReport = report => Object.entries(report)
         };
     }));
 const getAuthorizedPathsForUser = async (user, token, { includeLorebookConflicts = false } = {}) => {
+    if (typeof token === 'string' && token.startsWith('scan-')) {
+        return await getDataMaidScanPaths(user, token);
+    }
     const tokenEntry = DataMaidService.TOKENS.get(token);
 
     if (tokenEntry) {
@@ -184,33 +188,36 @@ export class DataMaidService {
      * Creates a new DataMaidService instance for a specific user.
      * @param {string} handle - The user's handle.
      * @param {import('../users.js').UserDirectoryList} directories - List of user directories to scan for loose data.
+     * @param {{images: string[], files: string[]}|null} references Completed batched media-reference hashes.
      */
-    constructor(handle, directories) {
+    constructor(handle, directories, references = null) {
         this.handle = handle;
         this.directories = directories;
         this.user = { profile: { handle }, directories };
         this.unavailableCategories = [];
+        this.references = references ? { images: new Set(references.images), files: new Set(references.files) } : null;
     }
 
     /**
      * Generates a report of loose user data.
+     * @param {string|null} category Restrict collection to one category, or collect the full legacy report.
      * @returns {Promise<DataMaidRawReport>} A report containing lists of loose user data.
      */
-    async generateReport() {
+    async generateReport(category = null) {
         /** @type {DataMaidRawReport} */
         const report = {
-            images: await this.#collectImages(),
-            files: await this.#collectFiles(),
-            chats: await this.#collectChats(),
-            groupChats: await this.#collectGroupChats(),
-            avatarThumbnails: await this.#collectAvatarThumbnails(),
-            backgroundThumbnails: await this.#collectBackgroundThumbnails(),
-            personaThumbnails: await this.#collectPersonaThumbnails(),
-            layouts: await this.#collectLayouts(),
-            layoutAssets: await this.#collectLayoutAssets(),
-            chatBackups: await this.#collectChatBackups(),
-            settingsBackups: await this.#collectSettingsBackups(),
-            lorebooks: await this.#collectLorebooks(),
+            images: !category || category === 'images' ? await this.#collectImages() : [],
+            files: !category || category === 'files' ? await this.#collectFiles() : [],
+            chats: !category || category === 'chats' ? await this.#collectChats() : [],
+            groupChats: !category || category === 'groupChats' ? await this.#collectGroupChats() : [],
+            avatarThumbnails: !category || category === 'avatarThumbnails' ? await this.#collectAvatarThumbnails() : [],
+            backgroundThumbnails: !category || category === 'backgroundThumbnails' ? await this.#collectBackgroundThumbnails() : [],
+            personaThumbnails: !category || category === 'personaThumbnails' ? await this.#collectPersonaThumbnails() : [],
+            layouts: !category || category === 'layouts' ? await this.#collectLayouts() : [],
+            layoutAssets: !category || category === 'layoutAssets' ? await this.#collectLayoutAssets() : [],
+            chatBackups: !category || category === 'chatBackups' ? await this.#collectChatBackups() : [],
+            settingsBackups: !category || category === 'settingsBackups' ? await this.#collectSettingsBackups() : [],
+            lorebooks: !category || category === 'lorebooks' ? await this.#collectLorebooks() : [],
         };
 
         return report;
@@ -279,7 +286,7 @@ export class DataMaidService {
         const result = [];
 
         try {
-            const messages = await this.#parseAllChats(x => !!x?.extra?.image || !!x?.extra?.video || Array.isArray(x?.extra?.image_swipes) || Array.isArray(x?.extra?.media));
+            const messages = this.references ? [] : await this.#parseAllChats(x => !!x?.extra?.image || !!x?.extra?.video || Array.isArray(x?.extra?.image_swipes) || Array.isArray(x?.extra?.media));
             const knownImages = new Set();
             for (const message of messages) {
                 if (message?.extra?.image) {
@@ -301,7 +308,7 @@ export class DataMaidService {
                     }
                 }
             }
-            const metadata = await this.#parseAllMetadata(x => Array.isArray(x?.chat_backgrounds) && x.chat_backgrounds.length > 0);
+            const metadata = this.references ? [] : await this.#parseAllMetadata(x => Array.isArray(x?.chat_backgrounds) && x.chat_backgrounds.length > 0);
             for (const meta of metadata) {
                 if (Array.isArray(meta?.chat_backgrounds)) {
                     for (const background of meta.chat_backgrounds) {
@@ -321,20 +328,24 @@ export class DataMaidService {
             const images = await fs.promises.readdir(this.directories.userImages, { withFileTypes: true });
             for (const dirent of images) {
                 const direntPath = path.join(dirent.parentPath, dirent.name);
-                if (dirent.isFile() && !knownImageFullPaths.has(direntPath)) {
+                if (dirent.isFile() && !knownImageFullPaths.has(direntPath) && !this.references?.images.has(hashDataMaidReference(direntPath))) {
                     result.push(direntPath);
                 }
                 if (dirent.isDirectory()) {
                     const subdirFiles = await fs.promises.readdir(direntPath, { withFileTypes: true });
                     for (const file of subdirFiles) {
                         const subdirFilePath = path.join(direntPath, file.name);
-                        if (file.isFile() && !knownImageFullPaths.has(subdirFilePath)) {
+                        if (file.isFile() && !knownImageFullPaths.has(subdirFilePath) && !this.references?.images.has(hashDataMaidReference(subdirFilePath))) {
                             result.push(subdirFilePath);
                         }
                     }
                 }
             }
         } catch (error) {
+            if (this.references) {
+                this.unavailableCategories.push('images');
+                return [];
+            }
             console.error('[Data Maid] Error collecting user images:', error);
         }
 
@@ -351,7 +362,7 @@ export class DataMaidService {
         const result = [];
 
         try {
-            const messages = await this.#parseAllChats(x => !!x?.extra?.file?.url || (Array.isArray(x?.extra?.files) && x.extra.files.length > 0));
+            const messages = this.references ? [] : await this.#parseAllChats(x => !!x?.extra?.file?.url || (Array.isArray(x?.extra?.files) && x.extra.files.length > 0));
             const knownFiles = new Set();
             for (const message of messages) {
                 if (message?.extra?.file?.url) {
@@ -365,7 +376,7 @@ export class DataMaidService {
                     }
                 }
             }
-            const metadata = await this.#parseAllMetadata(x => Array.isArray(x?.attachments) && x.attachments.length > 0);
+            const metadata = this.references ? [] : await this.#parseAllMetadata(x => Array.isArray(x?.attachments) && x.attachments.length > 0);
             for (const meta of metadata) {
                 if (Array.isArray(meta?.attachments)) {
                     for (const attachment of meta.attachments) {
@@ -379,7 +390,7 @@ export class DataMaidService {
             if (fs.existsSync(pathToSettings)) {
                 try {
                     const settingsContent = await fs.promises.readFile(pathToSettings, 'utf-8');
-                    const settings = tryParse(settingsContent);
+                    const settings = this.references ? JSON.parse(settingsContent) : tryParse(settingsContent);
                     if (Array.isArray(settings?.extension_settings?.attachments)) {
                         for (const file of settings.extension_settings.attachments) {
                             if (file?.url) {
@@ -400,6 +411,7 @@ export class DataMaidService {
                         }
                     }
                 } catch (error) {
+                    if (this.references) throw new Error('Settings references unavailable');
                     console.error('[Data Maid] Error reading settings file:', error);
                 }
             }
@@ -410,11 +422,15 @@ export class DataMaidService {
             const files = await fs.promises.readdir(this.directories.files, { withFileTypes: true });
             for (const file of files) {
                 const filePath = path.join(this.directories.files, file.name);
-                if (file.isFile() && !knownFileFullPaths.has(filePath)) {
+                if (file.isFile() && !knownFileFullPaths.has(filePath) && !this.references?.files.has(hashDataMaidReference(filePath))) {
                     result.push(filePath);
                 }
             }
         } catch (error) {
+            if (this.references) {
+                this.unavailableCategories.push('files');
+                return [];
+            }
             console.error('[Data Maid] Error collecting user files:', error);
         }
 
@@ -842,6 +858,18 @@ router.post('/report', async (req, res) => {
             return res.sendStatus(403);
         }
 
+        if (req.body?.batched === true) {
+            const categories = ['lorebooks', 'images', 'files', 'chats', 'groupChats', 'avatarThumbnails', 'backgroundThumbnails',
+                'personaThumbnails', 'layouts', 'layoutAssets', 'chatBackups', 'settingsBackups'];
+            const result = await advanceDataMaidScan(req.user, req.body.token, categories, async (category, references) => {
+                const service = new DataMaidService(req.user.profile.handle, req.user.directories, references);
+                const raw = await service.generateReport(category);
+                const sanitized = await service.sanitizeReport(raw);
+                return { paths: raw[category], report: sanitized[category], unavailable: service.unavailableCategories.includes(category) };
+            }, buildTokenPathsFromReport);
+            return result ? res.json(result) : res.sendStatus(409);
+        }
+
         const dataMaid = new DataMaidService(req.user.profile.handle, req.user.directories);
         const rawReport = await dataMaid.generateReport();
 
@@ -850,6 +878,10 @@ router.post('/report', async (req, res) => {
 
         return res.json({ report, token, unavailableCategories: dataMaid.unavailableCategories });
     } catch (error) {
+        if (req.body?.batched === true) {
+            console.error('[Data Maid] Batched scan could not be completed.');
+            return res.sendStatus(500);
+        }
         console.error('[Data Maid] Error generating data maid report:', error);
         return res.sendStatus(500);
     }
@@ -866,6 +898,10 @@ router.post('/finalize', async (req, res) => {
         }
 
         const token = req.body.token.toString();
+        if (token.startsWith('scan-')) {
+            await finalizeDataMaidScan(req.user, token);
+            return res.sendStatus(204);
+        }
         const tokenEntry = DataMaidService.TOKENS.get(token);
         if (!tokenEntry) {
             return res.sendStatus(204);

@@ -1,4 +1,7 @@
 {
+    "Scanning chats: ${0} of ${1}; ${2} records checked.": "Analyse des discussions : ${0} sur ${1} ; ${2} enregistrements vérifiés.",
+    "Checking cleanup candidates...": "Vérification des éléments à nettoyer...",
+    "Some image or file references could not be checked safely, or chats changed during the scan. Affected categories were omitted. Rescan before trying again.": "Certaines références à des images ou à des fichiers n’ont pas pu être vérifiées en toute sécurité, ou des discussions ont changé pendant l’analyse. Les catégories concernées ont été exclues. Relancez l’analyse avant de réessayer.",
     "Favorite": "Favoris",
     "Tag": "Tag",
     "Duplicate": "Dupliquer",

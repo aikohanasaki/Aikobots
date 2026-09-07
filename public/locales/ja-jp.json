@@ -1,4 +1,7 @@
 {
+    "Scanning chats: ${0} of ${1}; ${2} records checked.": "チャットをスキャン中：${1} 件中 ${0} 件、${2} 件のレコードを確認済み。",
+    "Checking cleanup candidates...": "クリーンアップ候補を確認中...",
+    "Some image or file references could not be checked safely, or chats changed during the scan. Affected categories were omitted. Rescan before trying again.": "一部の画像またはファイルの参照を安全に確認できなかったか、スキャン中にチャットが変更されました。該当するカテゴリは除外されました。もう一度スキャンしてからお試しください。",
     "Favorite": "お気に入り",
     "Tag": "タグ",
     "Duplicate": "重複",

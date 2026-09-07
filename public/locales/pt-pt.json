@@ -1,4 +1,7 @@
 {
+    "Scanning chats: ${0} of ${1}; ${2} records checked.": "A analisar conversas: ${0} de ${1}; ${2} registos verificados.",
+    "Checking cleanup candidates...": "A verificar os candidatos à limpeza...",
+    "Some image or file references could not be checked safely, or chats changed during the scan. Affected categories were omitted. Rescan before trying again.": "Não foi possível verificar com segurança algumas referências a imagens ou ficheiros, ou as conversas foram alteradas durante a análise. As categorias afetadas foram omitidas. Execute uma nova análise antes de tentar novamente.",
     "Favorite": "Favorito",
     "Tag": "Marcação",
     "Duplicate": "Duplicado",

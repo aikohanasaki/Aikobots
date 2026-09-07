@@ -1,4 +1,7 @@
 {
+    "Scanning chats: ${0} of ${1}; ${2} records checked.": "Проверка чатов: ${0} из ${1}; проверено записей: ${2}.",
+    "Checking cleanup candidates...": "Проверка кандидатов на очистку...",
+    "Some image or file references could not be checked safely, or chats changed during the scan. Affected categories were omitted. Rescan before trying again.": "Некоторые ссылки на изображения или файлы не удалось безопасно проверить, либо чаты изменились во время сканирования. Затронутые категории были исключены. Запустите сканирование заново перед повторной попыткой.",
     "Background": "Фоновый",
     "clickslidertips": "Кликайте по цифрам под ползунками, чтобы менять их вручную.",
     "kobldpresets": "Пресеты для Kobold",
