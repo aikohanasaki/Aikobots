@@ -8606,6 +8606,13 @@ async function estimateSummaryPromptTokens(prompt, estimatedOutput = 500) {
 }
 
 async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile, signal, onRateLimitWait = null) {
+    /** Logs snapshots only for an explicitly identified ordinary user lorebook. */
+    const logConsolidation = (stage, details) => {
+        if (!options.debugLorebookName || !getStmbOrdinaryUserLorebookNames().includes(options.debugLorebookName)) return;
+        const { prompt, ...snapshot } = details;
+        console.log(`[STMB consolidation] ${stage}`, JSON.stringify({ lorebook: options.debugLorebookName, ...snapshot }, null, 2));
+        if (typeof prompt === 'string') console.log('[STMB consolidation] Full assembled prompt', prompt);
+    };
     const {
         presetKey: requestedPresetKey = null,
         maxItemsPerPass = 15,
@@ -8725,6 +8732,19 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
             break;
         }
 
+        logConsolidation('Memories sent', {
+            pass,
+            prompt,
+            estimatedTokens: tokenEstimate.total,
+            tokenBudget: baseTokenTarget,
+            memories: batch.map((brief, index) => ({
+                sourceId: String(index + 1).padStart(3, '0'),
+                uid: brief.id,
+                title: brief.title,
+                content: brief.content,
+                gapMarker: Boolean(brief.gapMarker),
+            })),
+        });
         const response = await requestStructuredSummaryWithRetry(
             prompt,
             profile,
@@ -8735,6 +8755,11 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
         lastRawResponse = String(response.rawResponse || '').trim();
         lastRetryRawResponse = String(response.retryRawResponse || '').trim();
 
+        logConsolidation('Arcs returned by model', {
+            pass,
+            arcs: response.parsed.summaries.map(({ title, summary, member_ids }) => ({ title, summary, member_ids })),
+            unassignedItems: response.parsed.unassigned_items,
+        });
         const { summaryCandidates, leftovers } = createSummaryCandidatesFromResponse(response.parsed, batchEntries, { allowAmbiguousAssignments });
         const consumedIds = new Set(
             batchEntries
@@ -8743,6 +8768,12 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
                 .filter(id => !leftovers.includes(id)),
         );
 
+        logConsolidation('Resolved arc members and leftovers', {
+            pass,
+            arcs: summaryCandidates.map(({ title, memberIds }) => ({ title, memberUids: memberIds })),
+            leftOutOfPassUids: leftovers,
+            remainingUids: Array.from(remainingMap.keys()).filter(id => !consumedIds.has(id)),
+        });
         if (summaryCandidates.length > 0) {
             for (let index = 0; index < summaryCandidates.length; index++) {
                 acceptedSummaries.push(summaryCandidates[index]);
@@ -8760,12 +8791,17 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
         }
 
         if (consumedIds.size < minimumProgress && pass > 1) {
+            logConsolidation('Stopped below minimum progress', { pass, consumed: consumedIds.size, minimumProgress });
             break;
         }
 
         carryBriefs = batch.filter(brief => leftovers.includes(String(brief.id)));
     }
 
+    logConsolidation('Analysis complete', {
+        arcs: acceptedSummaries.map(({ title, memberIds }) => ({ title, memberUids: memberIds })),
+        memoriesLeftOut: Array.from(remainingMap.values()).map(({ id, title }) => ({ uid: id, title })),
+    });
     const sourceKeywordsById = new Map(sourceEntries
         .filter(entry => !entry?.__stmbGapMarker)
         .map(entry => [String(entry?.uid), Array.isArray(entry?.key) ? entry.key : []]));
@@ -10315,6 +10351,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
 
     try {
         const buildAnalysisOptions = (lockedSummaries = []) => ({
+            debugLorebookName: lorebookName,
             presetKey: typeof payload.presetKey === 'string' && payload.presetKey.trim() ? payload.presetKey.trim() : getDefaultArcPromptKey(),
             promptText: typeof payload.promptText === 'string' && payload.promptText.trim() ? payload.promptText : null,
             maxItemsPerPass: Math.max(1, Math.trunc(Number(payload.maxItemsPerPass) || 15)),
