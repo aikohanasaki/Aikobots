@@ -1,4 +1,6 @@
 {
+    "Create your own layout": "Crie o seu próprio layout",
+    "Follow the guide yourself or share it with an AI assistant, then upload the finished CSS here.": "Siga o guia ou partilhe-o com um assistente de IA e, depois, carregue aqui o ficheiro CSS concluído.",
     "Scanning chats: ${0} of ${1}; ${2} records checked.": "A analisar conversas: ${0} de ${1}; ${2} registos verificados.",
     "Checking cleanup candidates...": "A verificar os candidatos à limpeza...",
     "Some image or file references could not be checked safely, or chats changed during the scan. Affected categories were omitted. Rescan before trying again.": "Não foi possível verificar com segurança algumas referências a imagens ou ficheiros, ou as conversas foram alteradas durante a análise. As categorias afetadas foram omitidas. Execute uma nova análise antes de tentar novamente.",

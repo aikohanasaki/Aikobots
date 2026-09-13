@@ -1,4 +1,6 @@
 {
+    "Create your own layout": "Создайте свой макет",
+    "Follow the guide yourself or share it with an AI assistant, then upload the finished CSS here.": "Следуйте руководству самостоятельно или поделитесь им с ИИ-ассистентом, а затем загрузите сюда готовый CSS-файл.",
     "Scanning chats: ${0} of ${1}; ${2} records checked.": "Проверка чатов: ${0} из ${1}; проверено записей: ${2}.",
     "Checking cleanup candidates...": "Проверка кандидатов на очистку...",
     "Some image or file references could not be checked safely, or chats changed during the scan. Affected categories were omitted. Rescan before trying again.": "Некоторые ссылки на изображения или файлы не удалось безопасно проверить, либо чаты изменились во время сканирования. Затронутые категории были исключены. Запустите сканирование заново перед повторной попыткой.",

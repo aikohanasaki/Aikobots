@@ -18,6 +18,8 @@ For an AI request, provide this guide plus the desired arrangement, density, com
 
 ## Working starter file
 
+The Layout drawer includes a **Create your own layout** link below its selector and upload buttons, before the sizing controls. It opens this guide on the production `v5` branch in a new tab; a small note explains that users can follow the guide themselves or share it with an AI assistant, then upload the finished CSS. The link and note inherit the existing smart-theme styling and wrap on mobile.
+
 Save as `my-layout.css`, upload through **User Settings → Layout → Upload layout CSS**, then select it in the Layout dropdown. This example owns an 840px maximum chat width and gives navigation/prompt panels a viewport-limited 450px width. Panels may overlap the chat.
 
 ```css
