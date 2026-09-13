@@ -34,4 +34,4 @@ Additional Aikobots Credits
 
 ## Documentation Links
 
-See [Modular Layout](/readme/layouts.md) for instructions on styling Aikobots with modular CSS.
+See the [CSS layout style guide](/readme/layout.md) for layout structure, theme variables, and instructions for generating custom Aikobots CSS.
