@@ -1,4 +1,6 @@
 {
+    "Override insertion position and order": "Substituir a posição e a ordem de inserção",
+    "Order value": "Valor da ordem",
     "Auto-rollback after message deletion": "Reverter automaticamente após eliminar mensagens",
     "Rollback deletes affected memories and summaries permanently. Side Prompts retain one restoration layer.": "A reversão elimina permanentemente as memórias e os resumos afetados. Os Side Prompts mantêm um nível de restauro.",
     "Update last processed message": "Atualizar a última mensagem processada",

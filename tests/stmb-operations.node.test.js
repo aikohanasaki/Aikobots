@@ -82,3 +82,33 @@ test('Side Prompt rollback restores one server snapshot and rejects edits and v1
     entry.STMB_sidePromptRegeneration.version = 1;
     assert.throws(() => planStmbRollbackBook(db, operation, { entries: { 1: entry } }), /unresolved work/);
 });
+
+test('rollback rejects ambiguous legacy ownership and does not treat unrelated entry metadata as a dependency', async t => {
+    const { db, messages } = await createChat(t);
+    recordStmbDeletion(db, getChatHeader(db), 2, 2, 'delete-1');
+    const operation = readStmbOperations(db)[0];
+    assert.throws(() => planStmbRollbackBook(db, operation, { entries: { 1: { uid: 1, stmemorybooks: true, STMB_start: 1, STMB_end: 4 } } }), /unresolved work/);
+    const unrelated = { uid: 2, content: 'Ordinary note', stmbSourceEntryUids: [1], disabledBySummaryId: 1 };
+    const result = planStmbRollbackBook(db, operation, { entries: {
+        1: { uid: 1, stmemorybooks: true, STMB_startUuid: messages[2].aikobots_message_uuid, STMB_endUuid: messages[2].aikobots_message_uuid },
+        2: unrelated,
+    } });
+    assert.deepEqual(result.entries, { 2: unrelated });
+});
+
+test('authoritative truncation journals actual removal but not a no-op', async t => {
+    const { db, file, messages } = await createChat(t);
+    const clean = messages.map(({ swipes, ...message }) => message);
+    setMessages(db, [getChatHeader(db), ...clean]);
+    const { truncateSqliteChatAfterUuid } = await import('../src/endpoints/chats.js');
+    const sessionId = '33333333-3333-4333-8333-333333333333';
+    const first = await truncateSqliteChatAfterUuid({ filePath: file, saveSessionId: sessionId, displayCount: 10, requestBody: {
+        base_revision: 1, save_session_id: sessionId, operation_id: '11111111-1111-4111-8111-111111111111', branch_point_uuid: messages[4].aikobots_message_uuid,
+    } });
+    assert.equal(readStmbOperations(db).length, 0);
+    await truncateSqliteChatAfterUuid({ filePath: file, saveSessionId: sessionId, displayCount: 10, requestBody: {
+        base_revision: first.chat_revision, save_session_id: sessionId, operation_id: '22222222-2222-4222-8222-222222222222', branch_point_uuid: messages[2].aikobots_message_uuid,
+    } });
+    assert.deepEqual(readStmbOperations(db)[0].data.deleted, messages.slice(3).map(message => message.aikobots_message_uuid));
+    assert.deepEqual(getMessageRange(db, 0, 3).map(message => message.aikobots_message_uuid), messages.slice(0, 3).map(message => message.aikobots_message_uuid));
+});

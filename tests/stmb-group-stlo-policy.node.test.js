@@ -21,5 +21,9 @@ test('group STLO reconciliation merges shared books and skips invalid bindings',
         lorebookName: 'Shared',
         storage: 'user',
         characterNames: ['Alice', 'Bob'],
+    }, {
+        lorebookName: 'Group Memory',
+        storage: 'user',
+        characterNames: ['Carol'],
     }]);
 });

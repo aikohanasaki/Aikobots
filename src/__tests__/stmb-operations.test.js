@@ -3,11 +3,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadDb, setMessages, getChatHeader } from '../sqlite-manager.js';
-import { captureStmbOperationSource, readStmbOperations } from '../stmb-operations.js';
+import { captureStmbOperationSource, recordStmbDeletion, readStmbOperations } from '../stmb-operations.js';
 
 const books = new Map();
 const transactionSave = jest.fn();
 jest.unstable_mockModule('../lorebook-repository.js', () => ({
+    getCanonicalLorebookName: name => name,
     getLorebookForManagement: jest.fn(async (_user, name) => ({ data: structuredClone(books.get(name)), metadata: { name, storage: 'user' } })),
     assertLorebookCheckoutForManagement: jest.fn(),
     withLorebookManagementTransaction: callback => callback({ save: transactionSave }),
@@ -78,4 +79,41 @@ it('rejects edited saved entries before acknowledging progress', async () => {
     await withStmbMemoryTransaction(request, sqlitePath, transaction => transaction.save({}, 'Book', { entries: { 1: { uid: 1, content: 'Original generated memory' } } }, 'user'));
     books.get('Book').entries[1].content = 'Manual edit';
     await expect(resolveStmbOperations({ user: {}, body: { id: request.body.operation.id, action: 'retry', base_revision: 1 } }, sqlitePath)).rejects.toMatchObject({ status: 409 });
+});
+
+it('resumes rollback after the first book was written without restoring or deleting unrelated entries', async () => {
+    const db = await loadDb(sqlitePath);
+    try {
+        const header = getChatHeader(db);
+        header.chat_metadata.STMemoryBooks = { autoRollbackPolicy: { enabled: true, books: ['Book', 'Other'] } };
+        db.run('UPDATE messages SET content = ? WHERE order_index = 0', [JSON.stringify(header)]);
+        recordStmbDeletion(db, header, 0, 0, 'delete-1');
+        db.run('DELETE FROM messages WHERE order_index > 0');
+    } finally { db.close(); }
+    for (const name of ['Book', 'Other']) books.set(name, { entries: {
+        1: { uid: 1, stmemorybooks: true, STMB_startUuid: request.body.operation.startUuid, STMB_endUuid: request.body.operation.endUuid },
+        2: { uid: 2, content: 'Unrelated ordinary entry' },
+    } });
+    let interrupted = false;
+    transactionSave.mockImplementation(async (_user, name, data) => {
+        if (name === 'Other' && !interrupted) { interrupted = true; throw new Error('interrupted'); }
+        books.set(name, structuredClone(data));
+    });
+    const resolveRequest = { user: {}, body: { id: 'rollback-delete-1', action: 'retry', base_revision: 1 } };
+    await expect(resolveStmbOperations(resolveRequest, sqlitePath)).rejects.toThrow('interrupted');
+    const result = await resolveStmbOperations(resolveRequest, sqlitePath);
+    expect(result.chat_revision).toBe(2);
+    expect(result.operations).toEqual([]);
+    expect(transactionSave.mock.calls.filter(([, name]) => name === 'Book')).toHaveLength(1);
+    expect(books.get('Book').entries).toEqual({ 2: { uid: 2, content: 'Unrelated ordinary entry' } });
+    expect(books.get('Other')).toEqual(books.get('Book'));
+});
+
+it('offers safe generation retry only for an intent whose save never started', async () => {
+    await resolveStmbOperations({ ...request, body: { action: 'prepare', operation: request.body.operation, targets: [{ name: 'Book', storage: 'user' }] } }, sqlitePath);
+    const result = await resolveStmbOperations({ user: {}, body: { id: request.body.operation.id, action: 'retry', base_revision: 1 } }, sqlitePath);
+    expect(result.retryRange).toEqual({ sceneStart: 0, sceneEnd: 0 });
+    expect(result.operations).toEqual([]);
+    expect(result.chat_revision).toBe(1);
+    expect(transactionSave).not.toHaveBeenCalled();
 });

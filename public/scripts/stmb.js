@@ -1870,6 +1870,7 @@ async function refreshSidePromptCache() {
                 return false;
             })
             .map(result => result.value);
+        await syncStmbRollbackPolicy();
     } catch (error) {
         console.warn('STMB side prompt cache refresh failed', error);
     }
@@ -2196,18 +2197,22 @@ async function finishStmbSavedProgress(sceneContext, operationId) {
     if (!isSceneContextCurrent(sceneContext)) return;
     const result = await resolveStmbOperation(sceneContext.chatRef, operationId, 'retry', () => isSceneContextCurrent(sceneContext));
     if (!isSceneContextCurrent(sceneContext)) return;
+    if (result.retryRange) {
+        await initiateMemoryCreation({ range: result.retryRange, sceneContext });
+        return;
+    }
     const state = getStmbState(sceneContext);
     if (result.highestMemoryProcessed === null) delete state.highestMemoryProcessed;
     else state.highestMemoryProcessed = result.highestMemoryProcessed;
     if (result.highestMemoryProcessedManuallySet) state.highestMemoryProcessedManuallySet = true;
     else delete state.highestMemoryProcessedManuallySet;
     if (result.clearScene) { delete state.sceneStart; delete state.sceneEnd; }
-    for (const range of result.hideRanges || []) await hideChatMessageRange(range.start, range.end, false, null, true);
     if (result.postSaveLorebook) {
         await maybePromptAutoConsolidation(1, { sceneContext, lorebookName: result.postSaveLorebook });
         await resolveStmbOperation(sceneContext.chatRef, operationId, 'ack-effects', () => isSceneContextCurrent(sceneContext));
     }
     refreshMemoryBoundaryUi();
+    if (result.hideRanges?.length && isSceneContextCurrent(sceneContext)) await reloadCurrentChat({ flushPendingSave: false });
 }
 
 /** Shows durable pending work without reading entry content into the recovery UI. */
@@ -9036,7 +9041,7 @@ function buildPostSaveHideRanges(range) {
     return [];
 }
 
-async function applyPostSaveLorebookEffects(lorebookName, range, sceneContext = null) {
+async function applyPostSaveLorebookEffects(lorebookName, range, sceneContext = null, visibilityAlreadySaved = false) {
     if (getModuleSettings().refreshEditor !== false) {
         try {
             await Promise.resolve(reloadEditor(lorebookName));
@@ -9045,6 +9050,7 @@ async function applyPostSaveLorebookEffects(lorebookName, range, sceneContext = 
         }
     }
 
+    if (visibilityAlreadySaved) return;
     const hideRanges = buildPostSaveHideRanges(range);
     if (hideRanges.length === 0) {
         return;
@@ -9393,7 +9399,7 @@ async function saveManualGroupMemoryObjects(groupMemory, characterMemories, snap
     throwIfStmbAborted(signal);
 
     for (const entry of result?.entries || []) worldInfoCache.delete(entry.lorebookName);
-    await applyPostSaveLorebookEffects(lorebookName, range, sceneContext);
+    await applyPostSaveLorebookEffects(lorebookName, range, sceneContext, Boolean(result.operation));
     for (const target of targets) {
         if (getModuleSettings().refreshEditor !== false) {
             try {
@@ -9404,7 +9410,7 @@ async function saveManualGroupMemoryObjects(groupMemory, characterMemories, snap
         }
     }
     showOrderClampNotifications(result?.orderClampNotifications);
-    const shouldClearSceneMarkers = !keepSceneMarkers && getModuleSettings().autoClearSceneAfterMemory === true;
+    const shouldClearSceneMarkers = !result.operation && !keepSceneMarkers && getModuleSettings().autoClearSceneAfterMemory === true;
     if (isSceneContextCurrent(sceneContext)) {
         if (!result.operation) setHighestProcessedMessageId(range.sceneEnd);
         if (shouldClearSceneMarkers) clearSceneMarkers();
@@ -9438,10 +9444,10 @@ async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, c
     throwIfStmbAborted(signal);
     worldInfoCache.delete(lorebookName);
     void refreshStmbMacroCache(lorebookName);
-    await applyPostSaveLorebookEffects(lorebookName, range, sceneContext);
+    await applyPostSaveLorebookEffects(lorebookName, range, sceneContext, Boolean(result.operation));
     throwIfStmbAborted(signal);
     showOrderClampNotifications(result?.orderClampNotifications);
-    const shouldClearSceneMarkers = !keepSceneMarkers && getModuleSettings().autoClearSceneAfterMemory === true;
+    const shouldClearSceneMarkers = !result.operation && !keepSceneMarkers && getModuleSettings().autoClearSceneAfterMemory === true;
     if (isSceneContextCurrent(sceneContext)) {
         if (!result.operation) setHighestProcessedMessageId(range.sceneEnd);
         if (shouldClearSceneMarkers) {
@@ -9556,7 +9562,7 @@ async function showSummaryConsolidationPopup({ initialTargetTier = 1, showGoBack
                 getModuleSettings().summaryTierMinimums?.[targetTier],
                 getDefaultSummaryMinChildren(targetTier),
             ),
-            candidates: identifyEligibleSummarySourceEntries(data?.entries || {}, targetTier).map(entry => ({
+            candidates: filterStmbMemoryRole(identifyEligibleSummarySourceEntries(data?.entries || {}, targetTier), 'group', hasStmbSharedRoles(Object.values(data?.entries || {}))).map(entry => ({
                 uid: entry.uid,
                 title: entry.comment || entry.title || `#${entry.uid}`,
             })),
@@ -9671,7 +9677,7 @@ async function maybePromptAutoConsolidation(targetTier, options = {}) {
             getModuleSettings().summaryTierMinimums?.[normalizedTargetTier],
             getDefaultSummaryMinChildren(normalizedTargetTier),
         );
-        const eligibleEntries = identifyEligibleSummarySourceEntries(lorebookData.entries, normalizedTargetTier);
+        const eligibleEntries = filterStmbMemoryRole(identifyEligibleSummarySourceEntries(lorebookData.entries, normalizedTargetTier), 'group', hasStmbSharedRoles(Object.values(lorebookData.entries)));
         const eligibleCount = eligibleEntries.length;
         if (eligibleCount < requiredMin) {
             return;
@@ -11002,9 +11008,10 @@ async function stmbCatchupCommand(namedArgs = {}) {
         }
 
         const tokenThreshold = Math.max(1000, Math.trunc(Number(getModuleSettings().tokenWarningThreshold ?? 30000)));
+        const groupPolicy = captureStmbGroupPolicy(getModuleSettings(), sceneContext);
         const defaultMemoryCount = normalizeMemoryContextCount(getModuleSettings().defaultMemoryCount);
         const skipSystemMessages = !getModuleSettings().unhideBeforeMemory;
-        const queuedProfile = buildEffectiveMemoryProfile(profile);
+        const queuedProfile = buildEffectiveMemoryProfile(profile, groupPolicy);
         const contextSettingKey = getChatContextSettingKey();
 
         ensureStmbJobExecutorsRegistered();
@@ -11023,6 +11030,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
                     sceneContext,
                     collectNarratorCast: isCurrentNarratorModeActive(sceneContext),
                 }))?.compiledScene;
+                if (compiledScene) compiledScene.metadata.groupPolicy = groupPolicy;
                 if (sceneContext.isGroupChat) {
                     const groupParticipantSnapshot = await prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext);
                     if (!groupParticipantSnapshot) return '';
@@ -11050,7 +11058,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
                     source: 'catchup',
                     skipSystemMessages,
                     tokenWarningThreshold: tokenThreshold,
-                    groupPolicy: captureStmbGroupPolicy(getModuleSettings(), sceneContext),
+                    groupPolicy,
                     compiledScene,
                     multiCharacterSnapshot,
                 },

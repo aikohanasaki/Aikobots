@@ -17,6 +17,7 @@ class MockLorebookRepositoryError extends Error {
 }
 
 jest.unstable_mockModule('../lorebook-repository.js', () => ({
+    getCanonicalLorebookName: name => name,
     assertLorebookCheckoutForManagement: jest.fn(),
     getLorebookForManagement,
     LorebookRepositoryError: MockLorebookRepositoryError,

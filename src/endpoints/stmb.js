@@ -34,6 +34,7 @@ import {
 } from '../../public/scripts/stmb-regeneration.js';
 import {
     assertLorebookCheckoutForManagement,
+    getCanonicalLorebookName,
     getLorebookForManagement,
     LorebookRepositoryError,
     withLorebookManagementTransaction,
@@ -493,7 +494,8 @@ function getInvalidLorebookEntryUpdate(fieldGroups = {}) {
     for (const [groupName, updates] of Object.entries(fieldGroups || {})) {
         if (!updates || typeof updates !== 'object' || Array.isArray(updates)) return { groupName, key: 'settings' };
         if (Object.hasOwn(updates, 'position') && (!Number.isInteger(updates.position) || ![0, 1, 2, 3, 5, 6, 7].includes(updates.position))) return { groupName, key: 'position' };
-        if (Object.hasOwn(updates, 'order') && (!Number.isInteger(updates.order) || updates.order < 0 || updates.order > 999999)) return { groupName, key: 'order' };
+        if (Object.hasOwn(updates, 'order') && (!Number.isInteger(updates.order) || updates.order < 0 || updates.order > 9999)) return { groupName, key: 'order' };
+        if (updates.STMB_sidePromptRegeneration && updates.STMB_sidePromptRegeneration.version !== 1) return { groupName, key: 'STMB_sidePromptRegeneration' };
         const key = findReservedLorebookEntryUpdateField(updates);
         if (key) {
             return { groupName, key };
@@ -1205,7 +1207,9 @@ router.post('/save-group-memory', async (request, response) => {
             const resolvedLorebookKeys = new Map();
             const characterKeys = new Set();
             for (const target of requested) {
-                const loaded = await getLorebookForManagement(
+                const requestedKey = `${target.storage}:${getCanonicalLorebookName(target.lorebookName)}`;
+                const cachedBook = resolvedLorebookKeys.get(requestedKey);
+                const loaded = cachedBook || await getLorebookForManagement(
                     request.user,
                     target.lorebookName,
                     false,

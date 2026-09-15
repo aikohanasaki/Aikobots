@@ -3,6 +3,9 @@ import test from 'node:test';
 import { evaluateStmbAutoSummary } from '../public/scripts/stmb-auto-summary-policy.js';
 import { captureStmbGroupPolicy, applyStmbGroupPolicy, filterStmbMemoryRole } from '../public/scripts/stmb-group-policy.js';
 import { buildTopicalClipEntryOverrides } from '../public/scripts/stmb-core.js';
+import { createManagedSummaryEntryData } from '../public/scripts/stmb-summary.js';
+import { selectPreviousRegenerationMemories, applyRegenerationReplacement } from '../public/scripts/stmb-regeneration.js';
+import { cloneStmbLorebookForChatCopy } from '../src/stmb-chat-copy.js';
 
 test('token triggering captures only eligible history and keeps the counted scene', async () => {
     const captured = { compiledScene: { messages: [{ text: 'Stored earlier message' }] } };
@@ -53,4 +56,21 @@ test('Clip overrides preserve manual zero, reverse order, and disabled profile b
     assert.equal(overrides.order, 0);
     assert.equal(overrides.position, 0);
     assert.equal(buildTopicalClipEntryOverrides(profile, { enabled: true, orderMode: 'reverse', reverseStart: 9999 }).order, 9999);
+});
+
+test('shared-book summaries and regeneration retain separate streams and copied roles', () => {
+    const entries = Object.fromEntries([1, 2, 3, 4].map(uid => [uid, {
+        uid, stmemorybooks: true, STMB_memoryRole: uid % 2 ? 'group' : 'character',
+        STMB_canonicalMemoryNumber: Math.ceil(uid / 2), comment: `[00${Math.ceil(uid / 2)}] Memory ${uid}`,
+        content: `Ordinary memory ${uid}`, characterFilter: { names: ['Alice'] },
+    }]));
+    const prior = selectPreviousRegenerationMemories({ entries }, 3, 10);
+    assert.deepEqual(prior.summaries.map(entry => entry.uid), ['1']);
+    const candidate = { title: 'Summary', summary: 'Ordinary summary', memberIds: [1, 3] };
+    const summary = createManagedSummaryEntryData(candidate, { sourceEntries: Object.values(entries), includeSourceUids: true });
+    assert.equal(summary.STMB_memoryRole, 'group');
+    assert.throws(() => createManagedSummaryEntryData({ ...candidate, memberIds: [1, 2] }, { sourceEntries: Object.values(entries) }), /different memory roles/);
+    applyRegenerationReplacement(entries[2], { title: 'Regenerated character memory', content: 'New ordinary memory', keywords: [] }, { lorebookData: { entries } });
+    assert.equal(entries[2].STMB_memoryRole, 'character');
+    assert.equal(cloneStmbLorebookForChatCopy({ entries }).data.entries[2].STMB_memoryRole, 'character');
 });

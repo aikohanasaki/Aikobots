@@ -90,6 +90,7 @@ export async function withStmbMemoryTransaction(request, sqlitePath, callback) {
                 return transaction.save(user, name, data, storage);
             } });
             await reconcileStmbMemory(request.user, db, operation);
+            if (operation.state !== 'saved') throw stmbOperationConflict();
             return { ...result, memorySaved: true, operation: publicStmbOperation(operation) };
         } finally { db.close(); }
     }));
@@ -100,6 +101,7 @@ export async function resolveStmbOperations(request, sqlitePath) {
     return withLorebookManagementTransaction(transaction => withChatSaveLock(sqlitePath, async () => {
         const db = await loadDb(sqlitePath);
         try {
+            await request.activeSessionOperation?.assertAllowed();
             if (request.body.action === 'prepare') {
                 const targets = request.body.targets;
                 if (!Array.isArray(targets) || targets.length === 0 || targets.length > 101) throw stmbOperationConflict();
@@ -117,15 +119,24 @@ export async function resolveStmbOperations(request, sqlitePath) {
                 return { ok: true, operation: publicStmbOperation(operation) };
             }
             const operations = readStmbOperations(db);
+            let retryRange = null;
             const requested = request.body.id;
             const operation = operations.find(item => item.id === requested);
             if (request.body.action && !operation) throw stmbOperationConflict();
             if (operation && request.body.action === 'retry') {
                 if (operation.state !== 'applied' && Number(request.body.base_revision) !== Number(getChatHeader(db).chat_revision || 0)) throw stmbOperationConflict();
                 if (operation.kind === 'rollback') await executeStmbRollback(request.user, db, operation, transaction);
+                else if (operation.state === 'prepared' && !operation.data.started) {
+                    const { source } = validateStmbOperationSource(db, operation);
+                    retryRange = { sceneStart: source.start, sceneEnd: source.end };
+                    operation.state = 'discarded';
+                    operation.data.effectsPending = false;
+                    writeStmbOperation(db, operation);
+                }
                 else {
                     await reconcileStmbMemory(request.user, db, operation);
                     if (!['saved', 'applied'].includes(operation.state)) throw stmbOperationConflict();
+                    await request.activeSessionOperation?.assertAllowed();
                     applyStmbProgress(db, operation);
                 }
             } else if (operation && request.body.action === 'ack-effects' && operation.state === 'applied') {
@@ -138,6 +149,7 @@ export async function resolveStmbOperations(request, sqlitePath) {
             } else if (request.body.action) throw stmbOperationConflict();
             const header = getChatHeader(db);
             return { ok: true, status: 'noop', chat_revision: Number(header.chat_revision || 0), highestMemoryProcessed: header.chat_metadata?.STMemoryBooks?.highestMemoryProcessed ?? null,
+                retryRange,
                 highestMemoryProcessedManuallySet: header.chat_metadata?.STMemoryBooks?.highestMemoryProcessedManuallySet === true,
                 hideRanges: operation?.data.hideRanges || [], clearScene: operation?.data.clearScene === true,
                 postSaveLorebook: operation?.state === 'applied' && operation.data.effectsPending ? operation.data.targets?.[0]?.name : null,

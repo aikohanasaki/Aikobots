@@ -1104,3 +1104,7 @@ The following repository commands are for maintainers with a checkout; they are 
 For repository changes, reuse the smart-theme section of `public/style.css` for core UI CSS and update this guide. Built-in geometry belongs in the existing preset files. After code changes run `npm run build:frontend`; production serves committed `public/dist` bundles and server/PM2 startup does not build them. CI/release verification uses `npm run check:frontend-build`. Uploading custom CSS and editing documentation do not require rebuilding the app.
 
 Run `npm run test:frontend:smoke -- --layouts` for the focused layout browser matrix; the full frontend smoke includes it. Set `FRONTEND_SMOKE_BROWSER` to `chromium`, `firefox`, or `webkit` for an installed Playwright browser. The native resize-grip check probes a plain CSS box and skips when that browser port cannot automate native grips.
+
+### Memory Books help drawer
+
+The smart-theme rules in `public/style.css` give `.stmb-help-drawer-copy` a flexible 24-character basis and allow long words to wrap. The download link can shrink and wrap within the drawer's width. The existing flex wrapping, theme colors, and mobile rules remain authoritative; there are no browser-specific sizing overrides.

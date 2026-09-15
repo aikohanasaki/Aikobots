@@ -1,4 +1,6 @@
 {
+    "Override insertion position and order": "Переопределить позицию и порядок вставки",
+    "Order value": "Значение порядка",
     "Auto-rollback after message deletion": "Автоматический откат после удаления сообщений",
     "Rollback deletes affected memories and summaries permanently. Side Prompts retain one restoration layer.": "Откат навсегда удаляет затронутые воспоминания и сводки. Для Side Prompts сохраняется один уровень восстановления.",
     "Update last processed message": "Обновить последнее обработанное сообщение",

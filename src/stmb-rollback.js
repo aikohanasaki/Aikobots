@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { getChatHeader, getLogicalMessageRowByUuid, getMetadata } from './sqlite-manager.js';
 import { stmbOperationConflict, writeStmbOperation } from './stmb-operations.js';
-import { assertLorebookCheckoutForManagement, getLorebookForManagement } from './lorebook-repository.js';
+import { assertLorebookCheckoutForManagement, getCanonicalLorebookName, getLorebookForManagement } from './lorebook-repository.js';
+import { getStmbMemoryRole, hasStmbSharedRoles } from '../public/scripts/stmb-group-policy.js';
 
 const SNAPSHOT = 'STMB_sidePromptRegeneration';
 
@@ -40,30 +41,47 @@ function affectedRange(db, operation, startUuid, endUuid) {
 export function planStmbRollbackBook(db, operation, book) {
     const next = structuredClone(book);
     const entries = next.entries || {};
+    const shared = hasStmbSharedRoles(Object.values(entries));
     const removed = new Set();
     if (operation.data.settings.deleteMemories !== false) {
-        for (const entry of Object.values(entries)) {
-            if (entry.stmemorybooks && affectedRange(db, operation, entry.STMB_startUuid, entry.STMB_endUuid)) removed.add(String(entry.uid));
+        const parents = new Map();
+        const addParent = (child, parent) => {
+            const values = parents.get(String(child)) || new Set();
+            values.add(String(parent));
+            parents.set(String(child), values);
+        };
+        for (const [key, entry] of Object.entries(entries)) {
+            if (entry.stmemorybooks !== true) continue;
+            if (String(entry.uid) !== key || (shared && !getStmbMemoryRole(entry))) throw stmbOperationConflict();
+            // Numeric-only legacy ranges cannot establish which chat owns a potentially affected memory.
+            if ((!entry.STMB_startUuid || !entry.STMB_endUuid) && Number.isInteger(entry.STMB_start) && Number.isInteger(entry.STMB_end)
+                && entry.STMB_start <= operation.data.end && entry.STMB_end >= operation.data.start) throw stmbOperationConflict();
+            if (affectedRange(db, operation, entry.STMB_startUuid, entry.STMB_endUuid)) removed.add(key);
+            if (entry.stmbSourceEntryUids !== undefined && !Array.isArray(entry.stmbSourceEntryUids)) throw stmbOperationConflict();
+            for (const child of entry.stmbSourceEntryUids || []) addParent(child, key);
+            if (entries[entry.disabledBySummaryId]?.stmemorybooks === true) addParent(key, entry.disabledBySummaryId);
         }
-        // Transitive parent deletion is bounded by the number of entries in this book.
-        let changed = true;
-        while (changed) {
-            changed = false;
-            for (const entry of Object.values(entries)) {
-                if (removed.has(String(entry.uid))) continue;
-                const children = entry.stmbSourceEntryUids || [];
-                if (children.some(uid => removed.has(String(uid))) || Object.values(entries).some(child => removed.has(String(child.uid)) && String(child.disabledBySummaryId) === String(entry.uid))) {
-                    removed.add(String(entry.uid)); changed = true;
-                }
+        // Set iteration visits newly added parents, handling arbitrarily deep consolidation chains once.
+        for (const child of removed) {
+            for (const parent of parents.get(child) || []) {
+                if (entries[parent]?.stmemorybooks === true) removed.add(parent);
             }
         }
     }
     for (const [key, entry] of Object.entries(entries)) {
         if (removed.has(String(entry.uid))) { delete entries[key]; continue; }
-        if (removed.has(String(entry.disabledBySummaryId))) { delete entry.disabledBySummaryId; entry.disable = false; }
+        if (entry.stmemorybooks === true && removed.has(String(entry.disabledBySummaryId))) { delete entry.disabledBySummaryId; entry.disable = false; }
+        if (entry.stmemorybooks === true && entry.STMB_startUuid && entry.STMB_endUuid) {
+            const start = getLogicalMessageRowByUuid(db, entry.STMB_startUuid);
+            const end = getLogicalMessageRowByUuid(db, entry.STMB_endUuid);
+            if (start && end && start.logicalIndex <= end.logicalIndex) {
+                entry.STMB_start = start.logicalIndex;
+                entry.STMB_end = end.logicalIndex;
+            }
+        }
         const snapshot = entry[SNAPSHOT];
         if (operation.data.settings.restoreSidePrompts !== false && snapshot && affectedRange(db, operation, snapshot.sceneStartUuid, snapshot.sceneEndUuid)) {
-            if (snapshot.version !== 2) throw stmbOperationConflict();
+            if (snapshot.version !== 2 || (snapshot.priorEntry !== null && (!snapshot.priorEntry || String(snapshot.priorEntry.uid) !== key))) throw stmbOperationConflict();
             const current = structuredClone(entry);
             delete current[SNAPSHOT];
             if (hashStmbRollbackState(current) !== snapshot.writtenFingerprint) throw stmbOperationConflict();
@@ -83,7 +101,7 @@ export async function executeStmbRollback(user, db, operation, transaction) {
         || (baseline.highestMemoryProcessed ?? null) !== operation.data.highest
         || (baseline.highestMemoryProcessedManuallySet === true) !== operation.data.manuallySet) throw stmbOperationConflict();
     const books = [];
-    for (const name of operation.data.books) {
+    for (const name of new Set(operation.data.books.map(getCanonicalLorebookName))) {
         const loaded = await getLorebookForManagement(user, name, false, 'user');
         if (loaded.metadata.storage !== 'user') throw stmbOperationConflict();
         assertLorebookCheckoutForManagement(user, loaded.metadata);

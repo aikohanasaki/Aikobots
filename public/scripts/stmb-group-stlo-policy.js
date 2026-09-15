@@ -17,7 +17,7 @@ export function buildStmbGroupStloReconciliationTargets({
         const characterName = String(member?.characterFilterName || '').trim();
         if (!lorebookName
             || !characterName
-            || lorebookName === String(canonicalLorebookName || '').trim()
+            || (lorebookName === String(canonicalLorebookName || '').trim() && getStorage(lorebookName) !== 'user')
             || !available.has(lorebookName)
             || isReservedLorebookName(lorebookName)) {
             continue;

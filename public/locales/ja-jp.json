@@ -1,4 +1,6 @@
 {
+    "Override insertion position and order": "挿入位置と順序を上書き",
+    "Order value": "順序の値",
     "Auto-rollback after message deletion": "メッセージ削除後に自動ロールバック",
     "Rollback deletes affected memories and summaries permanently. Side Prompts retain one restoration layer.": "ロールバックは影響を受けるメモリーと要約を完全に削除します。Side Promptは1世代分の復元状態を保持します。",
     "Update last processed message": "最後に処理したメッセージを更新",

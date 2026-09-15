@@ -1,4 +1,6 @@
 {
+    "Override insertion position and order": "Einfügeposition und Reihenfolge überschreiben",
+    "Order value": "Reihenfolgewert",
     "Auto-rollback after message deletion": "Nachrichtenlöschung automatisch zurücksetzen",
     "Rollback deletes affected memories and summaries permanently. Side Prompts retain one restoration layer.": "Das Zurücksetzen löscht betroffene Erinnerungen und Zusammenfassungen dauerhaft. Side Prompts behalten eine Wiederherstellungsebene.",
     "Update last processed message": "Zuletzt verarbeitete Nachricht aktualisieren",

@@ -18,6 +18,7 @@ class MockLorebookRepositoryError extends Error {
 }
 
 jest.unstable_mockModule('../lorebook-repository.js', () => ({
+    getCanonicalLorebookName: name => String(name).replace(/\?/g, '').replace(/\.json$/i, ''),
     assertLorebookCheckoutForManagement,
     getLorebookForManagement,
     LorebookRepositoryError: MockLorebookRepositoryError,
@@ -57,11 +58,15 @@ jest.unstable_mockModule('../active-session-store.js', () => ({
 
 let handler;
 let syncHandler;
+let createEntryHandler;
+let updateEntryHandler;
 
 beforeAll(async () => {
     const { router } = await import('../endpoints/stmb.js');
     handler = router.stack.find(layer => layer.route?.path === '/save-group-memory').route.stack[0].handle;
     syncHandler = router.stack.find(layer => layer.route?.path === '/sync-group-stlo').route.stack[0].handle;
+    createEntryHandler = router.stack.find(layer => layer.route?.path === '/create-entry').route.stack[0].handle;
+    updateEntryHandler = router.stack.find(layer => layer.route?.path === '/update-entry-by-uid').route.stack[0].handle;
 });
 
 beforeEach(() => {
@@ -147,6 +152,26 @@ function makeNarratorRequest() {
 }
 
 describe('STMB multi-lorebook group route', () => {
+    it.each(['create', 'update'])('validates and persists Clip placement on %s', async mode => {
+        const existing = { uid: 1, comment: 'Old Clip', content: 'Original ordinary content', order: 100, position: 1, key: ['topic'] };
+        getLorebookForManagement.mockResolvedValue({ data: { entries: mode === 'update' ? { 1: structuredClone(existing) } : {} }, metadata: { name: 'Book', storage: 'user' } });
+        transactionSave.mockResolvedValue({ name: 'Book', storage: 'user' });
+        const request = makeRequest({ body: { lorebookName: 'Book', storage: 'user', uid: 1, title: 'New Clip', content: 'Updated ordinary content', entryOverrides: { order: 0, position: 0 } } });
+        const response = makeResponse();
+        const route = mode === 'create' ? createEntryHandler : updateEntryHandler;
+        await route(request, response);
+        expect(response.statusCode).toBe(200);
+        const entries = Object.values(transactionSave.mock.calls[0][2].entries);
+        expect(entries[0].order).toBe(0);
+        expect(entries[0].position).toBe(0);
+        if (mode === 'update') expect(entries[0].key).toEqual(existing.key);
+        transactionSave.mockClear();
+        request.body.entryOverrides.order = -1;
+        const invalid = makeResponse();
+        await route(request, invalid);
+        expect(invalid.statusCode).toBe(400);
+        expect(transactionSave).not.toHaveBeenCalled();
+    });
     it('synchronizes existing group bindings without returning character metadata', async () => {
         getLorebookForManagement.mockResolvedValue({
             data: { entries: {}, stlo: { priority: 4, budget: 2000 } },

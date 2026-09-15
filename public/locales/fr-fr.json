@@ -1,4 +1,6 @@
 {
+    "Override insertion position and order": "Remplacer la position et l’ordre d’insertion",
+    "Order value": "Valeur de l’ordre",
     "Auto-rollback after message deletion": "Annulation automatique après suppression de messages",
     "Rollback deletes affected memories and summaries permanently. Side Prompts retain one restoration layer.": "L’annulation supprime définitivement les souvenirs et résumés concernés. Les Side Prompts conservent un seul niveau de restauration.",
     "Update last processed message": "Mettre à jour le dernier message traité",
