@@ -1,4 +1,8 @@
 import express from 'express';
+import { fingerprintStmbSource } from '../../public/scripts/stmb-source.js';
+import { withStmbMemoryTransaction, resolveStmbOperations } from '../stmb-operation-service.js';
+import { stampStmbSidePromptRollback } from '../stmb-rollback.js';
+import { getStmbMemoryRole } from '../../public/scripts/stmb-group-policy.js';
 import { resolveLogicalChatReference, resolveSqliteLogicalChatReference } from './chats.js';
 import { stableHashString } from '../../public/scripts/hashing.js';
 import { applyStloCharacterFilters } from '../../public/scripts/stlo-utils.js';
@@ -54,6 +58,17 @@ import {
 } from '../stmb-side-prompts-repository.js';
 
 export const router = express.Router();
+
+router.post('/operations', async (request, response) => {
+    try {
+        const state = await resolveStmbChatState(request, request.body.chatRef);
+        assertSqliteChatStorageAvailable(state);
+        await request.activeSessionOperation?.assertAllowed();
+        return response.send(await resolveStmbOperations(request, state.sqlitePath));
+    } catch (error) {
+        return sendSanitizedStmbError(response, error, { logLabel: '[STMB] Operation recovery failed', type: 'StmbOperationError', message: 'Memory Books recovery could not complete.' });
+    }
+});
 
 function sendStmbError(response, error) {
     if (isActiveSessionError(error)) {
@@ -408,6 +423,7 @@ async function resolveCapturedScene(request, normalizedRequest) {
         throw createStmbRequestError(409, 'StmbMessageIdentityUnavailable', 'The scene message identities could not be resolved.');
     }
     compiledScene.metadata.sceneStartUuid = sceneStartUuid;
+    compiledScene.metadata.sourceFingerprint = fingerprintStmbSource(chatState.messages.slice(sceneStart, sceneEnd + 1));
     compiledScene.metadata.sceneEndUuid = sceneEndUuid;
 
     return {
@@ -461,7 +477,7 @@ function createLorebookEntry(lorebookData) {
     return entry;
 }
 
-const RESERVED_LOREBOOK_ENTRY_UPDATE_FIELDS = new Set(['uid', 'comment', 'content']);
+const RESERVED_LOREBOOK_ENTRY_UPDATE_FIELDS = new Set(['uid', 'comment', 'content', 'STMB_operationId']);
 
 function findReservedLorebookEntryUpdateField(updates = {}) {
     for (const key of Object.keys(updates || {})) {
@@ -475,6 +491,9 @@ function findReservedLorebookEntryUpdateField(updates = {}) {
 
 function getInvalidLorebookEntryUpdate(fieldGroups = {}) {
     for (const [groupName, updates] of Object.entries(fieldGroups || {})) {
+        if (!updates || typeof updates !== 'object' || Array.isArray(updates)) return { groupName, key: 'settings' };
+        if (Object.hasOwn(updates, 'position') && (!Number.isInteger(updates.position) || ![0, 1, 2, 3, 5, 6, 7].includes(updates.position))) return { groupName, key: 'position' };
+        if (Object.hasOwn(updates, 'order') && (!Number.isInteger(updates.order) || updates.order < 0 || updates.order > 999999)) return { groupName, key: 'order' };
         const key = findReservedLorebookEntryUpdateField(updates);
         if (key) {
             return { groupName, key };
@@ -490,8 +509,10 @@ function upsertLorebookEntryByTitleData(lorebookData, {
     defaults = {},
     metadataUpdates = {},
     entryOverrides = {},
+    allowRollback = false,
 }) {
     let entry = Object.values(lorebookData.entries).find(candidate => String(candidate?.comment || '') === title);
+    const priorEntry = entry ? structuredClone(entry) : null;
     let created = false;
     if (!entry) {
         entry = createLorebookEntry(lorebookData);
@@ -520,6 +541,7 @@ function upsertLorebookEntryByTitleData(lorebookData, {
         entry[key] = value;
     }
 
+    if (allowRollback) stampStmbSidePromptRollback(entry, priorEntry);
     return { created, entry };
 }
 
@@ -1005,7 +1027,8 @@ router.post('/save-memory', async (request, response) => {
 
     try {
         const sceneContext = await addAuthoritativeSceneBoundaryUuids(request, requestedSceneContext, request.body?.chatRef);
-        return await withLorebookManagementTransaction(async transaction => {
+        const chatState = request.body.operation ? await resolveStmbChatState(request, request.body.chatRef) : null;
+        const result = await withStmbMemoryTransaction(request, chatState?.sqlitePath, async transaction => {
             const { data: lorebookData, metadata } = await getLorebookForManagement(
                 request.user,
                 lorebookContext.lorebookName,
@@ -1030,15 +1053,16 @@ router.post('/save-memory', async (request, response) => {
 
             await request.activeSessionOperation?.assertAllowed();
             const savedMetadata = await transaction.save(request.user, metadata.name, lorebookData, metadata.storage);
-            return response.send({
+            return {
                 ok: true,
                 lorebookName: savedMetadata.name,
                 storage: savedMetadata.storage,
                 entry,
                 sequenceNumber,
                 orderClampNotifications,
-            });
+            };
         });
+        return response.send(result);
     } catch (error) {
         return sendStmbError(response, error);
     }
@@ -1149,7 +1173,7 @@ router.post('/save-group-memory', async (request, response) => {
         if (!sceneContext || typeof sceneContext !== 'object' || Array.isArray(sceneContext)) {
             throw createStmbRequestError(400, 'StmbBadRequest', 'sceneContext is required.');
         }
-        const names = new Set([primary.lorebookName]);
+        const names = new Set(routingMode === 'narrator' ? [primary.lorebookName] : []);
         for (const target of targets) {
             if (names.has(target.lorebookName)) {
                 throw createStmbRequestError(400, 'StmbDuplicateGroupLorebook', 'Each group memory target lorebook must be unique.');
@@ -1174,10 +1198,12 @@ router.post('/save-group-memory', async (request, response) => {
 
     try {
         sceneContext = await addAuthoritativeSceneBoundaryUuids(request, sceneContext, request.body?.chatRef);
-        const result = await withLorebookManagementTransaction(async transaction => {
+        const chatState = request.body.operation ? await resolveStmbChatState(request, request.body.chatRef) : null;
+        const result = await withStmbMemoryTransaction(request, chatState?.sqlitePath, async transaction => {
             const requested = [primary, ...targets];
             const lorebooks = [];
-            const resolvedLorebookKeys = new Set();
+            const resolvedLorebookKeys = new Map();
+            const characterKeys = new Set();
             for (const target of requested) {
                 const loaded = await getLorebookForManagement(
                     request.user,
@@ -1190,17 +1216,27 @@ router.post('/save-group-memory', async (request, response) => {
                 }
                 assertLorebookCheckoutForManagement(request.user, loaded.metadata);
                 const resolvedKey = `${loaded.metadata.storage}:${loaded.metadata.name}`;
-                if (resolvedLorebookKeys.has(resolvedKey)) {
+                if (resolvedLorebookKeys.has(resolvedKey) && routingMode === 'narrator') {
                     throw createStmbRequestError(400, 'StmbDuplicateGroupLorebook', 'Each group memory target lorebook must be unique.');
                 }
-                resolvedLorebookKeys.add(resolvedKey);
+                const shared = resolvedLorebookKeys.get(resolvedKey);
+                if (target !== primary) {
+                    if (characterKeys.has(resolvedKey)) throw createStmbRequestError(400, 'StmbDuplicateGroupLorebook', 'Each character target must be unique.');
+                    characterKeys.add(resolvedKey);
+                }
+                if (shared && (loaded.metadata.storage !== 'user' || Object.values(shared.data.entries || {}).some(entry => entry.stmemorybooks && !getStmbMemoryRole(entry)))) {
+                    throw createStmbRequestError(409, 'StmbAmbiguousMemoryRole', 'Shared books require ordinary entries with explicit memory ownership.');
+                }
                 ensureEntriesObject(loaded.data);
-                lorebooks.push({
+                const book = {
                     request: target,
-                    data: loaded.data,
+                    data: shared?.data || loaded.data,
                     metadata: loaded.metadata,
-                    originalData: structuredClone(loaded.data),
-                });
+                    originalData: shared?.originalData || structuredClone(loaded.data),
+                };
+                if (shared && shared !== lorebooks[0]) throw createStmbRequestError(400, 'StmbDuplicateGroupLorebook', 'Each character target must be unique.');
+                if (!shared) resolvedLorebookKeys.set(resolvedKey, book);
+                lorebooks.push(book);
             }
 
             const canonicalNumber = allocateCanonicalMemoryNumber(lorebooks);
@@ -1219,6 +1255,7 @@ router.post('/save-group-memory', async (request, response) => {
                     characterFilterNames: routingMode === 'group' ? primary.characterFilterNames : [],
                     inclusionGroup,
                     entryMetadata: {
+                        STMB_memoryRole: 'group',
                         ...createCanonicalEntryMetadata(
                             inclusionGroup,
                             primaryBook.metadata.name,
@@ -1266,6 +1303,7 @@ router.post('/save-group-memory', async (request, response) => {
                         characterFilterNames: routingMode === 'group' ? target.characterFilterNames : [],
                         inclusionGroup,
                         entryMetadata: {
+                            STMB_memoryRole: 'character',
                             ...createCanonicalEntryMetadata(
                                 inclusionGroup,
                                 primaryBook.metadata.name,
@@ -1293,7 +1331,7 @@ router.post('/save-group-memory', async (request, response) => {
             await request.activeSessionOperation?.assertAllowed();
             const savedBooks = [];
             try {
-                for (const book of lorebooks) {
+                for (const book of resolvedLorebookKeys.values()) {
                     await request.activeSessionOperation?.assertAllowed();
                     await transaction.save(request.user, book.metadata.name, book.data, book.metadata.storage);
                     savedBooks.push(book);
@@ -1383,6 +1421,8 @@ router.post('/regenerate-entry', async (request, response) => {
                     sourceUids: eligibility.sourceUids,
                     contentOnly: eligibility.kind === 'sidePrompt',
                 });
+                if (request.body.groupPolicy?.characterAware === false && eligibility.kind !== 'sidePrompt'
+                    && !target.STMB_narratorOwnerIds && !target.STMB_narratorParticipantIds) delete target.characterFilter;
                 await request.activeSessionOperation?.assertAllowed();
                 await transaction.save(request.user, metadata.name, lorebookData, 'user');
                 return {
@@ -1509,6 +1549,7 @@ router.post('/commit-summaries', async (request, response) => {
                     includeSourceUids: metadata.storage === 'user',
                 });
                 Object.assign(entry, entryPayload);
+                if (request.body.groupPolicy?.characterAware === false && !entry.STMB_narratorOwnerIds && !entry.STMB_narratorParticipantIds) delete entry.characterFilter;
                 applyLorebookSettings(entry, summaryEntrySettings, {
                     orderNumber: nextSummaryNumber,
                     orderNumberLabel: getSummaryTierLabel(targetTier).toLowerCase(),
@@ -1593,6 +1634,7 @@ router.post('/upsert-entry-by-title', async (request, response) => {
             ensureEntriesObject(lorebookData);
 
             const { created, entry } = upsertLorebookEntryByTitleData(lorebookData, {
+                allowRollback: metadata.storage === 'user',
                 title,
                 content,
                 defaults,
@@ -1870,6 +1912,7 @@ router.post('/upsert-entries-batch', async (request, response) => {
             const results = [];
             for (const item of items) {
                 const result = upsertLorebookEntryByTitleData(lorebookData, {
+                    allowRollback: metadata.storage === 'user',
                     title: String(item.title || '').trim(),
                     content: item.content != null ? String(item.content) : '',
                     defaults: item.defaults || {},

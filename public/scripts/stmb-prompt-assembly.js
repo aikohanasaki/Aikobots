@@ -1,3 +1,4 @@
+import { filterStmbMemoryRole, hasStmbSharedRoles } from './stmb-group-policy.js';
 import {
     compiledSceneToText,
     identifyManagedMemoryEntries,
@@ -117,7 +118,10 @@ export function buildMemoryPromptText(compiledScene, profile, worldInfo, stmbSet
         .replace(/\{\{\s*char\s*\}\}/gi, String(compiledScene?.metadata?.characterName || 'Character'))
         .replace(/\{\{\s*group\s*\}\}/gi, String(compiledScene?.metadata?.groupName || compiledScene?.metadata?.characterName || 'Group'));
     const memoryCount = Number(stmbSettings?.moduleSettings?.defaultMemoryCount) || 0;
-    const previousMemories = fetchPreviousMemories(worldInfo, memoryCount);
+    const entries = Object.values(worldInfo?.entries || {});
+    const role = promptTarget === 'character' ? 'character' : 'group';
+    const filtered = filterStmbMemoryRole(entries, role, hasStmbSharedRoles(entries), compiledScene?.metadata?.characterFilterNames || []);
+    const previousMemories = fetchPreviousMemories({ ...worldInfo, entries: Object.fromEntries(filtered.map(entry => [entry.uid, entry])) }, memoryCount);
     const messageLines = Array.isArray(compiledScene?.messages)
         ? compiledScene.messages
             .map(message => {

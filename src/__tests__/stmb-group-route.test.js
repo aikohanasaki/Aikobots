@@ -387,7 +387,7 @@ describe('STMB multi-lorebook group route', () => {
         expect(JSON.stringify(response.payload)).not.toContain('The party arrived');
     });
 
-    it('rejects aliases resolving to the same lorebook before mutation', async () => {
+    it('saves canonical and character roles sharing a normalized book in one write', async () => {
         getLorebookForManagement.mockImplementation((_user, name) => ({
             data: { entries: {} },
             metadata: { name: 'Canonical Book', storage: 'user', requested: name },
@@ -399,8 +399,11 @@ describe('STMB multi-lorebook group route', () => {
 
         await handler(request, response);
 
-        expect(response.statusCode).toBe(400);
-        expect(response.payload.error.type).toBe('StmbDuplicateGroupLorebook');
-        expect(transactionSave).not.toHaveBeenCalled();
+        expect(response.statusCode).toBe(200);
+        expect(transactionSave).toHaveBeenCalledTimes(1);
+        const entries = Object.values(transactionSave.mock.calls[0][2].entries);
+        expect(entries.map(entry => entry.STMB_memoryRole)).toEqual(['group', 'character']);
+        expect(entries[1].STMB_canonicalEntryUid).toBe(entries[0].uid);
+        expect(entries[1].group).toBe(entries[0].group);
     });
 });

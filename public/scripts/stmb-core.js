@@ -612,6 +612,10 @@ export function createDefaultStmbSettings() {
             autoSummaryBuffer: 2,
             characterAwareMemories: true,
             useSeparateGroupSidePrompts: true,
+            autoRollbackEnabled: false,
+            autoRollbackUpdateLastProcessed: true,
+            autoRollbackDeleteLastMemory: true,
+            autoRollbackRestorePreviousSidePrompts: true,
             convertExistingRecursion: false,
             autoConsolidationPromptEnabled: false,
             autoConsolidationTargetTiers: [1],
@@ -952,6 +956,14 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.autoSummaryTokenThreshold = Number.isFinite(tokenThreshold) ? Math.max(1, Math.min(1000000, Math.trunc(tokenThreshold))) : defaults.moduleSettings.autoSummaryTokenThreshold;
     moduleSettings.characterAwareMemories = moduleSettings.characterAwareMemories !== false;
     moduleSettings.useSeparateGroupSidePrompts = moduleSettings.useSeparateGroupSidePrompts !== false;
+    moduleSettings.autoRollbackEnabled = moduleSettings.autoRollbackEnabled === true;
+    moduleSettings.autoRollbackUpdateLastProcessed = moduleSettings.autoRollbackUpdateLastProcessed !== false;
+    moduleSettings.autoRollbackDeleteLastMemory = moduleSettings.autoRollbackDeleteLastMemory !== false;
+    moduleSettings.autoRollbackRestorePreviousSidePrompts = moduleSettings.autoRollbackRestorePreviousSidePrompts !== false;
+    moduleSettings.topicalClipEntrySettings = {
+        ...normalizeLorebookEntrySettings(moduleSettings.topicalClipEntrySettings || {}),
+        enabled: moduleSettings.topicalClipEntrySettings?.enabled === true,
+    };
     moduleSettings.convertExistingRecursion = Boolean(moduleSettings.convertExistingRecursion);
     moduleSettings.sidePromptsMaxConcurrent = Number.isFinite(Number(moduleSettings.sidePromptsMaxConcurrent))
         ? Math.max(1, Math.min(10, Math.trunc(Number(moduleSettings.sidePromptsMaxConcurrent))))
@@ -2409,6 +2421,15 @@ export function buildLorebookEntryProfileOverrides(profile, options = {}) {
         delayUntilRecursion: entry.delayUntilRecursion,
         ignoreBudget: entry.ignoreBudget,
     };
+}
+
+/** Projects optional Topical Clip placement after the normal generation-profile settings. */
+export function buildTopicalClipEntryOverrides(profile, settings = {}) {
+    const overrides = buildLorebookEntryProfileOverrides(profile, { orderNumber: 1, orderNumberLabel: 'Topical Clip' });
+    if (settings.enabled !== true) return overrides;
+    const normalized = normalizeLorebookEntrySettings(settings);
+    const placement = buildLorebookEntryProfileOverrides({ ...profile, ...normalized });
+    return { ...overrides, position: placement.position, order: placement.order, outletName: placement.outletName };
 }
 
 function sanitizeTitle(title) {

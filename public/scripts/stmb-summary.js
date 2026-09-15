@@ -1,3 +1,4 @@
+import { getStmbMemoryRole } from './stmb-group-policy.js';
 import {
     STMB_MANAGED_FLAG,
     parseSequenceFromTitle,
@@ -1649,6 +1650,7 @@ export function fingerprintLorebookEntry(entry) {
         group: entry.group ?? '',
         STMB_inclusionGroup: entry.STMB_inclusionGroup ?? '',
         STMB_canonical: entry.STMB_canonical ?? null,
+        STMB_memoryRole: entry.STMB_memoryRole ?? null,
         STMB_canonicalLorebook: entry.STMB_canonicalLorebook ?? '',
         STMB_canonicalEntryUid: entry.STMB_canonicalEntryUid ?? null,
         STMB_canonicalMemoryNumber: entry.STMB_canonicalMemoryNumber ?? null,
@@ -1771,6 +1773,10 @@ export function createManagedSummaryEntryData(summaryCandidate, {
         disable: false,
     };
     const characterFilter = collectSummarySourceCharacterFilter(summaryCandidate, sourceEntries);
+    const sourceIds = new Set((summaryCandidate.memberIds || []).map(String));
+    const roles = new Set(sourceEntries.filter(source => sourceIds.has(String(source.uid))).map(getStmbMemoryRole).filter(Boolean));
+    if (roles.size > 1) throw new Error('Cannot consolidate different memory roles together.');
+    if (roles.size === 1) entry.STMB_memoryRole = [...roles][0];
     if (characterFilter) entry.characterFilter = characterFilter;
     Object.assign(entry, collectNarratorSourceMetadata(sourceEntries, summaryCandidate?.memberIds));
     if (summaryCandidate?.inclusionGroup) {

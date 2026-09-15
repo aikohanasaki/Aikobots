@@ -1,4 +1,4 @@
-import { extractMessageFromData, getRequestHeaders } from '../script.js';
+import { extractMessageFromData, getRequestHeaders, queueAcknowledgedChatRevisionRequest } from '../script.js';
 import { getStreamingReply } from './openai.js';
 import EventSourceStream from './sse-stream.js';
 import { parseStructuredMemoryResponse } from './stmb-core.js';
@@ -8,6 +8,25 @@ import { applyStmbRequestTransport } from './stmb-request-transport.js';
 
 const STMB_RATE_LIMIT_RETRY_DELAYS_MS = [3000, 8000];
 const stmbGenerationCooldowns = new Map();
+
+/** Lists content-free durable STMB operations for one chat. */
+export function getStmbOperations(chatRef) { return postStmb('operations', { chatRef }); }
+
+/** Captures the source and marker before generation begins. */
+export function prepareStmbOperation(payload) { return postStmb('operations', { ...payload, action: 'prepare' }); }
+
+/** Resolves progress in the same acknowledged revision queue as other chat mutations. */
+export async function resolveStmbOperation(chatRef, id, action = 'retry', isCurrent = () => true) {
+    const result = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId, saveSessionId }) => {
+        if (!isCurrent()) throw new DOMException('Chat changed', 'AbortError');
+        return {
+            url: '/api/stmb/operations',
+            body: { chatRef, id, action, base_revision: baseRevision, operation_id: operationId, save_session_id: saveSessionId },
+        };
+    });
+    if (!result.response.ok) throw new Error('Memory Books recovery could not complete.');
+    return result.responseData;
+}
 
 async function postStmb(path, payload) {
     const response = await fetch(`/api/stmb/${path}`, {

@@ -70,6 +70,7 @@ import { diskCache } from './endpoints/characters.js';
 import { migrateFlatSecrets } from './endpoints/secrets.js';
 import { refreshDefaultContentCharacterIndex } from './character-submissions.js';
 import { drainGenerationTasks } from './generation-drain.js';
+import { cleanupPromptInspectionSnapshots } from './endpoints/backends/chat-completions.js';
 
 // Work around a node v20.0.0, v20.1.0, and v20.2.0 bug. The issue was fixed in v20.3.0.
 // https://github.com/nodejs/node/issues/47822#issuecomment-1564708870
@@ -284,6 +285,7 @@ async function preSetupTasks() {
     await diskCache.verify(directories);
     migrateFlatSecrets(directories);
     cleanUploads();
+    await cleanupPromptInspectionSnapshots();
     migrateAccessLog();
 
     await settingsInit();

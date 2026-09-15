@@ -13,6 +13,7 @@ import {
     migrateNarratorLorebookReference,
     normalizeMultiCharacterSnapshot,
     normalizeNarratorConfig,
+    renameNarratorMember,
     setNarratorActiveCast,
     stampNarratorCast,
     validateNarratorBindings,
@@ -37,6 +38,22 @@ test('Narrator configuration keeps stable identities and repairable missing assi
     ]);
     assert.deepEqual(config.activeCastIds, ['alice-id']);
     assert.equal(createNarratorMember({ id: 'fixed', name: 'Carol' }).id, 'fixed');
+});
+
+test('Narrator rename changes only the name and rejects active or retired duplicates', () => {
+    const config = normalizeNarratorConfig({ members: [
+        { id: 'a', name: 'Alice', lorebookName: 'A' },
+        { id: 'b', name: 'Bob', lorebookName: 'B', retired: true },
+    ], activeCastIds: ['a'] }).config;
+    const historical = { extra: { STMemoryBooks: { narratorCast: { memberIds: ['a'], names: ['Alice'] } } } };
+    const before = structuredClone(historical);
+    assert.equal(renameNarratorMember(config, 'a', '  '), false);
+    assert.equal(renameNarratorMember(config, 'a', 'bob'), false);
+    assert.equal(renameNarratorMember(config, 'b', 'ALICE'), false);
+    assert.equal(renameNarratorMember(config, 'a', 'Alicia'), true);
+    assert.deepEqual(config.members[0], { id: 'a', name: 'Alicia', lorebookName: 'A', retired: false });
+    assert.deepEqual(config.activeCastIds, ['a']);
+    assert.deepEqual(historical, before);
 });
 
 test('Narrator bindings require distinct available character books separate from canonical', () => {

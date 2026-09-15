@@ -1,3 +1,4 @@
+import { fingerprintStmbSource } from './stmb-source.js';
 import {
     CHAT_SAVE_RESULT,
     chat,
@@ -270,6 +271,7 @@ function buildLocalCompiledScene(range, { skipSystemMessages = true, allowPartia
         collectNarratorCast,
     });
     const sceneStartUuid = chat[requestedStart]?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    compiledScene.metadata.sourceFingerprint = fingerprintStmbSource(chat.slice(requestedStart, requestedEnd + 1));
     const sceneEndUuid = chat[requestedEnd]?.[AIKOBOTS_MESSAGE_UUID_KEY];
     if (isValidAikobotsUuid(sceneStartUuid) && isValidAikobotsUuid(sceneEndUuid)) {
         compiledScene.metadata.sceneStartUuid = sceneStartUuid;

@@ -24,6 +24,39 @@ if (!browserType) {
 }
 const browserPath = browserName === 'chromium' ? resolveSystemChromiumPath() : '';
 
+/** Exercises the actual STMB change listener, keyboard toggles, and saved settings payload. */
+async function testStmbSettingsControls(page) {
+    await page.locator('#stmb-menu-item').evaluate(element => element.click());
+    await page.locator('#stmb-settings-open-automatic-settings').click();
+    await page.locator('#stmb-settings-auto-summary-trigger-mode').selectOption('tokens');
+    const threshold = page.locator('#stmb-settings-auto-summary-token-threshold');
+    await threshold.fill('5555');
+    await threshold.press('Tab');
+    const awareness = page.locator('#stmb-settings-character-aware-memories');
+    await awareness.focus();
+    await awareness.press('Space');
+    const groupDefaults = page.locator('#stmb-settings-separate-group-side-prompts');
+    const saved = page.waitForResponse(response => response.url().endsWith('/api/settings/save') && response.request().method() === 'POST');
+    await groupDefaults.focus();
+    await groupDefaults.press('Space');
+    const response = await saved;
+    assert.equal(response.ok(), true);
+    const settings = response.request().postDataJSON().stmb_settings.moduleSettings;
+    assert.equal(settings.autoSummaryTriggerMode, 'tokens');
+    assert.equal(settings.autoSummaryTokenThreshold, 5555);
+    assert.equal(settings.characterAwareMemories, false);
+    assert.equal(settings.useSeparateGroupSidePrompts, false);
+    await threshold.fill('-1');
+    await threshold.press('Tab');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.locator('#stmb-menu-item').evaluate(element => element.click());
+    await page.locator('#stmb-settings-open-automatic-settings').click();
+    assert.equal(await page.locator('#stmb-settings-auto-summary-token-threshold').inputValue(), '5555');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+}
+
 function getAvailablePort() {
     return new Promise((resolve, reject) => {
         const server = net.createServer();
@@ -106,7 +139,8 @@ async function startServer(configPath, dataRoot) {
 
 /** Exercises Data Maid category selection and every deletion path against mocked reports. */
 async function testDataMaidMultiSelect(page, fatalBrowserDiagnostics) {
-    const startingDiagnosticIndex = fatalBrowserDiagnostics.length;
+    // The preceding startup assertions already require an empty list. Bootstrap can finish between those assertions and this call.
+    const startingDiagnosticIndex = 0;
     await page.setViewportSize({ width: 390, height: 800 });
     const seedItems = [
         { name: 'alpha.txt', hash: 'hash-a', parent: 'files', size: 1024, mtime: 1 },
@@ -590,6 +624,7 @@ try {
         assert.equal(await page.locator('#stmb-jobs-topbar-button[aria-controls="top_chat_stmb_jobs"]').count(), 1, 'STMB jobs UI was not initialized.');
         assert.equal(await page.locator('#aiko-layout-css[href="css/layouts/classic.css"]').count(), 1, 'Selected runtime layout link was not retained.');
         await testDataMaidMultiSelect(page, fatalBrowserDiagnostics);
+        await testStmbSettingsControls(page);
         assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected Data Maid browser diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
         await testWorldInfoPresetSelectionUi(page);
         await testWorldInfoBulkDelete(page, fatalBrowserDiagnostics);

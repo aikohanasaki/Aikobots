@@ -1,4 +1,5 @@
 import { stableHashString } from './hashing.js';
+import { filterStmbMemoryRole, getStmbMemoryRole, hasStmbSharedRoles } from './stmb-group-policy.js';
 import { isValidAikobotsUuid } from './chat-identities.js';
 import { parseSequenceFromTitle, STMB_MANAGED_FLAG } from './stmb-core.js';
 import { getEntrySummaryTier } from './stmb-summary.js';
@@ -113,7 +114,7 @@ export function buildSidePromptRegenerationSnapshot({
 export function getSidePromptRegenerationSnapshot(entry) {
     const snapshot = entry?.[SIDE_PROMPT_REGENERATION_METADATA_KEY];
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-    if (snapshot.version !== SIDE_PROMPT_REGENERATION_SNAPSHOT_VERSION) return null;
+    if (![1, 2].includes(snapshot.version)) return null;
     if (typeof snapshot.templateKey !== 'string' || !snapshot.templateKey.trim()) return null;
     if (typeof snapshot.priorContent !== 'string' || snapshot.priorContent.length > 1_000_000) return null;
     if (!Number.isInteger(snapshot.sceneStart) || snapshot.sceneStart < 0) return null;
@@ -322,7 +323,8 @@ export function selectPreviousRegenerationMemories(lorebookData, targetUid, coun
         return { summaries: [], actualCount: 0, requestedCount };
     }
 
-    const preceding = Object.values(lorebookData?.entries || {})
+    const allEntries = Object.values(lorebookData?.entries || {});
+    const preceding = filterStmbMemoryRole(allEntries, getStmbMemoryRole(target), hasStmbSharedRoles(allEntries), target.characterFilter?.names || [])
         .filter(entry => entry?.[STMB_MANAGED_FLAG] === true && getEntrySummaryTier(entry) === 0 && getRegenerationEntryUid(entry) !== String(targetUid))
         .map((entry, index) => ({ entry, index, number: getRegenerationSequenceNumber(entry) }))
         .filter(item => Number.isFinite(item.number) && item.number < targetNumber)

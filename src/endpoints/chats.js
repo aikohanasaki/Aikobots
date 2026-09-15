@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import { recordStmbDeletion } from '../stmb-operations.js';
+import { recoverStmbRollback } from '../stmb-operation-service.js';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import process from 'node:process';
@@ -2976,6 +2978,12 @@ async function getRepeatedSqliteOperationReceiptFromFile(sqlitePath, requestBody
 }
 
 function updateSqliteHeaderRow(db, header) {
+    const previous = getChatHeader(db)?.chat_metadata?.STMemoryBooks || {};
+    const next = header?.chat_metadata?.STMemoryBooks || {};
+    if ((previous.highestMemoryProcessed ?? null) !== (next.highestMemoryProcessed ?? null)
+        || (previous.highestMemoryProcessedManuallySet === true) !== (next.highestMemoryProcessedManuallySet === true)) {
+        setMetadata(db, 'stmb_marker_revision', crypto.randomUUID());
+    }
     const stmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
     try {
         stmt.run([JSON.stringify(sanitizeChatHeaderForPersistence(header))]);
@@ -3395,7 +3403,7 @@ export async function appendSqliteMessage({ filePath, requestBody, saveSessionId
     }
 }
 
-export async function deleteSqliteMessageByUuid({ filePath, requestBody, saveSessionId, displayCount }) {
+export async function deleteSqliteMessageByUuid({ filePath, requestBody, saveSessionId, displayCount, request, response }) {
     const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     if (!fs.existsSync(sqlitePath)) {
         throw new ChatMutationError(409, 'message_delete_requires_sqlite', 'Message delete requires SQLite chat storage.');
@@ -3425,6 +3433,7 @@ export async function deleteSqliteMessageByUuid({ filePath, requestBody, saveSes
         db.run('BEGIN TRANSACTION');
         let stmt;
         try {
+            recordStmbDeletion(db, header, row.logicalIndex, row.logicalIndex, requestBody.operation_id);
             updateSqliteHeaderRow(db, revisedHeader);
             stmt = db.prepare('DELETE FROM messages WHERE id = ?');
             stmt.run([row.id]);
@@ -3440,6 +3449,7 @@ export async function deleteSqliteMessageByUuid({ filePath, requestBody, saveSes
         }
 
         saveDb(db, sqlitePath);
+        if (request && response) scheduleStmbRollbackAfterResponse(request, response, sqlitePath);
         return buildSqliteMutationPayload(db, revisedHeader, Math.max(0, row.logicalIndex - 1), displayCount, {
             message_uuid: targetUuid,
             deleted_message_id: row.logicalIndex,
@@ -3449,7 +3459,16 @@ export async function deleteSqliteMessageByUuid({ filePath, requestBody, saveSes
     }
 }
 
-export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveSessionId, displayCount }) {
+/** Schedules follow-up without retaining the deletion lock or changing its successful response. */
+function scheduleStmbRollbackAfterResponse(request, response, sqlitePath) {
+    response.once('finish', () => {
+        void recoverStmbRollback(request.user, sqlitePath).catch(() => {
+            // The intent remains durable and is offered for resolution when this chat opens.
+        });
+    });
+}
+
+export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveSessionId, displayCount, request, response }) {
     const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     if (!fs.existsSync(sqlitePath)) {
         throw new ChatMutationError(409, 'truncate_requires_sqlite', 'Truncate requires SQLite chat storage.');
@@ -3481,6 +3500,7 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
         const changesCanonicalMessages = truncateAll ? serverMessageCountBefore > 0 : row.logicalIndex < serverMessageCountBefore - 1;
         db.run('BEGIN TRANSACTION');
         try {
+            if (changesCanonicalMessages) recordStmbDeletion(db, header, truncateAll ? 0 : row.logicalIndex + 1, serverMessageCountBefore - 1, requestBody.operation_id);
             updateSqliteHeaderRow(db, revisedHeader);
             if (truncateAll) {
                 deleteAllLogicalMessages(db);
@@ -3499,6 +3519,7 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
 
         saveDb(db, sqlitePath);
         const serverMessageCountAfter = getMessageCount(db);
+        if (changesCanonicalMessages && request && response) scheduleStmbRollbackAfterResponse(request, response, sqlitePath);
         logChatPersistenceOperation('info', {
             routeName: 'sqlite_mutation',
             operationType: truncateAll ? 'truncate_all' : 'truncate',
@@ -4809,6 +4830,7 @@ router.post('/message/delete', validateAvatarUrlMiddleware, async function (requ
         return await withChatSaveLock(filePath, async () => {
             await request.activeSessionOperation?.assertAllowed();
             const payload = await deleteSqliteMessageByUuid({
+                request, response,
                 filePath,
                 requestBody: request.body,
                 saveSessionId: getRequestSaveSessionId(request.body),
@@ -4841,6 +4863,7 @@ router.post('/truncate-after', validateAvatarUrlMiddleware, async function (requ
         return await withChatSaveLock(filePath, async () => {
             await request.activeSessionOperation?.assertAllowed();
             const payload = await truncateSqliteChatAfterUuid({
+                request, response,
                 filePath,
                 requestBody: request.body,
                 saveSessionId: getRequestSaveSessionId(request.body),
@@ -4878,6 +4901,7 @@ router.post('/regenerate-prepare', validateAvatarUrlMiddleware, async function (
         return await withChatSaveLock(filePath, async () => {
             await request.activeSessionOperation?.assertAllowed();
             const payload = await truncateSqliteChatAfterUuid({
+                request, response,
                 filePath,
                 requestBody,
                 saveSessionId: getRequestSaveSessionId(requestBody),
@@ -6958,6 +6982,7 @@ router.post('/group/message/delete', async (request, response) => {
         return await withChatSaveLock(pathToFile, async () => {
             await request.activeSessionOperation?.assertAllowed();
             const payload = await deleteSqliteMessageByUuid({
+                request, response,
                 filePath: pathToFile,
                 requestBody: request.body,
                 saveSessionId: getRequestSaveSessionId(request.body),
@@ -6998,6 +7023,7 @@ router.post('/group/truncate-after', async (request, response) => {
         return await withChatSaveLock(pathToFile, async () => {
             await request.activeSessionOperation?.assertAllowed();
             const payload = await truncateSqliteChatAfterUuid({
+                request, response,
                 filePath: pathToFile,
                 requestBody: request.body,
                 saveSessionId: getRequestSaveSessionId(request.body),

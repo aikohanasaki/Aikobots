@@ -315,7 +315,7 @@ describe('SQLite chat length handling', () => {
 
             expect(columns.some(column => column.name === 'message_uuid')).toBe(true);
             expect(storedUuid).toBe(message.aikobots_message_uuid);
-            expect(storageVersion).toBe('20260711.1');
+            expect(storageVersion).toBe('20260915.1');
             expect(hasOperationReceipts).toBe(true);
             expect(queryPlan.detail).toContain('idx_messages_message_uuid');
         } finally {

@@ -4,7 +4,7 @@ import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { stableHashString } from './hashing.js';
 import { getCurrentLocale, translate } from './i18n.js';
 import { createStmbEntry, generateStmbText, updateStmbEntryByUid } from './stmb-api.js';
-import { buildLorebookEntryProfileOverrides, compiledSceneToText, STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
+import { buildTopicalClipEntryOverrides, normalizeLorebookEntrySettings, compiledSceneToText, STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
 import { syncStmbLocalizedPromptFields } from './stmb-prompt-default-migration.js';
 import {
@@ -2069,6 +2069,7 @@ function buildTopicalClipPopupHtml(defaultLorebookName) {
                     <select id="stmb-topical-clip-entry-position" class="text_pole"><option value="0">${escapeHtml(tr('↑Char'))}</option><option value="1">${escapeHtml(tr('↓Char'))}</option><option value="5">${escapeHtml(tr('↑EM'))}</option><option value="6">${escapeHtml(tr('↓EM'))}</option><option value="2">${escapeHtml(tr('↑AN'))}</option><option value="3">${escapeHtml(tr('↓AN'))}</option><option value="7">${escapeHtml(tr('Outlet'))}</option></select>
                     <select id="stmb-topical-clip-entry-order-mode" class="text_pole"><option value="auto">${escapeHtml(tr('Automatic'))}</option><option value="reverse">${escapeHtml(tr('Reverse'))}</option><option value="manual">${escapeHtml(tr('Manual'))}</option></select>
                     <input id="stmb-topical-clip-entry-order-value" type="number" class="text_pole" min="0" max="9999" value="100">
+                    <label>${escapeHtml(tr('Outlet Name'))}<input id="stmb-topical-clip-entry-outlet" class="text_pole" type="text"></label>
                 </div>
             </div>
             <div class="buttons_block justifyCenter gap10px whitespacenowrap">
@@ -2154,7 +2155,30 @@ export async function showTopicalClipPopup(options = {}) {
     const entryPosition = dlg?.querySelector('#stmb-topical-clip-entry-position');
     const entryOrderMode = dlg?.querySelector('#stmb-topical-clip-entry-order-mode');
     const entryOrderValue = dlg?.querySelector('#stmb-topical-clip-entry-order-value');
+    const entryOutlet = dlg?.querySelector('#stmb-topical-clip-entry-outlet');
+    const storedEntrySettings = getModuleSettings().topicalClipEntrySettings || {};
+    const normalizedEntrySettings = normalizeLorebookEntrySettings(storedEntrySettings);
+    entrySettingsEnabled.checked = storedEntrySettings.enabled === true;
+    entrySettingsPanel.hidden = !entrySettingsEnabled.checked;
+    entryPosition.value = String(normalizedEntrySettings.position);
+    entryOrderMode.value = normalizedEntrySettings.orderMode;
+    entryOrderValue.value = String(normalizedEntrySettings.orderValue);
+    entryOutlet.value = normalizedEntrySettings.outletName || '';
+    entryPosition.setAttribute('aria-label', tr('Insertion Position'));
+    entryOrderMode.setAttribute('aria-label', tr('Order'));
+    entryOrderValue.setAttribute('aria-label', tr('Order value'));
     entrySettingsEnabled?.addEventListener('change', () => { entrySettingsPanel.hidden = !entrySettingsEnabled.checked; });
+    const captureEntrySettings = () => ({
+        ...normalizeLorebookEntrySettings({ position: Number(entryPosition.value), outletName: entryOutlet.value, orderMode: entryOrderMode.value, orderValue: Number(entryOrderValue.value), reverseStart: 9999 }),
+        enabled: entrySettingsEnabled.checked,
+    });
+    for (const control of [entrySettingsEnabled, entryPosition, entryOrderMode, entryOrderValue, entryOutlet]) {
+        control.addEventListener('change', () => {
+            if (!control.checkValidity()) return;
+            getModuleSettings().topicalClipEntrySettings = captureEntrySettings();
+            saveSettingsDebounced();
+        });
+    }
 
     if (topicInput && options.topic) topicInput.value = String(options.topic);
     if (keywordsInput && Array.isArray(options.keywords)) keywordsInput.value = options.keywords.join(', ');
@@ -2342,6 +2366,17 @@ export async function showTopicalClipPopup(options = {}) {
         renderDiagnostics(tr('Source memory selection updated.'));
     });
     const generateTopicalClipDraft = async (autoAccept = false) => {
+        if (entrySettingsEnabled.checked && entryOrderMode.value === 'manual' && !entryOrderValue.reportValidity()) return;
+        const entrySettings = captureEntrySettings();
+        if (entrySettings.enabled && entrySettings.position === 7 && !entrySettings.outletName) {
+            toastr.error(tr('Outlet Name is required when Insertion Position is Outlet'), 'STMB');
+            entryOutlet.focus();
+            return;
+        }
+        const profileIndex = getCompactionProfileIndexFromSelect(popup, 'stmb-topical-clip-profile-select');
+        setCompactionProfileIndex(profileIndex);
+        const profile = structuredClone(runtime.getProfile?.(profileIndex) || {});
+        const profileOverrides = buildTopicalClipEntryOverrides(profile, entrySettings);
         const selectedLorebookName = getSelectedLorebookName();
         if (selectedLorebookName && (selectedLorebookName !== currentLorebookName || !currentLorebookData?.entries)) {
             await loadSelectedLorebook(selectedLorebookName);
@@ -2474,9 +2509,6 @@ export async function showTopicalClipPopup(options = {}) {
 
         if (saveButton) saveButton.disabled = true;
         try {
-            const profileIndex = getCompactionProfileIndexFromSelect(popup, 'stmb-topical-clip-profile-select');
-            setCompactionProfileIndex(profileIndex);
-            const profile = runtime.getProfile?.(profileIndex) || null;
             if (autoAccept) {
                 toastr.info(tr(
                     'Topical Clip generation started. It will be saved automatically.',
@@ -2504,14 +2536,7 @@ export async function showTopicalClipPopup(options = {}) {
                         ? snapshotTopicalSourceEntries(allEligibleSources)
                         : (getTopicalClipMetadata(target)?.last_source_snapshot || []),
                 messageSource,
-                profileOverrides: buildLorebookEntryProfileOverrides(profile, {
-                    orderNumber: 1,
-                    orderNumberLabel: 'Topical Clip',
-                    ...(entrySettingsEnabled?.checked ? {
-                        position: Number(entryPosition?.value || 0),
-                        order: entryOrderMode?.value === 'manual' ? Number(entryOrderValue?.value || 100) : entryOrderMode?.value === 'reverse' ? 9999 : 100,
-                    } : {}),
-                }),
+                profileOverrides,
             };
             if (draftTextarea) draftTextarea.value = normalizedDraft;
             if (autoAccept) {

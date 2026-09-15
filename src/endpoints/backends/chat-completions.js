@@ -2575,6 +2575,11 @@ function getPromptInspectionSnapshotPathForKey(key) {
 /** Runs a prompt snapshot mutation under one or more deterministic cross-process locks. */
 async function withPromptInspectionSnapshotLocks(keys, operation) {
     const lockPaths = [...new Set(keys.map(key => `${getPromptInspectionSnapshotPathForKey(key)}.lock`))].sort();
+    return await withPromptInspectionSnapshotLockPaths(lockPaths, operation);
+}
+
+/** Shares snapshot locking between key-based mutations and startup expiry. */
+async function withPromptInspectionSnapshotLockPaths(lockPaths, operation) {
     const runAt = async index => index >= lockPaths.length
         ? await operation()
         : await withDirectoryLock({
@@ -2587,6 +2592,41 @@ async function withPromptInspectionSnapshotLocks(keys, operation) {
         }, async lock => await lock.run(async () => await runAt(index + 1)));
 
     return await runAt(0);
+}
+
+/** Deletes snapshot files last modified more than 24 hours ago, under their writer locks. */
+export async function cleanupPromptInspectionSnapshots() {
+    const directory = getPromptInspectionSnapshotDirectory();
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    try {
+        const entries = await fsPromises.readdir(directory, { withFileTypes: true });
+        for (const entry of entries) {
+            if (!entry.isFile() || !/^[a-f0-9]{64}\.json$/.test(entry.name)) {
+                continue;
+            }
+            const snapshotPath = path.join(directory, entry.name);
+            try {
+                const stat = await fsPromises.lstat(snapshotPath);
+                if (!stat.isFile() || stat.mtimeMs >= cutoff) {
+                    continue;
+                }
+                await withPromptInspectionSnapshotLockPaths([`${snapshotPath}.lock`], async () => {
+                    const current = await fsPromises.lstat(snapshotPath);
+                    if (current.isFile() && current.mtimeMs < cutoff) {
+                        await fsPromises.unlink(snapshotPath);
+                    }
+                });
+            } catch (error) {
+                if (error?.code !== 'ENOENT') {
+                    console.warn('Failed to expire a prompt inspection snapshot.', { code: error?.code });
+                }
+            }
+        }
+    } catch (error) {
+        if (error?.code !== 'ENOENT') {
+            console.warn('Failed to scan prompt inspection snapshots for expiry.', { code: error?.code });
+        }
+    }
 }
 
 async function readPromptInspectionSnapshotForKey(key) {

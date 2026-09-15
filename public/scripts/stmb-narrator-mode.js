@@ -36,6 +36,15 @@ export function createNarratorMember({ id, name, lorebookName = '', retired = fa
     };
 }
 
+/** Renames a declared member while retaining its ID, bindings, and historical cast stamps. */
+export function renameNarratorMember(config, memberId, value) {
+    const member = config.members.find(item => item.id === memberId);
+    const name = cleanString(value);
+    if (!member || !name || config.members.some(item => item.id !== memberId && item.name.localeCompare(name, undefined, { sensitivity: 'base' }) === 0)) return false;
+    member.name = name;
+    return true;
+}
+
 /** Normalizes persisted per-chat Narrator configuration without discarding repairable members. */
 export function normalizeNarratorConfig(value) {
     const source = isPlainObject(value) ? value : {};
@@ -262,7 +271,7 @@ export function migrateNarratorLorebookReference(config, oldName, newName = '') 
 /** Normalizes current and legacy queued multi-character snapshots without retaining lorebook contents. */
 export function normalizeMultiCharacterSnapshot(payload = {}) {
     const raw = payload?.multiCharacterSnapshot || payload?.manualGroupSnapshot;
-    if (!isPlainObject(raw)) return null;
+    if (!isPlainObject(raw) || raw.mode === 'single') return null;
     const mode = raw.mode === 'narrator' ? 'narrator' : 'group';
     const members = (Array.isArray(raw.members) ? raw.members : []).map(member => mode === 'narrator'
         ? createNarratorMember(member, () => '')

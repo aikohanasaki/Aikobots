@@ -1,3 +1,7 @@
+import { captureStmbGroupPolicy, applyStmbGroupPolicy, filterStmbMemoryRole, getStmbMemoryRole, hasStmbSharedRoles } from './stmb-group-policy.js';
+import { evaluateStmbAutoSummary } from './stmb-auto-summary-policy.js';
+import { getStmbOperations, resolveStmbOperation, prepareStmbOperation } from './stmb-api.js';
+import { saveMetadata } from '../script.js';
 import {
     applyChunkedChatPayload,
     chat,
@@ -259,6 +263,7 @@ import {
     mergeNarratorLorebookEntries,
     migrateNarratorLorebookReference,
     normalizeMultiCharacterSnapshot,
+    renameNarratorMember,
     setNarratorActiveCast,
     stampNarratorCast,
     validateNarratorBindings,
@@ -330,6 +335,7 @@ const DURABLE_SYNC_STATE_KEYS = [
     'narratorMode',
     'contextSettingKey',
     'autoConsolidationLastPromptKey',
+    'autoRollbackPolicy',
 ];
 
 function getClientPlannerJobStatus(job = {}) {
@@ -2044,8 +2050,9 @@ function getEffectivePromptText(profile, target = '') {
     return getRequiredSummaryPromptText(profile?.preset, stmbSettings);
 }
 
-function buildEffectiveMemoryProfile(profile) {
+function buildEffectiveMemoryProfile(profile, policy = captureStmbGroupPolicy(getModuleSettings(), buildStmbSceneContext())) {
     const effectiveProfile = structuredClone(profile || getActiveStmbProfile(stmbSettings));
+    applyStmbGroupPolicy(effectiveProfile, null, policy);
     const effectivePrompt = getEffectivePromptText(effectiveProfile);
     if (typeof effectivePrompt === 'string' && effectivePrompt.trim()) {
         effectiveProfile.promptText = effectivePrompt;
@@ -2182,6 +2189,80 @@ function renderMemoryBoundaryModeOptions(selectedMode) {
 
 function getStmbSelectableLorebookNames() {
     return (Array.isArray(world_names) ? world_names : []).filter(name => !isReservedTemplateWorldName(name));
+}
+
+/** Applies a saved memory's marker only through the originating chat's revision queue. */
+async function finishStmbSavedProgress(sceneContext, operationId) {
+    if (!isSceneContextCurrent(sceneContext)) return;
+    const result = await resolveStmbOperation(sceneContext.chatRef, operationId, 'retry', () => isSceneContextCurrent(sceneContext));
+    if (!isSceneContextCurrent(sceneContext)) return;
+    const state = getStmbState(sceneContext);
+    if (result.highestMemoryProcessed === null) delete state.highestMemoryProcessed;
+    else state.highestMemoryProcessed = result.highestMemoryProcessed;
+    if (result.highestMemoryProcessedManuallySet) state.highestMemoryProcessedManuallySet = true;
+    else delete state.highestMemoryProcessedManuallySet;
+    if (result.clearScene) { delete state.sceneStart; delete state.sceneEnd; }
+    for (const range of result.hideRanges || []) await hideChatMessageRange(range.start, range.end, false, null, true);
+    if (result.postSaveLorebook) {
+        await maybePromptAutoConsolidation(1, { sceneContext, lorebookName: result.postSaveLorebook });
+        await resolveStmbOperation(sceneContext.chatRef, operationId, 'ack-effects', () => isSceneContextCurrent(sceneContext));
+    }
+    refreshMemoryBoundaryUi();
+}
+
+/** Shows durable pending work without reading entry content into the recovery UI. */
+async function reviewStmbOperations({ auto = false } = {}) {
+    const origin = buildStmbSceneContext();
+    if (!origin.chatRef || hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(origin))) return;
+    let result;
+    try { result = await resolveStmbOperation(origin.chatRef, null, '', () => isSceneContextCurrent(origin)); } catch { return; }
+    if (!isSceneContextCurrent(origin)) return;
+    const state = getStmbState(origin);
+    if (result.highestMemoryProcessed === null) delete state.highestMemoryProcessed;
+    else state.highestMemoryProcessed = result.highestMemoryProcessed;
+    if (result.highestMemoryProcessedManuallySet) state.highestMemoryProcessedManuallySet = true;
+    else delete state.highestMemoryProcessedManuallySet;
+    refreshMemoryBoundaryUi();
+    for (const operation of result.operations || []) {
+        if (auto && (['saved', 'applied'].includes(operation.state) || operation.kind === 'rollback')) {
+            try { await finishStmbSavedProgress(origin, operation.id); continue; } catch { /* Show the conflict for review. */ }
+        }
+        const choice = await new Popup(DOMPurify.sanitize(`<h3>${escapeHtml(translate('Pending Memory Books operation'))}</h3><p>${escapeHtml(translate('A saved memory or rollback needs recovery. Retry to finish it, or discard to keep the current state.'))}</p>`), POPUP_TYPE.TEXT, '', {
+            okButton: translate('Retry'), cancelButton: translate('Later'),
+            customButtons: [{ text: translate('Discard'), result: POPUP_RESULT.CUSTOM1 }],
+        }).show();
+        if (!isSceneContextCurrent(origin)) return;
+        if (choice !== POPUP_RESULT.AFFIRMATIVE && choice !== POPUP_RESULT.CUSTOM1) return;
+        try {
+            if (choice === POPUP_RESULT.CUSTOM1) await resolveStmbOperation(origin.chatRef, operation.id, 'discard', () => isSceneContextCurrent(origin));
+            else await finishStmbSavedProgress(origin, operation.id);
+        } catch { toastr.error(translate('Memory Books recovery could not complete.'), 'STMB'); }
+    }
+}
+
+/** Persists the active chat's rollback policy before its next acknowledged deletion. */
+async function syncStmbRollbackPolicy() {
+    const origin = buildStmbSceneContext();
+    if (!origin.chatRef) return;
+    const settings = getModuleSettings();
+    const state = getStmbState(origin);
+    if (!settings.autoRollbackEnabled && !state.autoRollbackPolicy?.enabled) return;
+    const templates = settings.autoRollbackEnabled ? await listTemplates() : [];
+    if (!isSceneContextCurrent(origin)) return;
+    const policy = {
+        enabled: settings.autoRollbackEnabled === true,
+        updateProgress: settings.autoRollbackUpdateLastProcessed !== false,
+        deleteMemories: settings.autoRollbackDeleteLastMemory !== false,
+        restoreSidePrompts: settings.autoRollbackRestorePreviousSidePrompts !== false,
+        books: [...new Set([resolveLorebookName(), ...(state.autoRollbackPolicy?.books || []), ...Object.values(state.manualCharacterLorebooks || {}),
+            ...Object.values(state.sidePromptLorebookOverrides || {}),
+            ...(templates || []).map(template => template.settings?.lorebook?.targetLorebookName),
+            ...(state.narratorMode?.members || []).map(member => member.lorebookName)])]
+            .filter(name => name && getLorebookStorageForRequest(name) === 'user'),
+    };
+    if (JSON.stringify(state.autoRollbackPolicy) === JSON.stringify(policy)) return;
+    state.autoRollbackPolicy = policy;
+    await saveMetadata();
 }
 
 function getStmbOrdinaryUserLorebookNames() {
@@ -2328,6 +2409,7 @@ function restoreNarratorCastFromTimeline(messageId = null) {
 }
 
 async function showNarratorCastManager() {
+    const origin = buildStmbSceneContext();
     const config = getCurrentNarratorConfig();
     const canonical = getNarratorCanonicalLorebookName();
     const books = getNarratorOrdinaryLorebookNames().filter(name => name !== canonical);
@@ -2336,16 +2418,15 @@ async function showNarratorCastManager() {
     const content = DOMPurify.sanitize(`<h3>${escapeHtml(translate('Narrator Cast'))}</h3><p class="opacity50p">${escapeHtml(translate('Each declared character must use a unique Memory Book separate from the omniscient book.'))}</p><div class="stmb-narrator-manager-add"><input id="stmb-narrator-character-name" class="text_pole" type="text" placeholder="${escapeHtml(translate('Character name'))}"><select id="stmb-narrator-book" class="text_pole"><option value="">${escapeHtml(translate('Select Memory Book'))}</option>${options}</select><button type="button" id="stmb-narrator-add" class="menu_button">${escapeHtml(translate('Add'))}</button></div><div class="stmb-narrator-manager-list">${rows || `<small class="opacity50p">${escapeHtml(translate('No cast members declared.'))}</small>`}</div>`);
     const popup = new Popup(content, POPUP_TYPE.TEXT, '', { wide: true, cancelButton: translate('Close'), okButton: false });
     popup.dlg.addEventListener('change', event => {
+        if (!isSceneContextCurrent(origin)) { void popup.completeCancelled(); return; }
         const nameInput = event.target.closest('[data-narrator-name-for]');
         if (nameInput) {
             const member = config.members.find(item => item.id === nameInput.dataset.narratorNameFor);
-            const name = String(nameInput.value || '').trim();
-            if (!member || !name || config.members.some(item => item.id !== member.id && item.name.localeCompare(name, undefined, { sensitivity: 'base' }) === 0)) {
+            if (!renameNarratorMember(config, nameInput.dataset.narratorNameFor, nameInput.value)) {
                 nameInput.value = member?.name || '';
                 toastr.error(translate('That character name is invalid or already declared.'), 'STMB');
                 return;
             }
-            member.name = name;
             saveMetadataDebounced();
             refreshNarratorCastDrawer();
             return;
@@ -2366,6 +2447,7 @@ async function showNarratorCastManager() {
         saveMetadataDebounced();
     });
     popup.dlg.addEventListener('click', async event => {
+        if (!isSceneContextCurrent(origin)) { await popup.completeCancelled(); return; }
         const retireButton = event.target.closest('[data-retire-narrator-member]');
         if (retireButton) {
             const member = config.members.find(item => item.id === retireButton.dataset.retireNarratorMember);
@@ -2441,19 +2523,7 @@ function getManualPrimaryLorebookNames(sceneContext = buildStmbSceneContext()) {
         const candidates = narratorConfig.enabled ? getNarratorOrdinaryLorebookNames() : getStmbSelectableLorebookNames();
         return candidates.filter(name => !assignedNarratorBooks.has(name));
     }
-    const state = getStmbState(sceneContext);
-    const resolved = resolveManualGroupCharacterBindings({
-        manualModeEnabled: true,
-        members: getStmbGroupMembers(sceneContext),
-        chatBindings: getManualCharacterLorebookBindings(state),
-        locks: stmbSettings.characterMemoryBookLocks,
-    });
-    const assignedCharacterBooks = new Set(
-        Object.values(resolved.bindings)
-            .map(value => String(value || '').trim())
-            .filter(Boolean),
-    );
-    return getStmbSelectableLorebookNames().filter(name => !assignedCharacterBooks.has(name));
+    return getStmbSelectableLorebookNames();
 }
 
 function renderManualGroupLorebookBindingsHtml(manualMode) {
@@ -2468,7 +2538,6 @@ function renderManualGroupLorebookBindingsHtml(manualMode) {
         chatBindings: localBindings,
         locks: stmbSettings.characterMemoryBookLocks,
     });
-    const canonicalLorebookName = String(getStmbState(sceneContext).manualLorebook || '').trim();
     if (members.length === 0) {
         return '<small class="opacity50p" data-i18n="No group members are available for manual lorebook setup.">No group members are available for manual lorebook setup.</small>';
     }
@@ -2476,13 +2545,13 @@ function renderManualGroupLorebookBindingsHtml(manualMode) {
         const current = String(bindings[member.key] || '');
         const localLorebook = String(localBindings[member.key] || '');
         const lock = locksByMemberKey[member.key];
-        const currentConflicts = Boolean(current && current === canonicalLorebookName);
+        const currentConflicts = false;
         const options = [
             `<option value="" ${current ? '' : 'selected'} disabled data-i18n="None selected">None selected</option>`,
             ...(currentConflicts ? [`<option value="${escapeHtml(current)}" selected disabled>${escapeHtml(current)} (unavailable: group Memory Book)</option>`] : []),
             ...(current && !currentConflicts && !world_names.includes(current) ? [`<option value="${escapeHtml(current)}" selected>${t`Missing: ${escapeHtml(current)}`}</option>`] : []),
             ...getStmbSelectableLorebookNames()
-                .filter(name => name !== canonicalLorebookName)
+                .filter(Boolean)
                 .map(name => `<option value="${escapeHtml(name)}" ${name === current ? 'selected' : ''}>${escapeHtml(name)}</option>`),
         ].join('');
         return `<div class="stmb-manual-group-lorebook-row">
@@ -2742,6 +2811,14 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
 
             <section class="stmb-settings-subsection" data-stmb-settings-view="automatic">
             <h3 class="stmb-section-title" data-i18n="Automatic Memories">Automatic Memories</h3>
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" data-stmb-rollback="autoRollbackEnabled" ${moduleSettings.autoRollbackEnabled === true ? 'checked' : ''}><span data-i18n="Auto-rollback after message deletion">Auto-rollback after message deletion</span></label>
+                <small data-i18n="Rollback deletes affected memories and summaries permanently. Side Prompts retain one restoration layer.">Rollback deletes affected memories and summaries permanently. Side Prompts retain one restoration layer.</small>
+                <label class="checkbox_label"><input type="checkbox" data-stmb-rollback="autoRollbackUpdateLastProcessed" ${moduleSettings.autoRollbackUpdateLastProcessed !== false ? 'checked' : ''}><span data-i18n="Update last processed message">Update last processed message</span></label>
+                <label class="checkbox_label"><input type="checkbox" data-stmb-rollback="autoRollbackDeleteLastMemory" ${moduleSettings.autoRollbackDeleteLastMemory !== false ? 'checked' : ''}><span data-i18n="Delete affected memories and summaries">Delete affected memories and summaries</span></label>
+                <label class="checkbox_label"><input type="checkbox" data-stmb-rollback="autoRollbackRestorePreviousSidePrompts" ${moduleSettings.autoRollbackRestorePreviousSidePrompts !== false ? 'checked' : ''}><span data-i18n="Restore previous Side Prompts">Restore previous Side Prompts</span></label>
+                <button type="button" class="menu_button" id="stmb-pending-operations" data-i18n="Pending Memory Books operations">Pending Memory Books operations</button>
+            </div>
             <div class="world_entry_form_control">
                 <label class="checkbox_label" title="Automatically run /nextmemory after a specified number of messages. Warning: enabling Auto-Summary may create one large memory from the existing backlog. Use /stmb-set-highest &lt;N|none&gt; to control the baseline." data-i18n="[title]STMemoryBooks_AutoSummaryTooltip"><input type="checkbox" id="stmb-settings-auto-summary-enabled" ${moduleSettings.autoSummaryEnabled ? 'checked' : ''}> <span title="Automatically run /nextmemory after a specified number of messages. Warning: enabling Auto-Summary may create one large memory from the existing backlog. Use /stmb-set-highest &lt;N|none&gt; to control the baseline." data-i18n="[title]STMemoryBooks_AutoSummaryTooltip;Auto-create memory summaries">Auto-create memory summaries</span></label>
             </div>
@@ -6093,6 +6170,36 @@ async function showMainEntryPopup(view = 'main', options = {}) {
 
         const moduleSettings = stmbSettings.moduleSettings;
 
+        if (target.dataset.stmbRollback) {
+            const key = target.dataset.stmbRollback;
+            if (!['autoRollbackEnabled', 'autoRollbackUpdateLastProcessed', 'autoRollbackDeleteLastMemory', 'autoRollbackRestorePreviousSidePrompts'].includes(key)) return;
+            moduleSettings[key] = target.checked;
+            persistSettings();
+            await syncStmbRollbackPolicy();
+            return;
+        }
+        if (target.matches('#stmb-settings-auto-summary-trigger-mode')) {
+            moduleSettings.autoSummaryTriggerMode = target.value === 'tokens' ? 'tokens' : 'messages';
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-auto-summary-token-threshold')) {
+            const value = Number(target.value);
+            if (!Number.isInteger(value) || value < 1 || value > 1000000) { target.reportValidity(); return; }
+            moduleSettings.autoSummaryTokenThreshold = value;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-character-aware-memories')) {
+            moduleSettings.characterAwareMemories = target.checked;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-separate-group-side-prompts')) {
+            moduleSettings.useSeparateGroupSidePrompts = target.checked;
+            persistSettings();
+            return;
+        }
         if (target.matches('#stmb-settings-always-use-default')) {
             moduleSettings.alwaysUseDefault = target.checked;
             persistSettings();
@@ -6486,28 +6593,7 @@ async function showMainEntryPopup(view = 'main', options = {}) {
             updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
             return;
         }
-        if (target.matches('#stmb-settings-auto-summary-trigger-mode')) {
-            moduleSettings.autoSummaryTriggerMode = target.value === 'tokens' ? 'tokens' : 'messages';
-            persistSettings();
-            return;
-        }
-        if (target.matches('#stmb-settings-auto-summary-token-threshold')) {
-            const value = Number.parseInt(target.value, 10);
-            if (!Number.isFinite(value) || value < 1 || value > 1000000) return;
-            moduleSettings.autoSummaryTokenThreshold = value;
-            persistSettings();
-            return;
-        }
-        if (target.matches('#stmb-settings-character-aware-memories')) {
-            moduleSettings.characterAwareMemories = target.checked;
-            persistSettings();
-            return;
-        }
-        if (target.matches('#stmb-settings-separate-group-side-prompts')) {
-            moduleSettings.useSeparateGroupSidePrompts = target.checked;
-            persistSettings();
-            return;
-        }
+        if (target.closest('#stmb-pending-operations')) { await reviewStmbOperations(); return; }
         if (target.closest('#stmb-settings-manage-narrator-cast')) {
             await showNarratorCastManager();
             updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
@@ -7402,19 +7488,16 @@ async function confirmGroupMemoryParticipants(compiledScene, snapshot) {
 
 async function prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext) {
     if (!sceneContext?.isGroupChat) return null;
+    const policy = compiledScene.metadata?.groupPolicy || captureStmbGroupPolicy(getModuleSettings(), sceneContext);
+    compiledScene.metadata.groupPolicy = policy;
+    if (!policy.characterAware) {
+        applyStmbGroupPolicy({}, compiledScene, policy);
+        return { mode: 'single' };
+    }
     const rawSnapshot = getManualGroupBindingSnapshot(sceneContext);
     const snapshot = getModuleSettings().manualModeEnabled
         ? validateManualGroupBindingSnapshot(rawSnapshot)
         : rawSnapshot;
-    if (getModuleSettings().characterAwareMemories === false) {
-        compiledScene.metadata = {
-            ...(compiledScene.metadata || {}),
-            groupName: sceneContext.groupName || compiledScene?.metadata?.groupName || '',
-            stmbPromptTarget: 'group',
-            characterFilterNames: [],
-        };
-        return { mode: 'group', ...snapshot, characterFilterNames: [] };
-    }
     const characterFilterNames = await confirmGroupMemoryParticipants(compiledScene, snapshot);
     if (!characterFilterNames) return null;
     compiledScene.metadata = {
@@ -8063,13 +8146,9 @@ async function checkAutoSummaryTrigger(options = {}) {
     }
 
     const currentMessageCount = currentLastMessage + 1;
-    const requiredInterval = Number.isFinite(Number(settings.autoSummaryInterval))
-        ? Math.max(1, Math.trunc(Number(settings.autoSummaryInterval)))
-        : 50;
     const buffer = Number.isFinite(Number(settings.autoSummaryBuffer))
         ? Math.max(0, Math.min(50, Math.trunc(Number(settings.autoSummaryBuffer))))
         : 0;
-    const requiredTotal = requiredInterval + buffer;
     const rawHighestProcessed = state.highestMemoryProcessed;
     const hasHighestProcessed = typeof rawHighestProcessed === 'number' && Number.isFinite(rawHighestProcessed);
     const highestProcessed = hasHighestProcessed ? rawHighestProcessed : -1;
@@ -8078,26 +8157,25 @@ async function checkAutoSummaryTrigger(options = {}) {
         return;
     }
 
-    const messagesSinceLastMemory = currentLastMessage - highestProcessed;
-    const eligibleStart = highestProcessed + 1;
-    const eligibleEnd = Math.max(-1, currentLastMessage - buffer);
-    let triggerCount = messagesSinceLastMemory;
-    let requiredTrigger = requiredTotal;
-    if (settings.autoSummaryTriggerMode === 'tokens' && eligibleStart <= eligibleEnd) {
-        const source = chat.slice(eligibleStart, eligibleEnd + 1)
-            .map(message => String(message?.mes || '')).join('\n');
-        triggerCount = Math.ceil(source.length / 4);
-        requiredTrigger = Math.max(1, Math.trunc(Number(settings.autoSummaryTokenThreshold) || 4000));
-    }
-    if (triggerCount < requiredTrigger) {
-        return;
-    }
+    const isCurrent = () => isSceneContextCurrent(sceneContext)
+        && getStmbState(sceneContext).highestMemoryProcessed === rawHighestProcessed
+        && !hasActiveStmbTasks() && !hasActiveStmbJobs(getStmbChatKey(sceneContext));
+    const trigger = await evaluateStmbAutoSummary({
+        settings, highest: highestProcessed, last: currentLastMessage, isCurrent,
+        capture: range => captureStmbSceneRange(range, {
+            sceneContext, skipSystemMessages: !settings.unhideBeforeMemory,
+            collectNarratorCast: isCurrentNarratorModeActive(sceneContext),
+        }),
+        countTokens: compiled => getTokenCountAsync(compiledSceneToText(compiled)),
+    });
+    if (!trigger) return;
 
     if (Number.isInteger(state.autoSummaryNextPromptAt) && currentMessageCount < state.autoSummaryNextPromptAt) {
         return;
     }
 
     const lorebookResolution = await resolveAutoSummaryLorebook({ sceneContext, currentMessageCount });
+    if (!isCurrent()) return;
     if (!lorebookResolution.valid) {
         console.warn('STMB auto-summary blocked by lorebook resolution', lorebookResolution.error);
         return;
@@ -8120,6 +8198,7 @@ async function checkAutoSummaryTrigger(options = {}) {
         sceneContext,
         source: 'autoSummary',
         requiresIdleQueue: true,
+        sceneCapture: trigger.captured,
     });
 }
 
@@ -8172,8 +8251,9 @@ function handleMessageDeletion(deletedId) {
     if (result.changed) {
         state.sceneStart = result.sceneStart;
         state.sceneEnd = result.sceneEnd;
-        state.highestMemoryProcessed = result.highestProcessed;
-        if (result.highestProcessed === null) {
+        const durableRollback = state.autoRollbackPolicy?.enabled === true;
+        if (!durableRollback) state.highestMemoryProcessed = result.highestProcessed;
+        if (!durableRollback && result.highestProcessed === null) {
             delete state.highestMemoryProcessed;
             delete state.highestMemoryProcessedManuallySet;
         }
@@ -8908,6 +8988,9 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
 
 function buildMemorySceneData(compiledScene, range, settings = stmbSettings) {
     return {
+        sceneStartUuid: compiledScene?.metadata?.sceneStartUuid,
+        sceneEndUuid: compiledScene?.metadata?.sceneEndUuid,
+        sourceFingerprint: compiledScene?.metadata?.sourceFingerprint,
         sceneStart: range.sceneStart,
         sceneEnd: range.sceneEnd,
         messageCount: compiledScene?.metadata?.messageCount ?? 0,
@@ -9238,9 +9321,6 @@ function buildManualGroupCopyTargets(snapshot, primaryLorebookName) {
         if (!selectedNames.has(member.characterFilterName)) continue;
         const lorebookName = String(snapshot?.bindings?.[member.key] || '').trim();
         if (!lorebookName) continue;
-        if (lorebookName === primaryLorebookName) {
-            throw new Error(`${member.name}: character lorebook cannot be the group Memory Book.`);
-        }
         if (!targetsByLorebook.has(lorebookName)) {
             targetsByLorebook.set(lorebookName, { lorebookName, members: [], characterFilterNames: [] });
         }
@@ -9287,6 +9367,7 @@ async function saveManualGroupMemoryObjects(groupMemory, characterMemories, snap
     const targets = buildManualGroupCopyTargets(snapshot, lorebookName);
     throwIfStmbAborted(signal);
     const result = await saveStmbGroupMemoryEntries({
+        operation: options.operation,
         routingMode: snapshot?.mode === 'narrator' ? 'narrator' : 'group',
         primary: {
             lorebookName,
@@ -9307,6 +9388,8 @@ async function saveManualGroupMemoryObjects(groupMemory, characterMemories, snap
         chatRef: sceneContext?.chatRef,
         profile,
     }, { signal });
+    options.onSaved?.(result);
+    if (result.operation) await finishStmbSavedProgress(sceneContext, result.operation.id);
     throwIfStmbAborted(signal);
 
     for (const entry of result?.entries || []) worldInfoCache.delete(entry.lorebookName);
@@ -9323,11 +9406,11 @@ async function saveManualGroupMemoryObjects(groupMemory, characterMemories, snap
     showOrderClampNotifications(result?.orderClampNotifications);
     const shouldClearSceneMarkers = !keepSceneMarkers && getModuleSettings().autoClearSceneAfterMemory === true;
     if (isSceneContextCurrent(sceneContext)) {
-        setHighestProcessedMessageId(range.sceneEnd);
+        if (!result.operation) setHighestProcessedMessageId(range.sceneEnd);
         if (shouldClearSceneMarkers) clearSceneMarkers();
     } else {
         queueDeferredPostSaveEffects(sceneContext, {
-            highestProcessedMessageId: range.sceneEnd,
+            ...(result.operation ? {} : { highestProcessedMessageId: range.sceneEnd }),
             clearSceneMarkers: shouldClearSceneMarkers,
         });
     }
@@ -9339,9 +9422,10 @@ async function saveManualGroupMemoryObjects(groupMemory, characterMemories, snap
     };
 }
 
-async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, compiledScene, profile, keepSceneMarkers = false, sceneContext = null, signal = null, showSuccessToast = true }) {
+async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, compiledScene, profile, keepSceneMarkers = false, sceneContext = null, signal = null, showSuccessToast = true, operation, onSaved }) {
     throwIfStmbAborted(signal);
     const result = await saveStmbMemoryEntry({
+        operation,
         lorebookName,
         storage: getLorebookStorageForRequest(lorebookName),
         memoryObject,
@@ -9349,6 +9433,8 @@ async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, c
         chatRef: sceneContext?.chatRef,
         profile,
     }, { signal });
+    onSaved?.(result);
+    if (result.operation) await finishStmbSavedProgress(sceneContext, result.operation.id);
     throwIfStmbAborted(signal);
     worldInfoCache.delete(lorebookName);
     void refreshStmbMacroCache(lorebookName);
@@ -9357,13 +9443,13 @@ async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, c
     showOrderClampNotifications(result?.orderClampNotifications);
     const shouldClearSceneMarkers = !keepSceneMarkers && getModuleSettings().autoClearSceneAfterMemory === true;
     if (isSceneContextCurrent(sceneContext)) {
-        setHighestProcessedMessageId(range.sceneEnd);
+        if (!result.operation) setHighestProcessedMessageId(range.sceneEnd);
         if (shouldClearSceneMarkers) {
             clearSceneMarkers();
         }
     } else {
         queueDeferredPostSaveEffects(sceneContext, {
-            highestProcessedMessageId: range.sceneEnd,
+            ...(result.operation ? {} : { highestProcessedMessageId: range.sceneEnd }),
             clearSceneMarkers: shouldClearSceneMarkers,
         });
     }
@@ -9625,6 +9711,7 @@ async function commitSummaryCandidates(summaryCandidates, {
     summaryEntrySettings = null,
     sourceFingerprints = null,
     sourceIds = null,
+    groupPolicy = null,
     showSuccessToast = true,
     signal = null,
 }) {
@@ -9633,6 +9720,7 @@ async function commitSummaryCandidates(summaryCandidates, {
         lorebookName,
         storage: getLorebookStorageForRequest(lorebookName),
         summaryCandidates,
+        groupPolicy,
         targetTier: normalizedTargetTier,
         titleFormat,
         migrated,
@@ -9705,11 +9793,12 @@ async function executeMemoryJob(job, context) {
     const range = job?.range || payload.range || null;
     const lorebookName = String(job?.lorebookName || payload.lorebookName || '').trim();
     const requestSettings = buildMemoryRequestSettings(payload.summaryCount);
-    const profile = buildEffectiveMemoryProfile(payload.profile || getActiveStmbProfile(stmbSettings, job?.profileIndex ?? null));
+    const profile = buildEffectiveMemoryProfile(payload.profile || getActiveStmbProfile(stmbSettings, job?.profileIndex ?? null), payload.groupPolicy || payload.compiledScene?.metadata?.groupPolicy || {});
     const jobContextSettingKey = Object.hasOwn(payload, 'contextSettingKey')
         ? payload.contextSettingKey
         : STMB_CONTEXT_NONE_KEY;
     const multiCharacterSnapshot = normalizeMultiCharacterSnapshot(payload);
+    payload.operationId ||= crypto.randomUUID();
 
     if (!Number.isInteger(Number(range?.sceneStart)) || !Number.isInteger(Number(range?.sceneEnd))) {
         throw new Error('Memory job is missing a valid scene range.');
@@ -9718,6 +9807,7 @@ async function executeMemoryJob(job, context) {
         throw new Error('Memory job is missing a lorebook.');
     }
     if (payload.resumePostSaveResult) {
+        if (payload.resumePostSaveResult.operationId) await finishStmbSavedProgress(job.sceneContext, payload.resumePostSaveResult.operationId);
         context.setResult(payload.resumePostSaveResult);
         context.setState('post_save', { detail: 'Resuming post-save actions' });
         await maybePromptAutoConsolidation(1, {
@@ -9775,6 +9865,23 @@ async function executeMemoryJob(job, context) {
                 ? [...(multiCharacterSnapshot.participantIds || [])]
                 : [],
         };
+    }
+
+    applyStmbGroupPolicy(profile, compiledScene, payload.groupPolicy || compiledScene?.metadata?.groupPolicy);
+    const operationTargets = [
+        { name: lorebookName, storage: getLorebookStorageForRequest(lorebookName) },
+        ...(multiCharacterSnapshot ? buildManualGroupCopyTargets(multiCharacterSnapshot, lorebookName).map(target => ({ name: target.lorebookName, storage: getLorebookStorageForRequest(target.lorebookName) })) : []),
+    ];
+    const operation = operationTargets.every(target => target.storage === 'user')
+        ? { id: payload.operationId, startUuid: compiledScene.metadata.sceneStartUuid, endUuid: compiledScene.metadata.sceneEndUuid, fingerprint: compiledScene.metadata.sourceFingerprint,
+            hideRanges: buildPostSaveHideRanges(range), clearScene: !payload.keepSceneMarkers && requestSettings.moduleSettings.autoClearSceneAfterMemory === true }
+        : undefined;
+    if (operation) {
+        const prepared = await prepareStmbOperation({ chatRef: job.sceneContext.chatRef, operation, targets: operationTargets });
+        if (['saved', 'applied'].includes(prepared.operation.state)) {
+            payload.resumePostSaveResult = { lorebookName, operationId: payload.operationId, memorySaved: true };
+            return executeMemoryJob(job, context);
+        }
     }
 
     if (payload.source === 'catchup') {
@@ -9884,8 +9991,10 @@ async function executeMemoryJob(job, context) {
             : new Map();
 
         context.setState('saving', { detail: lorebookName });
+        const onSaved = () => context.setResult({ lorebookName, ...(operation ? { operationId: payload.operationId } : {}), memorySaved: true });
         const saved = multiCharacterSnapshot
             ? await saveManualGroupMemoryObjects(memoryCandidate, characterMemories, multiCharacterSnapshot, {
+                operation, onSaved,
                 lorebookName,
                 range,
                 compiledScene,
@@ -9895,6 +10004,7 @@ async function executeMemoryJob(job, context) {
                 signal: context.signal,
             })
             : await saveMemoryObjectToLorebook(memoryCandidate, {
+                operation, onSaved,
                 lorebookName,
                 range,
                 compiledScene,
@@ -9906,6 +10016,7 @@ async function executeMemoryJob(job, context) {
             });
         context.setResult({
             lorebookName,
+            ...(operation ? { operationId: payload.operationId, memorySaved: true } : {}),
             memory: saved?.memory || memoryCandidate,
             entry: saved?.entry || null,
         });
@@ -9936,12 +10047,12 @@ function createMemoryJobId() {
 
 async function executeMemoryCreationFromRange(range, options = {}) {
     assertRangeWithinCurrentChat(range);
-
+    const groupPolicy = captureStmbGroupPolicy(getModuleSettings(), options.sceneContext || buildStmbSceneContext());
     const lorebookName = await ensureLorebookName();
     const sceneContext = options.sceneContext || buildStmbSceneContext();
     let sceneCapture;
     try {
-        sceneCapture = await captureStmbSceneRange(range, {
+        sceneCapture = options.sceneCapture || await captureStmbSceneRange(range, {
             skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
             sceneContext,
             collectNarratorCast: isCurrentNarratorModeActive(sceneContext),
@@ -9962,7 +10073,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
         return null;
     }
     const compiledScene = sceneCapture?.compiledScene;
-
+    compiledScene.metadata.groupPolicy = groupPolicy;
     if (!getModuleSettings().allowSceneOverlap) {
         const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
         if (!lorebookData.entries || typeof lorebookData.entries !== 'object') {
@@ -9988,11 +10099,12 @@ async function executeMemoryCreationFromRange(range, options = {}) {
         return null;
     }
     const queuedProfile = await snapshotStmbProfileConnection(effectiveSettings.profileSettings);
+    applyStmbGroupPolicy(queuedProfile, compiledScene, groupPolicy);
     let multiCharacterSnapshot = null;
     if (sceneContext.isGroupChat) {
         const groupParticipantSnapshot = await prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext);
         if (!groupParticipantSnapshot) return null;
-        if (getModuleSettings().manualModeEnabled) multiCharacterSnapshot = groupParticipantSnapshot;
+        if (getModuleSettings().manualModeEnabled && groupParticipantSnapshot.mode !== 'single') multiCharacterSnapshot = groupParticipantSnapshot;
     } else if (isCurrentNarratorModeActive(sceneContext)) {
         multiCharacterSnapshot = await prepareNarratorMemorySnapshot(compiledScene, sceneContext, {
             interactive: options.source !== 'catchup',
@@ -10048,6 +10160,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
             contextSettingKey,
             keepSceneMarkers: Boolean(options.keepSceneMarkers),
             source: options.source || 'memory',
+            groupPolicy,
             multiCharacterSnapshot,
             memoryAssistanceLorebookNames,
         },
@@ -10089,6 +10202,8 @@ async function initiateMemoryCreation(options = {}) {
     const sceneContext = options?.sceneContext || buildStmbSceneContext();
     const source = options?.source || 'memory';
     const requiresIdleQueue = Boolean(options?.requiresIdleQueue);
+    const pending = await getStmbOperations(sceneContext.chatRef);
+    if (pending.operations?.length) { await reviewStmbOperations(); return null; }
 
     assertRangeWithinCurrentChat(range);
 
@@ -10111,6 +10226,7 @@ async function initiateMemoryCreation(options = {}) {
     memoryPreparationInProgress = true;
     try {
         return await executeMemoryCreationFromRange(range, {
+            sceneCapture: options.sceneCapture,
             keepSceneMarkers,
             profileIndex,
             sceneContext,
@@ -10150,9 +10266,10 @@ function buildGroupConsolidationGapMarkers(targetEntries, primaryEntries, member
 }
 
 /** Builds canonical group and character-lorebook consolidation work items. */
-async function buildGroupConsolidationWorkItems(primaryItem, targetTier, requiredMinimum) {
+async function buildGroupConsolidationWorkItems(primaryItem, targetTier, requiredMinimum, policy) {
     const sceneContext = buildStmbSceneContext();
     const narratorMode = isCurrentNarratorModeActive(sceneContext);
+    if (!policy.characterAware) return [primaryItem];
     if (!getModuleSettings().manualModeEnabled || (!sceneContext.isGroupChat && !narratorMode)) return [primaryItem];
     const narratorConfig = narratorMode ? getCurrentNarratorConfig(sceneContext) : null;
     if (narratorMode) {
@@ -10169,7 +10286,7 @@ async function buildGroupConsolidationWorkItems(primaryItem, targetTier, require
     const itemsByLorebook = new Map();
     for (const member of snapshot.members) {
         const lorebookName = String(snapshot.bindings[member.key || member.id] || '').trim();
-        if (!lorebookName || lorebookName === primaryItem.lorebookName) continue;
+        if (!lorebookName || (narratorMode && lorebookName === primaryItem.lorebookName)) continue;
         if (!itemsByLorebook.has(lorebookName)) itemsByLorebook.set(lorebookName, { lorebookName, members: [] });
         itemsByLorebook.get(lorebookName).members.push(member);
     }
@@ -10180,7 +10297,7 @@ async function buildGroupConsolidationWorkItems(primaryItem, targetTier, require
     const skipped = [];
     for (const item of itemsByLorebook.values()) {
         const data = await loadWorldInfo(item.lorebookName) || { entries: {} };
-        const realEntries = identifyEligibleSummarySourceEntries(data.entries || {}, targetTier)
+        const realEntries = filterStmbMemoryRole(identifyEligibleSummarySourceEntries(data.entries || {}, targetTier), 'character', item.lorebookName === primaryItem.lorebookName, item.members.map(member => member.characterFilterName))
             .filter(entry => (selectedNumbers.size === 0 || selectedNumbers.has(getStmbCanonicalEntryNumber(entry)))
                 && (!narratorMode || item.members.some(member => (entry.STMB_narratorOwnerIds || []).includes(member.id))));
         const gapMarkers = buildGroupConsolidationGapMarkers(realEntries, primaryItem.sourceEntries, item.members);
@@ -10210,6 +10327,7 @@ async function buildGroupConsolidationWorkItems(primaryItem, targetTier, require
 }
 
 export async function createSummaryForTier(targetTier, options = {}) {
+    const groupPolicy = captureStmbGroupPolicy(getModuleSettings(), buildStmbSceneContext());
     const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1)));
     if (hasActiveStmbTasks()) {
         throw new Error('STMB generation is already in progress');
@@ -10230,11 +10348,12 @@ export async function createSummaryForTier(targetTier, options = {}) {
     const selectedEntryIds = Array.isArray(options.selectedEntryIds)
         ? options.selectedEntryIds.map(value => String(value))
         : null;
+    const sharedRoles = hasStmbSharedRoles(Object.values(lorebookData.entries));
     const sourceEntries = resolveSelectedSummarySourceEntries(
         lorebookData.entries,
         normalizedTargetTier,
         selectedEntryIds,
-    );
+    ).filter(entry => !sharedRoles || getStmbMemoryRole(entry) === 'group');
     const configuredMinimum = getModuleSettings().summaryTierMinimums?.[normalizedTargetTier];
     const requiredMinimum = normalizeSummaryMinChildren(
         options.requiredMin,
@@ -10265,7 +10384,7 @@ export async function createSummaryForTier(targetTier, options = {}) {
     };
     const workItems = options.includeLinkedGroupBooks === false
         ? [primaryWorkItem]
-        : await buildGroupConsolidationWorkItems(primaryWorkItem, normalizedTargetTier, requiredMinimum);
+        : await buildGroupConsolidationWorkItems(primaryWorkItem, normalizedTargetTier, requiredMinimum, groupPolicy);
     if (workItems.length === 0) return { queued: false, canceled: true };
 
     ensureStmbJobExecutorsRegistered();
@@ -10289,6 +10408,7 @@ export async function createSummaryForTier(targetTier, options = {}) {
             detail: `${workItem.lorebookName}: ${getSummaryTierLabel(getSourceTierForTarget(normalizedTargetTier))} -> ${getSummaryTierLabel(normalizedTargetTier)}`,
             payload: {
                 lorebookName: workItem.lorebookName,
+                groupPolicy,
                 normalizedTargetTier,
                 selectedEntryIds: workItem.selectedEntryIds,
                 gapMarkers: structuredClone(workItem.gapMarkers || []),
@@ -10401,7 +10521,8 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
         );
     }
 
-    const existingSummaries = identifyManagedSummaryEntries(lorebookData.entries, normalizedTargetTier);
+    const existingSummaries = filterStmbMemoryRole(identifyManagedSummaryEntries(lorebookData.entries, normalizedTargetTier),
+        getStmbMemoryRole(realSourceEntries[0]), hasStmbSharedRoles(Object.values(lorebookData.entries)), realSourceEntries[0]?.characterFilter?.names || []);
     const previousSummary = existingSummaries.at(-1) || null;
     const profile = payload.profile || getActiveStmbProfile(stmbSettings, payload.profileIndex ?? null);
     const chosenSummaryEntrySettings = normalizeLorebookEntrySettings(
@@ -10472,6 +10593,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
                         titleFormat,
                         migrated,
                         disableOriginals: Boolean(payload.disableOriginals),
+                        groupPolicy: payload.groupPolicy,
                         summaryEntrySettings: chosenSummaryEntrySettings,
                         sourceFingerprints,
                         sourceIds: collectSummaryMemberIds(candidates),
@@ -10502,6 +10624,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
             titleFormat,
             migrated,
             disableOriginals: Boolean(payload.disableOriginals),
+            groupPolicy: payload.groupPolicy,
             summaryEntrySettings: chosenSummaryEntrySettings,
             sourceFingerprints,
             showSuccessToast: false,
@@ -10903,7 +11026,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
                 if (sceneContext.isGroupChat) {
                     const groupParticipantSnapshot = await prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext);
                     if (!groupParticipantSnapshot) return '';
-                    if (getModuleSettings().manualModeEnabled) multiCharacterSnapshot = groupParticipantSnapshot;
+                    if (getModuleSettings().manualModeEnabled && groupParticipantSnapshot.mode !== 'single') multiCharacterSnapshot = groupParticipantSnapshot;
                 } else {
                     multiCharacterSnapshot = await prepareNarratorMemorySnapshot(compiledScene, sceneContext, { interactive: false });
                 }
@@ -10927,6 +11050,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
                     source: 'catchup',
                     skipSystemMessages,
                     tokenWarningThreshold: tokenThreshold,
+                    groupPolicy: captureStmbGroupPolicy(getModuleSettings(), sceneContext),
                     compiledScene,
                     multiCharacterSnapshot,
                 },
@@ -11336,16 +11460,16 @@ async function findLinkedManualGroupEntries(lorebookName, entry) {
         ...getCurrentNarratorConfig().members.map(member => String(member.lorebookName || '').trim()),
     ]);
     candidates.delete('');
-    candidates.delete(lorebookName);
+    candidates.add(lorebookName);
     const linked = [];
     for (const candidateName of candidates) {
         if (getLorebookStorageForRequest(candidateName) !== 'user') continue;
         try {
             const candidateData = await loadWorldInfo(candidateName);
-            const match = Object.entries(candidateData?.entries || {})
-                .find(([, candidate]) => isLinkedManualGroupEntry(entry, candidate, lorebookName));
-            if (match) {
-                const [entryKey, candidateEntry] = match;
+            const matches = Object.entries(candidateData?.entries || {})
+                .filter(([key, candidate]) => !(candidateName === lorebookName && String(candidate.uid ?? key) === String(entry.uid))
+                    && isLinkedManualGroupEntry(entry, candidate, lorebookName));
+            for (const [entryKey, candidateEntry] of matches) {
                 linked.push({
                     lorebookName: candidateName,
                     entryUid: String(candidateEntry?.uid ?? entryKey),
@@ -11401,6 +11525,8 @@ async function buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eli
         skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
         sceneContext,
         collectNarratorCast: Boolean(entry?.STMB_narratorOwnerIds || entry?.STMB_narratorParticipantIds),
+        sceneStartUuid: entry.STMB_startUuid,
+        sceneEndUuid: entry.STMB_endUuid,
     });
     const compiledScene = sceneCapture?.compiledScene;
     if (!compiledScene || !Array.isArray(compiledScene.messages) || compiledScene.messages.length === 0) {
@@ -11434,6 +11560,7 @@ async function buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eli
     const effectiveSettings = options.effectiveSettings
         || await showAndGetMemorySettings(compiledScene, range, lorebookName);
     if (!effectiveSettings) return null;
+    applyStmbGroupPolicy(effectiveSettings.profileSettings, compiledScene, options.groupPolicy);
     task.setState?.('generating', { detail: effectiveSettings.profileSettings?.name || lorebookName });
     const previous = selectPreviousRegenerationMemories(lorebookData, entry.uid, effectiveSettings.summaryCount);
     const previousWorldInfo = {
@@ -11594,10 +11721,11 @@ async function executeRegenerationJob(job, context) {
         throw new Error('Memory regeneration supports only ordinary user lorebooks.');
     }
 
+    const groupPolicy = job.payload.groupPolicy || captureStmbGroupPolicy(getModuleSettings(), job.sceneContext);
     try {
         const requestedTargets = [
             { lorebookName: primaryLorebookName, entryUid: primaryEntryUid },
-            ...(Array.isArray(job?.payload?.linkedTargets) ? job.payload.linkedTargets : []),
+            ...(groupPolicy.characterAware !== false && Array.isArray(job?.payload?.linkedTargets) ? job.payload.linkedTargets : []),
         ];
         const targets = [];
         let primaryEntry = null;
@@ -11640,7 +11768,7 @@ async function executeRegenerationJob(job, context) {
                     target.entry,
                     target.eligibility,
                     context,
-                    { effectiveSettings },
+                    { effectiveSettings, groupPolicy },
                 )
                 : target.eligibility.kind === 'sidePrompt'
                     ? await buildSidePromptRegenerationDraft(
@@ -11685,6 +11813,7 @@ async function executeRegenerationJob(job, context) {
             throwIfStmbAborted(context.signal);
             context.setState('saving', { detail: target.lorebookName });
             await regenerateStmbEntry({
+                groupPolicy,
                 lorebookName: target.lorebookName,
                 storage: 'user',
                 uid: target.entryUid,
@@ -11758,12 +11887,14 @@ async function handleLorebookEntryRegeneration(button) {
             if (scope === 'cancel') return;
             if (scope === 'all') linkedTargets = linkedEntries;
         }
-        enqueueStmbJob(buildRegenerationJobInput({
+        const input = buildRegenerationJobInput({
             lorebookName,
             entryUid,
             sceneContext,
             linkedTargets,
-        }));
+        });
+        input.payload.groupPolicy = captureStmbGroupPolicy(getModuleSettings(), sceneContext);
+        enqueueStmbJob(input);
     } catch (error) {
         toastr.error(error?.message || translate('Memory regeneration failed.'), 'STMB');
     } finally {
@@ -11836,6 +11967,8 @@ export function initStmb() {
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
         narratorGenerationSnapshot = null;
+        void reviewStmbOperations({ auto: true });
+        void syncStmbRollbackPolicy().catch(() => toastr.error(translate('Memory Books rollback settings could not be saved.'), 'STMB'));
         narratorGenerationType = null;
         narratorGenerationChatKey = null;
         refreshNarratorCastDrawer();
@@ -11926,6 +12059,7 @@ export function initStmb() {
 
     eventSource.on(event_types.MESSAGE_DELETED, (deletedId) => {
         handleMessageDeletion(deletedId);
+        void reviewStmbOperations({ auto: true });
         if (Number(deletedId) >= chat.length) restoreNarratorCastFromTimeline();
         else refreshNarratorCastDrawer();
     });

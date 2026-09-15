@@ -11117,6 +11117,8 @@ body.active-session-read-only [data-active-session-disabled="true"] {
 
 .stmb-help-drawer-copy {
     min-width: 0;
+    flex: 1 1 24ch;
+    overflow-wrap: anywhere;
 }
 
 p.stmb-help-drawer-copy {
@@ -11124,7 +11126,9 @@ p.stmb-help-drawer-copy {
 }
 
 .stmb-help-drawer-link {
-    flex: 0 0 auto;
+    flex: 0 1 auto;
+    max-width: 100%;
+    white-space: normal;
 }
 
 .stmb-help-languages {

@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 
 const SQLITE_BUSY_TIMEOUT_MS = 10_000;
-const SQLITE_STORAGE_VERSION = '20260711.1';
+const SQLITE_STORAGE_VERSION = '20260915.1';
 const MAX_OPERATION_RECEIPTS = 4096;
 
 function getPersistedMessageUuid(message) {
@@ -104,6 +104,12 @@ class NativeDatabaseAdapter {
             response_json TEXT NOT NULL,
             created_at INTEGER NOT NULL
         );
+        CREATE TABLE stmb_operations (
+            operation_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            state TEXT NOT NULL,
+            data_json TEXT NOT NULL
+        );
         INSERT INTO metadata (key, value) VALUES ('storage_version', '${SQLITE_STORAGE_VERSION}');
             `);
         } else {
@@ -125,7 +131,8 @@ class NativeDatabaseAdapter {
         const hasOperationReceiptsTable = Boolean(this.database.prepare(`
             SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'operation_receipts'
         `).pluck().get());
-        if (initialVersion === SQLITE_STORAGE_VERSION && hasMessageUuidColumn && hasMessageUuidIndex && hasOperationReceiptsTable) {
+        const hasStmbOperationsTable = Boolean(this.database.prepare('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = \'stmb_operations\'').pluck().get());
+        if (initialVersion === SQLITE_STORAGE_VERSION && hasMessageUuidColumn && hasMessageUuidIndex && hasOperationReceiptsTable && hasStmbOperationsTable) {
             return;
         }
 
@@ -138,6 +145,12 @@ class NativeDatabaseAdapter {
             }
 
             this.database.exec('CREATE INDEX IF NOT EXISTS idx_messages_message_uuid ON messages(message_uuid)');
+            this.database.exec(`CREATE TABLE IF NOT EXISTS stmb_operations (
+                operation_id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                state TEXT NOT NULL,
+                data_json TEXT NOT NULL
+            )`);
             this.database.exec(`
                 CREATE TABLE IF NOT EXISTS operation_receipts (
                     operation_id TEXT PRIMARY KEY,
