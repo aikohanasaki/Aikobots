@@ -1066,7 +1066,7 @@ export function resolveAfterMemorySidePromptSetKey(chatState = {}, moduleSetting
         return String(state.sidePromptAfterMemorySetKey || '').trim();
     }
 
-    const defaultKey = isGroupChat
+    const defaultKey = isGroupChat && moduleSettings?.useSeparateGroupSidePrompts !== false
         ? moduleSettings?.defaultGroupSidePromptSetKey
         : moduleSettings?.defaultSoloSidePromptSetKey;
     return String(defaultKey || '').trim();

@@ -2063,6 +2063,14 @@ function buildTopicalClipPopupHtml(defaultLorebookName) {
                 </div>
             </div>
             ${profileControl}
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input id="stmb-topical-clip-entry-settings-enabled" type="checkbox"> <span>${escapeHtml(tr('Override insertion position and order'))}</span></label>
+                <div id="stmb-topical-clip-entry-settings" hidden>
+                    <select id="stmb-topical-clip-entry-position" class="text_pole"><option value="0">${escapeHtml(tr('↑Char'))}</option><option value="1">${escapeHtml(tr('↓Char'))}</option><option value="5">${escapeHtml(tr('↑EM'))}</option><option value="6">${escapeHtml(tr('↓EM'))}</option><option value="2">${escapeHtml(tr('↑AN'))}</option><option value="3">${escapeHtml(tr('↓AN'))}</option><option value="7">${escapeHtml(tr('Outlet'))}</option></select>
+                    <select id="stmb-topical-clip-entry-order-mode" class="text_pole"><option value="auto">${escapeHtml(tr('Automatic'))}</option><option value="reverse">${escapeHtml(tr('Reverse'))}</option><option value="manual">${escapeHtml(tr('Manual'))}</option></select>
+                    <input id="stmb-topical-clip-entry-order-value" type="number" class="text_pole" min="0" max="9999" value="100">
+                </div>
+            </div>
             <div class="buttons_block justifyCenter gap10px whitespacenowrap">
                 <button id="stmb-topical-clip-select-memories" type="button" class="menu_button">${escapeHtml(tr('Select Memories'))}</button>
                 <button id="stmb-topical-clip-edit-prompt" type="button" class="menu_button">${escapeHtml(tr('Edit Topical Clip Prompt'))}</button>
@@ -2141,6 +2149,12 @@ export async function showTopicalClipPopup(options = {}) {
     const saveButton = dlg?.querySelector('#stmb-topical-clip-save');
     const generateButton = dlg?.querySelector('#stmb-topical-clip-generate');
     const generateAutoAcceptButton = dlg?.querySelector('#stmb-topical-clip-generate-auto-accept');
+    const entrySettingsEnabled = dlg?.querySelector('#stmb-topical-clip-entry-settings-enabled');
+    const entrySettingsPanel = dlg?.querySelector('#stmb-topical-clip-entry-settings');
+    const entryPosition = dlg?.querySelector('#stmb-topical-clip-entry-position');
+    const entryOrderMode = dlg?.querySelector('#stmb-topical-clip-entry-order-mode');
+    const entryOrderValue = dlg?.querySelector('#stmb-topical-clip-entry-order-value');
+    entrySettingsEnabled?.addEventListener('change', () => { entrySettingsPanel.hidden = !entrySettingsEnabled.checked; });
 
     if (topicInput && options.topic) topicInput.value = String(options.topic);
     if (keywordsInput && Array.isArray(options.keywords)) keywordsInput.value = options.keywords.join(', ');
@@ -2493,6 +2507,10 @@ export async function showTopicalClipPopup(options = {}) {
                 profileOverrides: buildLorebookEntryProfileOverrides(profile, {
                     orderNumber: 1,
                     orderNumberLabel: 'Topical Clip',
+                    ...(entrySettingsEnabled?.checked ? {
+                        position: Number(entryPosition?.value || 0),
+                        order: entryOrderMode?.value === 'manual' ? Number(entryOrderValue?.value || 100) : entryOrderMode?.value === 'reverse' ? 9999 : 100,
+                    } : {}),
                 }),
             };
             if (draftTextarea) draftTextarea.value = normalizedDraft;

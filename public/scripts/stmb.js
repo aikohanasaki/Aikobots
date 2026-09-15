@@ -2332,10 +2332,24 @@ async function showNarratorCastManager() {
     const canonical = getNarratorCanonicalLorebookName();
     const books = getNarratorOrdinaryLorebookNames().filter(name => name !== canonical);
     const options = books.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
-    const rows = config.members.map(member => `<div class="stmb-narrator-manager-row"><span>${escapeHtml(member.name)}</span><select class="text_pole" data-narrator-book-for="${escapeHtml(member.id)}"><option value="">${escapeHtml(translate('Select Memory Book'))}</option>${books.map(name => `<option value="${escapeHtml(name)}" ${name === member.lorebookName ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="menu_button" data-retire-narrator-member="${escapeHtml(member.id)}">${escapeHtml(translate(member.retired ? 'Restore' : 'Retire'))}</button></div>`).join('');
+    const rows = config.members.map(member => `<div class="stmb-narrator-manager-row"><input class="text_pole" data-narrator-name-for="${escapeHtml(member.id)}" value="${escapeHtml(member.name)}" aria-label="${escapeHtml(translate('Character name'))}"><select class="text_pole" data-narrator-book-for="${escapeHtml(member.id)}"><option value="">${escapeHtml(translate('Select Memory Book'))}</option>${books.map(name => `<option value="${escapeHtml(name)}" ${name === member.lorebookName ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select><button type="button" class="menu_button" data-retire-narrator-member="${escapeHtml(member.id)}">${escapeHtml(translate(member.retired ? 'Restore' : 'Retire'))}</button></div>`).join('');
     const content = DOMPurify.sanitize(`<h3>${escapeHtml(translate('Narrator Cast'))}</h3><p class="opacity50p">${escapeHtml(translate('Each declared character must use a unique Memory Book separate from the omniscient book.'))}</p><div class="stmb-narrator-manager-add"><input id="stmb-narrator-character-name" class="text_pole" type="text" placeholder="${escapeHtml(translate('Character name'))}"><select id="stmb-narrator-book" class="text_pole"><option value="">${escapeHtml(translate('Select Memory Book'))}</option>${options}</select><button type="button" id="stmb-narrator-add" class="menu_button">${escapeHtml(translate('Add'))}</button></div><div class="stmb-narrator-manager-list">${rows || `<small class="opacity50p">${escapeHtml(translate('No cast members declared.'))}</small>`}</div>`);
     const popup = new Popup(content, POPUP_TYPE.TEXT, '', { wide: true, cancelButton: translate('Close'), okButton: false });
     popup.dlg.addEventListener('change', event => {
+        const nameInput = event.target.closest('[data-narrator-name-for]');
+        if (nameInput) {
+            const member = config.members.find(item => item.id === nameInput.dataset.narratorNameFor);
+            const name = String(nameInput.value || '').trim();
+            if (!member || !name || config.members.some(item => item.id !== member.id && item.name.localeCompare(name, undefined, { sensitivity: 'base' }) === 0)) {
+                nameInput.value = member?.name || '';
+                toastr.error(translate('That character name is invalid or already declared.'), 'STMB');
+                return;
+            }
+            member.name = name;
+            saveMetadataDebounced();
+            refreshNarratorCastDrawer();
+            return;
+        }
         const select = event.target.closest('[data-narrator-book-for]');
         if (!select) return;
         const member = config.members.find(item => item.id === select.dataset.narratorBookFor);
@@ -4140,7 +4154,8 @@ function buildAfterMemorySetModeHtml(sets = []) {
     const hasOverride = hasChatAfterMemorySetOverride();
     const selectedKey = getChatAfterMemorySetKey();
     const hasSelected = selectedKey && sets.some(set => set.key === selectedKey);
-    const defaultKey = String((selected_group
+    const useGroupDefault = selected_group && getModuleSettings().useSeparateGroupSidePrompts !== false;
+    const defaultKey = String((useGroupDefault
         ? getModuleSettings().defaultGroupSidePromptSetKey
         : getModuleSettings().defaultSoloSidePromptSetKey) || '').trim();
     const defaultSet = sets.find(set => set.key === defaultKey);
@@ -4148,7 +4163,7 @@ function buildAfterMemorySetModeHtml(sets = []) {
         ? (defaultSet?.name || t`Missing set: ${defaultKey}`)
         : translate('individually-enabled side prompts');
     const options = [
-        `<option value="inherit" ${!hasOverride ? 'selected' : ''}>${t`Use ${translate(selected_group ? 'group' : 'solo')} default (${escapeHtml(defaultLabel)})`}</option>`,
+        `<option value="inherit" ${!hasOverride ? 'selected' : ''}>${t`Use ${translate(useGroupDefault ? 'group' : 'solo')} default (${escapeHtml(defaultLabel)})`}</option>`,
         `<option value="individual" ${hasOverride && !selectedKey ? 'selected' : ''} data-i18n="Use individually-enabled side prompts">Use individually-enabled side prompts</option>`,
         ...(hasSelected || !selectedKey ? [] : [`<option value="set:${escapeHtml(selectedKey)}" selected>${t`Missing set: ${escapeHtml(selectedKey)}`}</option>`]),
         ...sets.map(set => `<option value="set:${escapeHtml(set.key)}" ${hasOverride && selectedKey === set.key ? 'selected' : ''}>${escapeHtml(set.name)}</option>`),
@@ -7332,7 +7347,6 @@ function validateManualGroupBindingSnapshot(snapshot) {
     for (const member of members) {
         const lorebookName = String(bindings[member.key] || '').trim();
         if (!lorebookName) issues.push(`${member.name}: no lorebook selected`);
-        else if (canonicalLorebookName && lorebookName === canonicalLorebookName) issues.push(`${member.name}: character lorebook cannot be the group Memory Book`);
         else if (!world_names.includes(lorebookName) || isReservedTemplateWorldName(lorebookName)) {
             issues.push(snapshot?.locksByMemberKey?.[member.key]
                 ? formatCharacterLockText('{{characterName}}: locked Memory Book "{{lorebookName}}" not found; unlock and repair this assignment', { characterName: member.name, lorebookName })
@@ -7392,6 +7406,15 @@ async function prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext
     const snapshot = getModuleSettings().manualModeEnabled
         ? validateManualGroupBindingSnapshot(rawSnapshot)
         : rawSnapshot;
+    if (getModuleSettings().characterAwareMemories === false) {
+        compiledScene.metadata = {
+            ...(compiledScene.metadata || {}),
+            groupName: sceneContext.groupName || compiledScene?.metadata?.groupName || '',
+            stmbPromptTarget: 'group',
+            characterFilterNames: [],
+        };
+        return { mode: 'group', ...snapshot, characterFilterNames: [] };
+    }
     const characterFilterNames = await confirmGroupMemoryParticipants(compiledScene, snapshot);
     if (!characterFilterNames) return null;
     compiledScene.metadata = {
