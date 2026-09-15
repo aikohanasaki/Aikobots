@@ -2732,6 +2732,21 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
                 <label class="checkbox_label" title="Automatically run /nextmemory after a specified number of messages. Warning: enabling Auto-Summary may create one large memory from the existing backlog. Use /stmb-set-highest &lt;N|none&gt; to control the baseline." data-i18n="[title]STMemoryBooks_AutoSummaryTooltip"><input type="checkbox" id="stmb-settings-auto-summary-enabled" ${moduleSettings.autoSummaryEnabled ? 'checked' : ''}> <span title="Automatically run /nextmemory after a specified number of messages. Warning: enabling Auto-Summary may create one large memory from the existing backlog. Use /stmb-set-highest &lt;N|none&gt; to control the baseline." data-i18n="[title]STMemoryBooks_AutoSummaryTooltip;Auto-create memory summaries">Auto-create memory summaries</span></label>
             </div>
             <div class="world_entry_form_control">
+                <label for="stmb-settings-auto-summary-trigger-mode" data-i18n="Auto-Summary Trigger">Auto-Summary Trigger</label>
+                <select id="stmb-settings-auto-summary-trigger-mode" class="text_pole">
+                    <option value="messages" ${moduleSettings.autoSummaryTriggerMode !== 'tokens' ? 'selected' : ''} data-i18n="Messages">Messages</option>
+                    <option value="tokens" ${moduleSettings.autoSummaryTriggerMode === 'tokens' ? 'selected' : ''} data-i18n="Tokens">Tokens</option>
+                </select>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-auto-summary-token-threshold" data-i18n="Auto-Summary Token Threshold">Auto-Summary Token Threshold</label>
+                <input type="number" id="stmb-settings-auto-summary-token-threshold" class="text_pole" min="1" max="1000000" step="1" value="${escapeHtml(String(moduleSettings.autoSummaryTokenThreshold ?? 4000))}">
+            </div>
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-character-aware-memories" ${moduleSettings.characterAwareMemories !== false ? 'checked' : ''}> <span data-i18n="Character-aware group memories">Character-aware group memories</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-separate-group-side-prompts" ${moduleSettings.useSeparateGroupSidePrompts !== false ? 'checked' : ''}> <span data-i18n="Use separate group Side Prompt defaults">Use separate group Side Prompt defaults</span></label>
+            </div>
+            <div class="world_entry_form_control">
                 <label for="stmb-settings-auto-summary-interval" title="Number of messages after which to automatically create a memory summary." data-i18n="[title]Number of messages after which to automatically create a memory summary.;Auto-Summary Interval">Auto-Summary Interval</label>
                 <input type="number" id="stmb-settings-auto-summary-interval" class="text_pole" min="5" max="200" step="1" value="${escapeHtml(String(moduleSettings.autoSummaryInterval ?? 50))}" title="Number of messages after which to automatically create a memory summary." data-i18n="[title]Number of messages after which to automatically create a memory summary.">
             </div>
@@ -5014,7 +5029,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
     let selectedTemplateKey = null;
     const parsedMaxConcurrent = Number(stmbSettings?.moduleSettings?.sidePromptsMaxConcurrent ?? 1);
     const maxConcurrent = Number.isFinite(parsedMaxConcurrent)
-        ? Math.max(1, Math.min(5, Math.trunc(parsedMaxConcurrent)))
+        ? Math.max(1, Math.min(10, Math.trunc(parsedMaxConcurrent)))
         : 1;
     const popup = new Popup(DOMPurify.sanitize(`
         <div class="stmb-sideprompt-manager-popup">
@@ -5028,8 +5043,8 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-sp-max-concurrent"><h4 data-i18n="How many concurrent prompts to run at once">How many concurrent prompts to run at once</h4></label>
-                <input type="number" id="stmb-sp-max-concurrent" class="text_pole" min="1" max="5" step="1" value="${escapeHtml(String(maxConcurrent))}">
-                <small class="opacity70p" data-i18n="Range 1-5. Defaults to 1. Runtime generation is capped at 2.">Range 1-5. Defaults to 1. Runtime generation is capped at 2.</small>
+                <input type="number" id="stmb-sp-max-concurrent" class="text_pole" min="1" max="10" step="1" value="${escapeHtml(String(maxConcurrent))}">
+                <small class="opacity70p" data-i18n="Range 1-10. Defaults to 1.">Range 1-10. Defaults to 1.</small>
             </div>
             <div id="stmb-sp-list" class="padding10 marginBot10" style="max-height: 400px; overflow-y: auto;"></div>
             <div class="buttons_block justifyCenter gap10px whitespacenowrap">
@@ -5061,7 +5076,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
 
     popup.dlg?.querySelector('#stmb-sp-max-concurrent')?.addEventListener('change', async event => {
         const target = event.target;
-        const value = Math.max(1, Math.min(5, Number(target?.value || 1)));
+        const value = Math.max(1, Math.min(10, Number(target?.value || 1)));
         if (target) {
             target.value = String(value);
         }
@@ -6454,6 +6469,28 @@ async function showMainEntryPopup(view = 'main', options = {}) {
             void refreshStmbMacroCache();
             refreshNarratorCastDrawer();
             updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+            return;
+        }
+        if (target.matches('#stmb-settings-auto-summary-trigger-mode')) {
+            moduleSettings.autoSummaryTriggerMode = target.value === 'tokens' ? 'tokens' : 'messages';
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-auto-summary-token-threshold')) {
+            const value = Number.parseInt(target.value, 10);
+            if (!Number.isFinite(value) || value < 1 || value > 1000000) return;
+            moduleSettings.autoSummaryTokenThreshold = value;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-character-aware-memories')) {
+            moduleSettings.characterAwareMemories = target.checked;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-separate-group-side-prompts')) {
+            moduleSettings.useSeparateGroupSidePrompts = target.checked;
+            persistSettings();
             return;
         }
         if (target.closest('#stmb-settings-manage-narrator-cast')) {
@@ -8019,7 +8056,17 @@ async function checkAutoSummaryTrigger(options = {}) {
     }
 
     const messagesSinceLastMemory = currentLastMessage - highestProcessed;
-    if (messagesSinceLastMemory < requiredTotal) {
+    const eligibleStart = highestProcessed + 1;
+    const eligibleEnd = Math.max(-1, currentLastMessage - buffer);
+    let triggerCount = messagesSinceLastMemory;
+    let requiredTrigger = requiredTotal;
+    if (settings.autoSummaryTriggerMode === 'tokens' && eligibleStart <= eligibleEnd) {
+        const source = chat.slice(eligibleStart, eligibleEnd + 1)
+            .map(message => String(message?.mes || '')).join('\n');
+        triggerCount = Math.ceil(source.length / 4);
+        requiredTrigger = Math.max(1, Math.trunc(Number(settings.autoSummaryTokenThreshold) || 4000));
+    }
+    if (triggerCount < requiredTrigger) {
         return;
     }
 

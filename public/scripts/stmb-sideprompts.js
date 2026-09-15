@@ -285,7 +285,7 @@ function resolveSidePromptMaxConcurrent(settings) {
     if (!Number.isFinite(parsed)) {
         return 1;
     }
-    return Math.max(1, Math.min(5, Math.trunc(parsed)));
+    return Math.max(1, Math.min(10, Math.trunc(parsed)));
 }
 
 

@@ -12,6 +12,21 @@ test('auto-summary intervals accept five messages but reject lower persisted val
     assert.equal(normalizeStmbSettings({ moduleSettings: { autoSummaryInterval: 4 } }).moduleSettings.autoSummaryInterval, 50);
 });
 
+test('new upstream settings normalize with safe defaults and bounds', () => {
+    const settings = normalizeStmbSettings({ moduleSettings: {
+        autoSummaryTriggerMode: 'tokens',
+        autoSummaryTokenThreshold: 5000,
+        characterAwareMemories: false,
+        useSeparateGroupSidePrompts: false,
+        sidePromptsMaxConcurrent: 99,
+    } });
+    assert.equal(settings.moduleSettings.autoSummaryTriggerMode, 'tokens');
+    assert.equal(settings.moduleSettings.autoSummaryTokenThreshold, 5000);
+    assert.equal(settings.moduleSettings.characterAwareMemories, false);
+    assert.equal(settings.moduleSettings.useSeparateGroupSidePrompts, false);
+    assert.equal(settings.moduleSettings.sidePromptsMaxConcurrent, 10);
+});
+
 test('failed group participant detection always requires confirmation', () => {
     assert.deepEqual(getStmbGroupParticipantConfirmationPolicy([], ['Alice', 'Bob'], true), {
         detectionFailed: true,

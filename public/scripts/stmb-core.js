@@ -606,8 +606,12 @@ export function createDefaultStmbSettings() {
             unhiddenEntriesCount: 2,
             showConsolidationPreviews: false,
             autoSummaryEnabled: false,
+            autoSummaryTriggerMode: 'messages',
+            autoSummaryTokenThreshold: 4000,
             autoSummaryInterval: 50,
             autoSummaryBuffer: 2,
+            characterAwareMemories: true,
+            useSeparateGroupSidePrompts: true,
             convertExistingRecursion: false,
             autoConsolidationPromptEnabled: false,
             autoConsolidationTargetTiers: [1],
@@ -943,9 +947,14 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         ? defaults.moduleSettings.autoSummaryInterval
         : Math.trunc(Number(moduleSettings.autoSummaryInterval));
     moduleSettings.autoSummaryBuffer = Number.isFinite(Number(moduleSettings.autoSummaryBuffer)) ? Math.max(0, Math.trunc(Number(moduleSettings.autoSummaryBuffer))) : defaults.moduleSettings.autoSummaryBuffer;
+    moduleSettings.autoSummaryTriggerMode = moduleSettings.autoSummaryTriggerMode === 'tokens' ? 'tokens' : 'messages';
+    const tokenThreshold = Number(moduleSettings.autoSummaryTokenThreshold);
+    moduleSettings.autoSummaryTokenThreshold = Number.isFinite(tokenThreshold) ? Math.max(1, Math.min(1000000, Math.trunc(tokenThreshold))) : defaults.moduleSettings.autoSummaryTokenThreshold;
+    moduleSettings.characterAwareMemories = moduleSettings.characterAwareMemories !== false;
+    moduleSettings.useSeparateGroupSidePrompts = moduleSettings.useSeparateGroupSidePrompts !== false;
     moduleSettings.convertExistingRecursion = Boolean(moduleSettings.convertExistingRecursion);
     moduleSettings.sidePromptsMaxConcurrent = Number.isFinite(Number(moduleSettings.sidePromptsMaxConcurrent))
-        ? Math.max(1, Math.min(5, Math.trunc(Number(moduleSettings.sidePromptsMaxConcurrent))))
+        ? Math.max(1, Math.min(10, Math.trunc(Number(moduleSettings.sidePromptsMaxConcurrent))))
         : defaults.moduleSettings.sidePromptsMaxConcurrent;
     moduleSettings.memoryAssistanceMode = normalizeMemoryAssistanceMode(
         Object.hasOwn(inputModuleSettings, 'memoryAssistanceMode') ? moduleSettings.memoryAssistanceMode : '',

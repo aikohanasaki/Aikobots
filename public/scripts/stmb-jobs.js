@@ -97,7 +97,7 @@ function clampInt(value, min, max, fallback = min) {
 }
 
 function getSidePromptJobLimit(job = {}) {
-    return clampInt(job?.payload?.settings?.moduleSettings?.sidePromptsMaxConcurrent ?? 1, 1, 5, 1);
+    return clampInt(job?.payload?.settings?.moduleSettings?.sidePromptsMaxConcurrent ?? 1, 1, 10, 1);
 }
 
 function canStartQueuedJob(store, job) {
