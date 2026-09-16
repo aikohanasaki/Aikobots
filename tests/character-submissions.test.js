@@ -342,6 +342,33 @@ describe('character submission distribution defaults', () => {
         });
     });
 
+    it('prefills a saved whitelist without an approved submission record', async () => {
+        const { getExistingApprovedDistributionViewForSource } = await importCharacterSubmissionsModule('defaultsSavedWhitelist');
+        const sourcePath = path.join(dataRoot, 'maker', 'characters', 'Bot.png');
+        writeCard(sourcePath, buildCard({ ownerHandle: 'maker' }));
+        await setCharacterDistributionPolicy({
+            ownerHandle: 'maker',
+            characterKey: 'shared-bot',
+            publishedFilename: 'Bot',
+            whitelistHandles: ['alpha', 'beta'],
+            userBlacklistHandles: ['self-opt-out'],
+            updatedBy: 'admin',
+        });
+
+        await expect(getExistingApprovedDistributionViewForSource({
+            sourcePath,
+            ownerHandle: 'maker',
+            originalFilename: 'Bot.png',
+        })).resolves.toMatchObject({
+            requestedDistributionMode: 'whitelist',
+            requestedTargetHandles: ['alpha', 'beta'],
+            whitelistHandles: ['alpha', 'beta'],
+            hasWhitelist: true,
+            userBlacklistHandles: [],
+            publishMode: null,
+        });
+    });
+
     it('never treats private Recommended Chat Setup staging as a submission record', async () => {
         const {
             getSubmissionPaths,

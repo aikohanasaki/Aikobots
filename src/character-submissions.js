@@ -919,6 +919,21 @@ export async function getExistingApprovedDistributionViewForSource({
         return existingApprovedDistribution;
     }
 
+    // A saved whitelist can outlive its submission record; use it as editable defaults only.
+    const distributionPolicy = await getCharacterDistributionPolicy({
+        ownerHandle: existingOwnerHandle || ownerHandle,
+        characterKey: existingSharedCharacterKey,
+        publishedFilename: fallbackName,
+    });
+    if (distributionPolicy.hasWhitelist) {
+        return {
+            ...createEmptyDistributionView({ requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.WHITELIST }),
+            requestedTargetHandles: distributionPolicy.whitelistHandles,
+            whitelistHandles: distributionPolicy.whitelistHandles,
+            hasWhitelist: true,
+        };
+    }
+
     return createEmptyDistributionView();
 }
 
