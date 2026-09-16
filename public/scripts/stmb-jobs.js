@@ -608,7 +608,21 @@ async function executeRunningJob(chatKey, store, nextJob, executor) {
                 const canReviewRawResponse = nextJob.type === 'memory'
                     && error?.code === 'EMPTY_OR_INVALID'
                     && Boolean(String(error?.rawResponse || '').trim());
-                if (canReviewRawResponse) {
+                if (error?.type === 'StmbOperationConflict') {
+                    const toast = globalThis.toastr?.error?.(
+                        translate('Memory Books has unresolved work or changed source messages.'), 'STMB',
+                        { timeOut: 0, extendedTimeOut: 0, closeButton: true, tapToDismiss: false },
+                    );
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'menu_button';
+                    button.textContent = translate('Pending Memory Books operations');
+                    button.addEventListener('click', async () => {
+                        const { reviewStmbOperations } = await import('./stmb.js');
+                        await reviewStmbOperations();
+                    });
+                    toast?.find('.toast-message').append(button);
+                } else if (canReviewRawResponse) {
                     const rawResponseLabel = translate('Raw response from AI');
                     const toast = globalThis.toastr?.error?.(
                         `${escapeHtml(failureMessage)}<br><a href="#" class="stmb-raw-response-link">${escapeHtml(rawResponseLabel)}</a>`,

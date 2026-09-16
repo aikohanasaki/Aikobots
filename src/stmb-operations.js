@@ -3,8 +3,8 @@ import { fingerprintStmbSource } from '../public/scripts/stmb-source.js';
 import { getChatHeader, getLogicalMessageRowByUuid, getMessageRange, getMetadata, setMetadata } from './sqlite-manager.js';
 
 /** Safe conflict shared by mutation and recovery routes. */
-export function stmbOperationConflict() {
-    return Object.assign(new Error('Memory Books has unresolved work or changed source messages. Open pending operations to review.'), { status: 409, type: 'StmbOperationConflict' });
+export function stmbOperationConflict(code = 'StmbRecoveryConflict') {
+    return Object.assign(new Error('Memory Books has unresolved work or changed source messages. Open pending operations to review.'), { status: 409, type: 'StmbOperationConflict', code });
 }
 
 /** Reads internal operation records; callers must hold the logical chat lock. */
@@ -23,7 +23,7 @@ export function writeStmbOperation(db, operation) {
 export function captureStmbOperationSource(db, startUuid, endUuid) {
     const start = getLogicalMessageRowByUuid(db, startUuid);
     const end = getLogicalMessageRowByUuid(db, endUuid);
-    if (!start || !end || start.logicalIndex > end.logicalIndex) throw stmbOperationConflict();
+    if (!start || !end || start.logicalIndex > end.logicalIndex) throw stmbOperationConflict('StmbRecoverySourceChanged');
     return {
         startUuid, endUuid, start: start.logicalIndex, end: end.logicalIndex,
         fingerprint: fingerprintStmbSource(getMessageRange(db, start.logicalIndex, end.logicalIndex - start.logicalIndex + 1)),
@@ -40,7 +40,7 @@ export function beginStmbOperation(db, input, targets) {
             || JSON.stringify(existing.data.targets) !== JSON.stringify(targets)) throw stmbOperationConflict();
         return existing;
     }
-    if (readStmbOperations(db).some(operation => operation.data.effectsPending || !['applied', 'discarded'].includes(operation.state))) throw stmbOperationConflict();
+    if (readStmbOperations(db).some(operation => !['applied', 'discarded'].includes(operation.state))) throw stmbOperationConflict();
     const source = captureStmbOperationSource(db, input.startUuid, input.endUuid);
     if (source.fingerprint !== input.fingerprint) throw stmbOperationConflict();
     const markers = getChatHeader(db)?.chat_metadata?.STMemoryBooks || {};
@@ -48,7 +48,10 @@ export function beginStmbOperation(db, input, targets) {
     if (!Array.isArray(hideRanges) || hideRanges.length > 1 || hideRanges.some(range => !Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 0 || range.end < range.start || range.end > source.end)) throw stmbOperationConflict();
     const operation = {
         id: input.id, kind: 'memory', state: 'prepared',
-        data: { source, targets, attribution: randomUUID(), plannedReceipts: [], hideRanges, clearScene: input.clearScene === true, effectsPending: true, highest: markers.highestMemoryProcessed ?? null, manuallySet: markers.highestMemoryProcessedManuallySet === true, markerRevision: getMetadata(db, 'stmb_marker_revision') || '', receipts: [] },
+        data: { source, targets, attribution: randomUUID(), plannedReceipts: [], hideRanges, clearScene: input.clearScene === true,
+            sceneStart: markers.sceneStart ?? null, sceneEnd: markers.sceneEnd ?? null,
+            effectsPending: false, highest: markers.highestMemoryProcessed ?? null, manuallySet: markers.highestMemoryProcessedManuallySet === true,
+            progressRevision: getMetadata(db, 'stmb_progress_revision') || '', markerRevision: getMetadata(db, 'stmb_marker_revision') || '', receipts: [] },
     };
     writeStmbOperation(db, operation);
     return operation;
@@ -60,10 +63,12 @@ export function validateStmbOperationSource(db, operation) {
     const header = getChatHeader(db);
     const markers = header?.chat_metadata?.STMemoryBooks || {};
     if (source.fingerprint !== operation.data.source.fingerprint
-        || source.start !== operation.data.source.start || source.end !== operation.data.source.end
-        || (markers.highestMemoryProcessed ?? null) !== operation.data.highest
+        || source.start !== operation.data.source.start || source.end !== operation.data.source.end) throw stmbOperationConflict('StmbRecoverySourceChanged');
+    if ((markers.highestMemoryProcessed ?? null) !== operation.data.highest
         || (markers.highestMemoryProcessedManuallySet === true) !== operation.data.manuallySet
-        || (getMetadata(db, 'stmb_marker_revision') || '') !== operation.data.markerRevision) throw stmbOperationConflict();
+        || (Object.hasOwn(operation.data, 'progressRevision')
+            ? (getMetadata(db, 'stmb_progress_revision') || '') !== operation.data.progressRevision
+            : (getMetadata(db, 'stmb_marker_revision') || '') !== operation.data.markerRevision)) throw stmbOperationConflict('StmbRecoveryProgressChanged');
     return { source, header, markers };
 }
 
@@ -74,7 +79,9 @@ export function applyStmbProgress(db, operation) {
     header.chat_metadata ||= {};
     header.chat_metadata.STMemoryBooks = { ...markers, highestMemoryProcessed: Math.max(markers.highestMemoryProcessed ?? -1, source.end) };
     delete header.chat_metadata.STMemoryBooks.highestMemoryProcessedManuallySet;
-    if (operation.data.clearScene) {
+    const clearScene = operation.data.clearScene && (markers.sceneStart ?? null) === (operation.data.sceneStart ?? null)
+        && (markers.sceneEnd ?? null) === (operation.data.sceneEnd ?? null);
+    if (clearScene) {
         delete header.chat_metadata.STMemoryBooks.sceneStart;
         delete header.chat_metadata.STMemoryBooks.sceneEnd;
     }
@@ -89,7 +96,10 @@ export function applyStmbProgress(db, operation) {
             db.run('UPDATE messages SET content = json_set(content, \'$.is_system\', json(\'true\')) WHERE id IN (SELECT id FROM messages WHERE order_index > 0 ORDER BY order_index LIMIT ? OFFSET ?)', [range.end - range.start + 1, range.start]);
         }
         db.run('UPDATE messages SET content = ? WHERE order_index = 0', [JSON.stringify(header)]);
+        setMetadata(db, 'stmb_progress_revision', randomUUID());
         operation.state = 'applied';
+        operation.data.appliedRevision = header.chat_revision;
+        operation.data.clearSceneApplied = clearScene;
         writeStmbOperation(db, operation);
         db.run('COMMIT');
     } catch (error) { db.run('ROLLBACK'); throw error; }

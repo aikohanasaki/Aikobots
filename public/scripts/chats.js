@@ -494,7 +494,7 @@ const CHAT_MESSAGE_VISIBILITY_SAVE_RESULT = {
 };
 
 /** Updates visibility for matching messages that are already present in the sparse client cache. */
-function applyLoadedChatMessageVisibility(start, end, hide, nameFilter = null) {
+export function applyLoadedChatMessageVisibility(start, end, hide, nameFilter = null) {
     for (let messageId = start; messageId <= end; messageId++) {
         const message = chat[messageId];
         if (!message || (nameFilter && message.name !== nameFilter)) {

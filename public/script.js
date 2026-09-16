@@ -1839,7 +1839,9 @@ export function queueAcknowledgedChatRevisionRequest(requestFactory) {
                     retryDelay = Math.min(retryDelay * 2, 10_000);
                     continue;
                 }
-                adoptChatSaveRevision({ chatKey, incomingRevision: acknowledgedRevision, source: responseData?.status === 'replayed' ? 'receipt_replay' : 'mutation_acknowledgement' });
+                // Apply local effects before releasing the queue; a stale view must not adopt a newer revision.
+                const allowAdvance = request.onAcknowledged?.(responseData, { baseRevision }) !== false;
+                adoptChatSaveRevision({ chatKey, incomingRevision: acknowledgedRevision, source: responseData?.status === 'replayed' ? 'receipt_replay' : 'mutation_acknowledgement', allowAdvance });
             } else if (response.status >= 500 || response.status === 408 || response.status === 425 || response.status === 429) {
                 console.warn('Chat operation received a retryable response; retrying the same operation.', {
                     operationId,

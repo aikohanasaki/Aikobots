@@ -1,6 +1,6 @@
 import { captureStmbGroupPolicy, applyStmbGroupPolicy, filterStmbMemoryRole, getStmbMemoryRole, hasStmbSharedRoles } from './stmb-group-policy.js';
 import { evaluateStmbAutoSummary } from './stmb-auto-summary-policy.js';
-import { getStmbOperations, resolveStmbOperation, prepareStmbOperation } from './stmb-api.js';
+import { getStmbOperations, resolveStmbOperation, prepareStmbOperation, cancelUnstartedStmbOperation, getStmbRecoveryErrorMessage } from './stmb-api.js';
 import { saveMetadata } from '../script.js';
 import {
     applyChunkedChatPayload,
@@ -44,7 +44,7 @@ import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
 import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
-import { hideChatMessageRange } from './chats.js';
+import { applyLoadedChatMessageVisibility, hideChatMessageRange } from './chats.js';
 import { groups, selected_group } from './group-chats.js';
 import { getRegexScripts, runRegexScript } from './extensions/regex/engine.js';
 import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, METADATA_KEY, openLorebookOrderingDialog, registerStmbRegenerationHandler, reloadEditor, world_names, worldInfoCache } from './world-info.js';
@@ -2192,41 +2192,60 @@ function getStmbSelectableLorebookNames() {
     return (Array.isArray(world_names) ? world_names : []).filter(name => !isReservedTemplateWorldName(name));
 }
 
-/** Applies a saved memory's marker only through the originating chat's revision queue. */
-async function finishStmbSavedProgress(sceneContext, operationId) {
-    if (!isSceneContextCurrent(sceneContext)) return;
-    const result = await resolveStmbOperation(sceneContext.chatRef, operationId, 'retry', () => isSceneContextCurrent(sceneContext));
-    if (!isSceneContextCurrent(sceneContext)) return;
-    if (result.retryRange) {
-        await initiateMemoryCreation({ range: result.retryRange, sceneContext });
-        return;
-    }
+/** Mirrors acknowledged progress before another queued chat save can run. */
+function applyStmbProgressResult(sceneContext, result) {
+    if (!isSceneContextCurrent(sceneContext)) return false;
     const state = getStmbState(sceneContext);
+    if (result.previousProgress && ((state.highestMemoryProcessed ?? null) !== result.previousProgress.highest
+        || (state.highestMemoryProcessedManuallySet === true) !== result.previousProgress.manuallySet)) return false;
     if (result.highestMemoryProcessed === null) delete state.highestMemoryProcessed;
     else state.highestMemoryProcessed = result.highestMemoryProcessed;
     if (result.highestMemoryProcessedManuallySet) state.highestMemoryProcessedManuallySet = true;
     else delete state.highestMemoryProcessedManuallySet;
-    if (result.clearScene) { delete state.sceneStart; delete state.sceneEnd; }
+    if (result.clearScene && (state.sceneStart ?? null) === result.sceneStartBefore && (state.sceneEnd ?? null) === result.sceneEndBefore) {
+        delete state.sceneStart; delete state.sceneEnd;
+    }
+    for (const range of result.hideRanges || []) {
+        applyLoadedChatMessageVisibility(range.start, range.end, true);
+    }
+    return true;
+}
+
+/** Finishes UI effects after the server has durably applied the memory and its progress. */
+async function finishStmbSavedProgress(sceneContext, operationId, savedResult = null) {
+    if (!isSceneContextCurrent(sceneContext)) return;
+    const result = savedResult || await resolveStmbOperation(sceneContext.chatRef, operationId, 'retry',
+        () => isSceneContextCurrent(sceneContext), data => applyStmbProgressResult(sceneContext, data));
+    if (!isSceneContextCurrent(sceneContext)) return;
+    if (result.requiresChatReload) {
+        const code = result.memorySaved ? 'StmbRecoveryViewStaleAfterSave' : 'StmbRecoveryRevisionChanged';
+        throw Object.assign(new Error(getStmbRecoveryErrorMessage({ code })), { code });
+    }
+    if (result.retryRange) {
+        await initiateMemoryCreation({ range: result.retryRange, sceneContext });
+        return;
+    }
     if (result.postSaveLorebook) {
         await maybePromptAutoConsolidation(1, { sceneContext, lorebookName: result.postSaveLorebook });
         await resolveStmbOperation(sceneContext.chatRef, operationId, 'ack-effects', () => isSceneContextCurrent(sceneContext));
     }
     refreshMemoryBoundaryUi();
-    if (result.hideRanges?.length && isSceneContextCurrent(sceneContext)) await reloadCurrentChat({ flushPendingSave: false });
 }
 
 /** Shows durable pending work without reading entry content into the recovery UI. */
-async function reviewStmbOperations({ auto = false } = {}) {
+export async function reviewStmbOperations({ auto = false } = {}) {
     const origin = buildStmbSceneContext();
     if (!origin.chatRef || hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(origin))) return;
     let result;
-    try { result = await resolveStmbOperation(origin.chatRef, null, '', () => isSceneContextCurrent(origin)); } catch { return; }
+    try {
+        result = await resolveStmbOperation(origin.chatRef, null, '', () => isSceneContextCurrent(origin), data => applyStmbProgressResult(origin, data));
+        if (result.requiresChatReload) throw Object.assign(new Error(), { code: 'StmbRecoveryRevisionChanged' });
+    }
+    catch (error) {
+        if (!auto && isSceneContextCurrent(origin)) toastr.error(getStmbRecoveryErrorMessage(error), 'STMB', { timeOut: 0, extendedTimeOut: 0, closeButton: true });
+        return;
+    }
     if (!isSceneContextCurrent(origin)) return;
-    const state = getStmbState(origin);
-    if (result.highestMemoryProcessed === null) delete state.highestMemoryProcessed;
-    else state.highestMemoryProcessed = result.highestMemoryProcessed;
-    if (result.highestMemoryProcessedManuallySet) state.highestMemoryProcessedManuallySet = true;
-    else delete state.highestMemoryProcessedManuallySet;
     refreshMemoryBoundaryUi();
     for (const operation of result.operations || []) {
         if (auto && (['saved', 'applied'].includes(operation.state) || operation.kind === 'rollback')) {
@@ -2241,7 +2260,9 @@ async function reviewStmbOperations({ auto = false } = {}) {
         try {
             if (choice === POPUP_RESULT.CUSTOM1) await resolveStmbOperation(origin.chatRef, operation.id, 'discard', () => isSceneContextCurrent(origin));
             else await finishStmbSavedProgress(origin, operation.id);
-        } catch { toastr.error(translate('Memory Books recovery could not complete.'), 'STMB'); }
+        } catch (error) {
+            if (isSceneContextCurrent(origin)) toastr.error(getStmbRecoveryErrorMessage(error), 'STMB', { timeOut: 0, extendedTimeOut: 0, closeButton: true });
+        }
     }
 }
 
@@ -9393,9 +9414,10 @@ async function saveManualGroupMemoryObjects(groupMemory, characterMemories, snap
         sceneContext: buildMemorySceneData(compiledScene, range),
         chatRef: sceneContext?.chatRef,
         profile,
-    }, { signal });
-    options.onSaved?.(result);
-    if (result.operation) await finishStmbSavedProgress(sceneContext, result.operation.id);
+    }, { signal, isCurrent: () => isSceneContextCurrent(sceneContext), onSaved: options.onSaved,
+        onAcknowledged: data => applyStmbProgressResult(sceneContext, data) });
+    if (!result.operation) options.onSaved?.(result);
+    if (result.operation) await finishStmbSavedProgress(sceneContext, result.operation.id, result);
     throwIfStmbAborted(signal);
 
     for (const entry of result?.entries || []) worldInfoCache.delete(entry.lorebookName);
@@ -9438,9 +9460,10 @@ async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, c
         sceneContext: buildMemorySceneData(compiledScene, range),
         chatRef: sceneContext?.chatRef,
         profile,
-    }, { signal });
-    onSaved?.(result);
-    if (result.operation) await finishStmbSavedProgress(sceneContext, result.operation.id);
+    }, { signal, isCurrent: () => isSceneContextCurrent(sceneContext), onSaved,
+        onAcknowledged: data => applyStmbProgressResult(sceneContext, data) });
+    if (!result.operation) onSaved?.(result);
+    if (result.operation) await finishStmbSavedProgress(sceneContext, result.operation.id, result);
     throwIfStmbAborted(signal);
     worldInfoCache.delete(lorebookName);
     void refreshStmbMacroCache(lorebookName);
@@ -9794,7 +9817,30 @@ function buildMemoryRequestSettings(summaryCount = 0) {
     };
 }
 
+/** Releases canceled/pre-write work, but never discards an uncertain save. */
 async function executeMemoryJob(job, context) {
+    const payload = job.payload ||= {};
+    if (payload.operationId && !payload.resumePostSaveResult) {
+        const previous = await cancelUnstartedStmbOperation(job.sceneContext.chatRef, payload.operationId);
+        if (previous.canceled) delete payload.operationId;
+        else if (['saved', 'applied'].includes(previous.operation?.state)) {
+            payload.resumePostSaveResult = { lorebookName: job.lorebookName || payload.lorebookName, operationId: payload.operationId, memorySaved: true };
+        }
+    }
+    try {
+        return await runMemoryJob(job, context);
+    } finally {
+        if (payload.operationId) {
+            try {
+                const result = await cancelUnstartedStmbOperation(job.sceneContext.chatRef, payload.operationId);
+                if (result.canceled) delete payload.operationId;
+            } catch { /* Keep the durable record and retry identity when cleanup cannot be acknowledged. */ }
+        }
+    }
+}
+
+/** Runs preflight, generation, approval, and the acknowledged server save. */
+async function runMemoryJob(job, context) {
     const payload = job?.payload || {};
     const range = job?.range || payload.range || null;
     const lorebookName = String(job?.lorebookName || payload.lorebookName || '').trim();
@@ -9882,13 +9928,6 @@ async function executeMemoryJob(job, context) {
         ? { id: payload.operationId, startUuid: compiledScene.metadata.sceneStartUuid, endUuid: compiledScene.metadata.sceneEndUuid, fingerprint: compiledScene.metadata.sourceFingerprint,
             hideRanges: buildPostSaveHideRanges(range), clearScene: !payload.keepSceneMarkers && requestSettings.moduleSettings.autoClearSceneAfterMemory === true }
         : undefined;
-    if (operation) {
-        const prepared = await prepareStmbOperation({ chatRef: job.sceneContext.chatRef, operation, targets: operationTargets });
-        if (['saved', 'applied'].includes(prepared.operation.state)) {
-            payload.resumePostSaveResult = { lorebookName, operationId: payload.operationId, memorySaved: true };
-            return executeMemoryJob(job, context);
-        }
-    }
 
     if (payload.source === 'catchup') {
         const rawTokenThreshold = payload.tokenWarningThreshold
@@ -9925,6 +9964,16 @@ async function executeMemoryJob(job, context) {
         if (overlappingMemory) {
             const existingRange = overlappingMemory.range;
             throw new Error(`Scene overlaps with existing memory: "${overlappingMemory.title}" (messages ${existingRange.start}-${existingRange.end})`);
+        }
+    }
+
+    const preflightMessage = getConnectionProfilePreflightMessage(profile);
+    if (preflightMessage) throw new Error(preflightMessage);
+    if (operation) {
+        const prepared = await prepareStmbOperation({ chatRef: job.sceneContext.chatRef, operation, targets: operationTargets });
+        if (['saved', 'applied'].includes(prepared.operation.state)) {
+            payload.resumePostSaveResult = { lorebookName, operationId: payload.operationId, memorySaved: true };
+            return runMemoryJob(job, context);
         }
     }
 

@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { getChatHeader, getLogicalMessageRowByUuid, getMetadata } from './sqlite-manager.js';
+import { createHash, randomUUID } from 'node:crypto';
+import { getChatHeader, getLogicalMessageRowByUuid, getMetadata, setMetadata } from './sqlite-manager.js';
 import { stmbOperationConflict, writeStmbOperation } from './stmb-operations.js';
 import { assertLorebookCheckoutForManagement, getCanonicalLorebookName, getLorebookForManagement } from './lorebook-repository.js';
 import { getStmbMemoryRole, hasStmbSharedRoles } from '../public/scripts/stmb-group-policy.js';
@@ -52,12 +52,12 @@ export function planStmbRollbackBook(db, operation, book) {
         };
         for (const [key, entry] of Object.entries(entries)) {
             if (entry.stmemorybooks !== true) continue;
-            if (String(entry.uid) !== key || (shared && !getStmbMemoryRole(entry))) throw stmbOperationConflict();
+            if (String(entry.uid) !== key || (shared && !getStmbMemoryRole(entry))) throw stmbOperationConflict('StmbRecoveryOwnershipUnclear');
             // Numeric-only legacy ranges cannot establish which chat owns a potentially affected memory.
             if ((!entry.STMB_startUuid || !entry.STMB_endUuid) && Number.isInteger(entry.STMB_start) && Number.isInteger(entry.STMB_end)
-                && entry.STMB_start <= operation.data.end && entry.STMB_end >= operation.data.start) throw stmbOperationConflict();
+                && entry.STMB_start <= operation.data.end && entry.STMB_end >= operation.data.start) throw stmbOperationConflict('StmbRecoveryOwnershipUnclear');
             if (affectedRange(db, operation, entry.STMB_startUuid, entry.STMB_endUuid)) removed.add(key);
-            if (entry.stmbSourceEntryUids !== undefined && !Array.isArray(entry.stmbSourceEntryUids)) throw stmbOperationConflict();
+            if (entry.stmbSourceEntryUids !== undefined && !Array.isArray(entry.stmbSourceEntryUids)) throw stmbOperationConflict('StmbRecoveryOwnershipUnclear');
             for (const child of entry.stmbSourceEntryUids || []) addParent(child, key);
             if (entries[entry.disabledBySummaryId]?.stmemorybooks === true) addParent(key, entry.disabledBySummaryId);
         }
@@ -81,10 +81,10 @@ export function planStmbRollbackBook(db, operation, book) {
         }
         const snapshot = entry[SNAPSHOT];
         if (operation.data.settings.restoreSidePrompts !== false && snapshot && affectedRange(db, operation, snapshot.sceneStartUuid, snapshot.sceneEndUuid)) {
-            if (snapshot.version !== 2 || (snapshot.priorEntry !== null && (!snapshot.priorEntry || String(snapshot.priorEntry.uid) !== key))) throw stmbOperationConflict();
+            if (snapshot.version !== 2 || (snapshot.priorEntry !== null && (!snapshot.priorEntry || String(snapshot.priorEntry.uid) !== key))) throw stmbOperationConflict('StmbRecoverySnapshotUnavailable');
             const current = structuredClone(entry);
             delete current[SNAPSHOT];
-            if (hashStmbRollbackState(current) !== snapshot.writtenFingerprint) throw stmbOperationConflict();
+            if (hashStmbRollbackState(current) !== snapshot.writtenFingerprint) throw stmbOperationConflict('StmbRecoverySidePromptChanged');
             if (snapshot.priorEntry === null) delete entries[key];
             else entries[key] = structuredClone(snapshot.priorEntry);
         }
@@ -99,7 +99,7 @@ export async function executeStmbRollback(user, db, operation, transaction) {
     const baseline = header.chat_metadata?.STMemoryBooks || {};
     if ((getMetadata(db, 'stmb_marker_revision') || '') !== operation.data.markerRevision
         || (baseline.highestMemoryProcessed ?? null) !== operation.data.highest
-        || (baseline.highestMemoryProcessedManuallySet === true) !== operation.data.manuallySet) throw stmbOperationConflict();
+        || (baseline.highestMemoryProcessedManuallySet === true) !== operation.data.manuallySet) throw stmbOperationConflict('StmbRecoveryProgressChanged');
     const books = [];
     for (const name of new Set(operation.data.books.map(getCanonicalLorebookName))) {
         const loaded = await getLorebookForManagement(user, name, false, 'user');
@@ -108,7 +108,7 @@ export async function executeStmbRollback(user, db, operation, transaction) {
         const hash = hashStmbRollbackState(loaded.data);
         const planned = operation.data.planned?.[name];
         if (planned && hash === planned.after) { books.push({ name, data: loaded.data, done: true }); continue; }
-        if (planned && hash !== planned.before) throw stmbOperationConflict();
+        if (planned && hash !== planned.before) throw stmbOperationConflict('StmbRecoveryBookChanged');
         const next = planStmbRollbackBook(db, operation, loaded.data);
         books.push({ name, data: next, before: hash, after: hashStmbRollbackState(next) });
     }
@@ -143,7 +143,9 @@ export async function executeStmbRollback(user, db, operation, transaction) {
     db.run('BEGIN IMMEDIATE');
     try {
         db.run('UPDATE messages SET content = ? WHERE order_index = 0', [JSON.stringify(header)]);
+        if (operation.data.settings.updateProgress !== false) setMetadata(db, 'stmb_progress_revision', randomUUID());
         operation.state = 'applied';
+        operation.data.appliedRevision = header.chat_revision;
         writeStmbOperation(db, operation);
         db.run('COMMIT');
     } catch (error) { db.run('ROLLBACK'); throw error; }

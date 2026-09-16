@@ -2983,6 +2983,7 @@ function updateSqliteHeaderRow(db, header) {
     if ((previous.highestMemoryProcessed ?? null) !== (next.highestMemoryProcessed ?? null)
         || (previous.highestMemoryProcessedManuallySet === true) !== (next.highestMemoryProcessedManuallySet === true)) {
         setMetadata(db, 'stmb_marker_revision', crypto.randomUUID());
+        setMetadata(db, 'stmb_progress_revision', crypto.randomUUID());
     }
     const stmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
     try {

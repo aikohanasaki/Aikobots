@@ -51,9 +51,9 @@ it('recognizes a persisted write after response loss without generating another 
     expect(replay.memorySaved).toBe(true);
     expect(replay.replayed).toBe(true);
     expect(create).toHaveBeenCalledTimes(1);
-    const resolved = await resolveStmbOperations({ user: {}, body: { id: request.body.operation.id, action: 'retry', base_revision: 1 } }, sqlitePath);
+    const resolved = await resolveStmbOperations({ user: {}, body: { id: request.body.operation.id, action: 'retry', operation_id: 'recovery-request', base_revision: 1 } }, sqlitePath);
     expect(resolved.highestMemoryProcessed).toBe(0);
-    const second = await resolveStmbOperations({ user: {}, body: { id: request.body.operation.id, action: 'retry', base_revision: 1 } }, sqlitePath);
+    const second = await resolveStmbOperations({ user: {}, body: { id: request.body.operation.id, action: 'retry', operation_id: 'recovery-request', base_revision: 1 } }, sqlitePath);
     expect(second.chat_revision).toBe(2);
     expect(Object.keys(books.get('Book').entries)).toEqual(['1']);
 });
@@ -76,9 +76,12 @@ it('keeps a partially written multi-book operation unresolved and never advances
 });
 
 it('rejects edited saved entries before acknowledging progress', async () => {
-    await withStmbMemoryTransaction(request, sqlitePath, transaction => transaction.save({}, 'Book', { entries: { 1: { uid: 1, content: 'Original generated memory' } } }, 'user'));
+    await expect(withStmbMemoryTransaction(request, sqlitePath, async transaction => {
+        await transaction.save({}, 'Book', { entries: { 1: { uid: 1, content: 'Original generated memory' } } }, 'user');
+        throw new Error('stopped before progress');
+    })).rejects.toThrow('stopped before progress');
     books.get('Book').entries[1].content = 'Manual edit';
-    await expect(resolveStmbOperations({ user: {}, body: { id: request.body.operation.id, action: 'retry', base_revision: 1 } }, sqlitePath)).rejects.toMatchObject({ status: 409 });
+    await expect(resolveStmbOperations({ user: {}, body: { id: request.body.operation.id, action: 'retry', operation_id: 'recovery-request', base_revision: 1 } }, sqlitePath)).rejects.toMatchObject({ status: 409 });
 });
 
 it('resumes rollback after the first book was written without restoring or deleting unrelated entries', async () => {
@@ -99,7 +102,7 @@ it('resumes rollback after the first book was written without restoring or delet
         if (name === 'Other' && !interrupted) { interrupted = true; throw new Error('interrupted'); }
         books.set(name, structuredClone(data));
     });
-    const resolveRequest = { user: {}, body: { id: 'rollback-delete-1', action: 'retry', base_revision: 1 } };
+    const resolveRequest = { user: {}, body: { id: 'rollback-delete-1', action: 'retry', operation_id: 'recovery-request', base_revision: 1 } };
     await expect(resolveStmbOperations(resolveRequest, sqlitePath)).rejects.toThrow('interrupted');
     const result = await resolveStmbOperations(resolveRequest, sqlitePath);
     expect(result.chat_revision).toBe(2);
@@ -111,7 +114,7 @@ it('resumes rollback after the first book was written without restoring or delet
 
 it('offers safe generation retry only for an intent whose save never started', async () => {
     await resolveStmbOperations({ ...request, body: { action: 'prepare', operation: request.body.operation, targets: [{ name: 'Book', storage: 'user' }] } }, sqlitePath);
-    const result = await resolveStmbOperations({ user: {}, body: { id: request.body.operation.id, action: 'retry', base_revision: 1 } }, sqlitePath);
+    const result = await resolveStmbOperations({ user: {}, body: { id: request.body.operation.id, action: 'retry', operation_id: 'recovery-request', base_revision: 1 } }, sqlitePath);
     expect(result.retryRange).toEqual({ sceneStart: 0, sceneEnd: 0 });
     expect(result.operations).toEqual([]);
     expect(result.chat_revision).toBe(1);

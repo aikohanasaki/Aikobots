@@ -3,7 +3,7 @@ import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadDb, setMessages, getChatHeader, getMessageRange } from '../src/sqlite-manager.js';
+import { loadDb, setMessages, getChatHeader, getMessageRange, setMetadata } from '../src/sqlite-manager.js';
 import { beginStmbOperation, captureStmbOperationSource, applyStmbProgress, recordStmbDeletion, readStmbOperations, validateStmbOperationSource } from '../src/stmb-operations.js';
 import { setConfigFilePath } from '../src/util.js';
 
@@ -47,8 +47,20 @@ test('source edits between generation and save reject the mutation', async t => 
     const source = captureStmbOperationSource(db, messages[0].aikobots_message_uuid, messages[2].aikobots_message_uuid);
     const operation = beginStmbOperation(db, { id: 'memory-1', ...source }, []);
     db.run('UPDATE messages SET content = ? WHERE message_uuid = ?', [JSON.stringify({ ...messages[1], mes: 'Edited' }), messages[1].aikobots_message_uuid]);
-    assert.throws(() => validateStmbOperationSource(db, operation), /changed source/);
+    assert.throws(() => validateStmbOperationSource(db, operation), { code: 'StmbRecoverySourceChanged', status: 409 });
     assert.equal(getChatHeader(db).chat_revision, 1);
+});
+
+test('recovery distinguishes changed progress from missing source messages', async t => {
+    const { db, messages } = await createChat(t);
+    const source = captureStmbOperationSource(db, messages[0].aikobots_message_uuid, messages[2].aikobots_message_uuid);
+    const operation = beginStmbOperation(db, { id: 'memory-1', ...source }, []);
+    recordStmbDeletion(db, getChatHeader(db), 4, 4, 'delete-1');
+    assert.doesNotThrow(() => validateStmbOperationSource(db, operation));
+    setMetadata(db, 'stmb_progress_revision', 'explicit-progress-edit');
+    assert.throws(() => validateStmbOperationSource(db, operation), { code: 'StmbRecoveryProgressChanged' });
+    db.run('DELETE FROM messages WHERE message_uuid = ?', [messages[0].aikobots_message_uuid]);
+    assert.throws(() => validateStmbOperationSource(db, operation), { code: 'StmbRecoverySourceChanged' });
 });
 
 test('middle deletion removes dependent summaries, releases surviving sources, and preserves unrelated entries', async t => {
@@ -78,16 +90,16 @@ test('Side Prompt rollback restores one server snapshot and rejects edits and v1
     const entry = { ...prior, content: 'After', STMB_sidePromptRegeneration: { version: 1, sceneStartUuid: messages[2].aikobots_message_uuid, sceneEndUuid: messages[2].aikobots_message_uuid } };
     stampStmbSidePromptRollback(entry, prior);
     assert.deepEqual(planStmbRollbackBook(db, operation, { entries: { 1: entry } }).entries[1], prior);
-    assert.throws(() => planStmbRollbackBook(db, operation, { entries: { 1: { ...entry, content: 'Manually edited' } } }), /unresolved work/);
+    assert.throws(() => planStmbRollbackBook(db, operation, { entries: { 1: { ...entry, content: 'Manually edited' } } }), { code: 'StmbRecoverySidePromptChanged' });
     entry.STMB_sidePromptRegeneration.version = 1;
-    assert.throws(() => planStmbRollbackBook(db, operation, { entries: { 1: entry } }), /unresolved work/);
+    assert.throws(() => planStmbRollbackBook(db, operation, { entries: { 1: entry } }), { code: 'StmbRecoverySnapshotUnavailable' });
 });
 
 test('rollback rejects ambiguous legacy ownership and does not treat unrelated entry metadata as a dependency', async t => {
     const { db, messages } = await createChat(t);
     recordStmbDeletion(db, getChatHeader(db), 2, 2, 'delete-1');
     const operation = readStmbOperations(db)[0];
-    assert.throws(() => planStmbRollbackBook(db, operation, { entries: { 1: { uid: 1, stmemorybooks: true, STMB_start: 1, STMB_end: 4 } } }), /unresolved work/);
+    assert.throws(() => planStmbRollbackBook(db, operation, { entries: { 1: { uid: 1, stmemorybooks: true, STMB_start: 1, STMB_end: 4 } } }), { code: 'StmbRecoveryOwnershipUnclear' });
     const unrelated = { uid: 2, content: 'Ordinary note', stmbSourceEntryUids: [1], disabledBySummaryId: 1 };
     const result = planStmbRollbackBook(db, operation, { entries: {
         1: { uid: 1, stmemorybooks: true, STMB_startUuid: messages[2].aikobots_message_uuid, STMB_endUuid: messages[2].aikobots_message_uuid },

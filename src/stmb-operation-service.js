@@ -1,4 +1,4 @@
-import { loadDb, getChatHeader } from './sqlite-manager.js';
+import { loadDb, getChatHeader, getOperationReceipt, recordOperationReceipt } from './sqlite-manager.js';
 import { withChatSaveLock } from './chat-storage.js';
 import { getLorebookForManagement, withLorebookManagementTransaction } from './lorebook-repository.js';
 import { beginStmbOperation, readStmbOperations, writeStmbOperation, applyStmbProgress, validateStmbOperationSource, stmbOperationConflict } from './stmb-operations.js';
@@ -29,20 +29,27 @@ export async function recoverStmbRollback(user, sqlitePath) {
 export async function reconcileStmbMemory(user, db, operation) {
     if (['applied', 'discarded'].includes(operation.state)) return;
     const receipts = [];
+    let matches = true;
+    let hasAttributedEntries = false;
     for (const target of operation.data.targets) {
         const loaded = await getLorebookForManagement(user, target.name, false, target.storage);
         const entries = Object.values(loaded.data?.entries || {}).filter(entry => entry.STMB_operationId === operation.data.attribution);
+        hasAttributedEntries ||= entries.length > 0;
         const previous = operation.data.plannedReceipts.find(receipt => receipt.name === loaded.metadata.name && receipt.storage === loaded.metadata.storage);
         const hashes = entries.map(entry => ({ uid: entry.uid, hash: hashStmbRollbackState(entry) }));
         if (entries.length !== target.count || !previous || JSON.stringify(previous.hashes) !== JSON.stringify(hashes)) {
-            operation.state = 'conflict';
-            writeStmbOperation(db, operation);
-            return;
+            matches = false;
         }
         receipts.push({ name: loaded.metadata.name, storage: loaded.metadata.storage, hashes });
     }
+    // Older workers marked started before validation. No write intent and no attribution proves no write occurred.
+    if (!hasAttributedEntries && operation.data.plannedReceipts.length === 0) {
+        operation.data.started = false;
+        operation.state = 'prepared';
+    } else {
+        operation.state = matches ? 'saved' : 'conflict';
+    }
     operation.data.receipts = receipts;
-    operation.state = 'saved';
     writeStmbOperation(db, operation);
 }
 
@@ -64,20 +71,17 @@ export async function withStmbMemoryTransaction(request, sqlitePath, callback) {
                 before.set(key, new Set(Object.keys(book.data.entries || {})));
             }
             const operation = beginStmbOperation(db, request.body.operation, [...unique.values()]);
-            if (operation.state !== 'prepared') {
+            if (operation.state === 'discarded') throw stmbOperationConflict();
+            if (operation.data.started || operation.state !== 'prepared') {
                 await reconcileStmbMemory(request.user, db, operation);
-                if (!['saved', 'applied'].includes(operation.state)) throw stmbOperationConflict();
-                return { ok: true, memorySaved: true, operation: publicStmbOperation(operation), replayed: true };
-            }
-            // Replaying a prepared save is resolved from attribution, never by blindly creating another entry.
-            if (operation.data.started) {
-                await reconcileStmbMemory(request.user, db, operation);
-                if (operation.state !== 'saved') throw stmbOperationConflict();
-                return { ok: true, memorySaved: true, operation: publicStmbOperation(operation), replayed: true };
+                if (['saved', 'applied'].includes(operation.state)) {
+                    await request.activeSessionOperation?.assertAllowed();
+                    applyStmbProgress(db, operation);
+                    return { ...buildStmbOperationResult(db, operation), memorySaved: true, operation: publicStmbOperation(operation), replayed: true };
+                }
+                if (operation.state !== 'prepared') throw stmbOperationConflict();
             }
             validateStmbOperationSource(db, operation);
-            operation.data.started = true;
-            writeStmbOperation(db, operation);
             const result = await callback({ ...transaction, save: async (user, name, data, storage) => {
                 const previous = before.get(`${storage}:${name}`);
                 for (const [uid, entry] of Object.entries(data.entries || {})) {
@@ -86,14 +90,47 @@ export async function withStmbMemoryTransaction(request, sqlitePath, callback) {
                 const hashes = Object.values(data.entries || {}).filter(entry => entry.STMB_operationId === operation.data.attribution).map(entry => ({ uid: entry.uid, hash: hashStmbRollbackState(entry) }));
                 const planned = operation.data.plannedReceipts.filter(receipt => receipt.name !== name || receipt.storage !== storage);
                 operation.data.plannedReceipts = [...planned, { name, storage, hashes }];
+                operation.data.started = true;
                 writeStmbOperation(db, operation);
                 return transaction.save(user, name, data, storage);
             } });
             await reconcileStmbMemory(request.user, db, operation);
             if (operation.state !== 'saved') throw stmbOperationConflict();
-            return { ...result, memorySaved: true, operation: publicStmbOperation(operation) };
+            await request.activeSessionOperation?.assertAllowed();
+            applyStmbProgress(db, operation);
+            return { ...result, ...buildStmbOperationResult(db, operation), memorySaved: true, operation: publicStmbOperation(operation) };
         } finally { db.close(); }
     }));
+}
+
+/** Builds an acknowledgement from current state without exposing the operation journal. */
+function buildStmbOperationResult(db, operation, retryRange = null) {
+    const header = getChatHeader(db);
+    return { ok: true, status: 'noop', chat_revision: Number(header.chat_revision || 0),
+        memorySaved: operation?.kind === 'memory' && ['saved', 'applied'].includes(operation.state),
+        previous_revision: operation?.data.appliedRevision ? operation.data.appliedRevision - 1 : Number(header.chat_revision || 0),
+        highestMemoryProcessed: header.chat_metadata?.STMemoryBooks?.highestMemoryProcessed ?? null,
+        highestMemoryProcessedManuallySet: header.chat_metadata?.STMemoryBooks?.highestMemoryProcessedManuallySet === true,
+        previousProgress: operation ? { highest: operation.data.highest ?? null, manuallySet: operation.data.manuallySet === true } : null,
+        retryRange,
+        hideRanges: operation?.state === 'applied' ? operation.data.hideRanges || [] : [],
+        clearScene: operation?.state === 'applied' && operation.data.clearSceneApplied === true,
+        sceneStartBefore: operation?.data.sceneStart ?? null, sceneEndBefore: operation?.data.sceneEnd ?? null,
+        postSaveLorebook: operation?.state === 'applied' && operation.data.effectsPending ? operation.data.targets?.[0]?.name : null,
+        operations: readStmbOperations(db).filter(item => !['applied', 'discarded'].includes(item.state)).map(publicStmbOperation),
+    };
+}
+
+/** Records journal-only transitions and their reply in the same SQLite transaction. */
+function acknowledgeStmbOperation(db, request, operation, retryRange = null) {
+    db.run('BEGIN IMMEDIATE');
+    try {
+        writeStmbOperation(db, operation);
+        const result = buildStmbOperationResult(db, operation, retryRange);
+        recordOperationReceipt(db, request.body.operation_id, request.body, result);
+        db.run('COMMIT');
+        return result;
+    } catch (error) { db.run('ROLLBACK'); throw error; }
 }
 
 /** Lists durable work or resolves a saved marker under the normal lock order. */
@@ -102,7 +139,8 @@ export async function resolveStmbOperations(request, sqlitePath) {
         const db = await loadDb(sqlitePath);
         try {
             await request.activeSessionOperation?.assertAllowed();
-            if (request.body.action === 'prepare') {
+            const action = request.body.action;
+            if (action === 'prepare') {
                 const targets = request.body.targets;
                 if (!Array.isArray(targets) || targets.length === 0 || targets.length > 101) throw stmbOperationConflict();
                 const normalized = new Map();
@@ -118,42 +156,54 @@ export async function resolveStmbOperations(request, sqlitePath) {
                 if (operation.state === 'conflict' || operation.state === 'discarded') throw stmbOperationConflict();
                 return { ok: true, operation: publicStmbOperation(operation) };
             }
-            const operations = readStmbOperations(db);
-            let retryRange = null;
-            const requested = request.body.id;
-            const operation = operations.find(item => item.id === requested);
-            if (request.body.action && !operation) throw stmbOperationConflict();
-            if (operation && request.body.action === 'retry') {
-                if (operation.state !== 'applied' && Number(request.body.base_revision) !== Number(getChatHeader(db).chat_revision || 0)) throw stmbOperationConflict();
-                if (operation.kind === 'rollback') await executeStmbRollback(request.user, db, operation, transaction);
-                else if (operation.state === 'prepared' && !operation.data.started) {
-                    const { source } = validateStmbOperationSource(db, operation);
-                    retryRange = { sceneStart: source.start, sceneEnd: source.end };
+            const operation = readStmbOperations(db).find(item => item.id === request.body.id);
+            if (action === 'cancel-unstarted') {
+                // Cancellation never removes evidence of a possible write or revives a discarded operation.
+                if (operation?.data.started) await reconcileStmbMemory(request.user, db, operation);
+                if (operation?.state === 'prepared' && !operation.data.started && operation.data.plannedReceipts.length === 0) {
                     operation.state = 'discarded';
                     operation.data.effectsPending = false;
+                    operation.data.canceledBeforeWrite = true;
                     writeStmbOperation(db, operation);
                 }
-                else {
+                return { ok: true, canceled: operation?.data.canceledBeforeWrite === true, operation: operation ? publicStmbOperation(operation) : null };
+            }
+            if (action) {
+                if (typeof request.body.operation_id !== 'string' || !/^[\w-]{1,100}$/.test(request.body.operation_id)) throw stmbOperationConflict();
+                let receipt;
+                try { receipt = getOperationReceipt(db, request.body.operation_id, request.body); }
+                catch (error) {
+                    if (error?.code === 'operation_id_reused') throw stmbOperationConflict();
+                    throw error;
+                }
+                if (receipt) return receipt;
+                if (!operation) throw stmbOperationConflict('StmbRecoveryOperationMissing');
+            }
+            if (action === 'retry') {
+                if (operation.kind === 'rollback') {
+                    // Rollbacks retain their broader deletion and book preconditions.
+                    await executeStmbRollback(request.user, db, operation, transaction);
+                } else {
+                    if (operation.data.started) await reconcileStmbMemory(request.user, db, operation);
+                    if (operation.state === 'prepared' && !operation.data.started) {
+                        const { source } = validateStmbOperationSource(db, operation);
+                        operation.state = 'discarded';
+                        operation.data.effectsPending = false;
+                        return acknowledgeStmbOperation(db, request, operation, { sceneStart: source.start, sceneEnd: source.end });
+                    }
                     await reconcileStmbMemory(request.user, db, operation);
-                    if (!['saved', 'applied'].includes(operation.state)) throw stmbOperationConflict();
+                    if (!['saved', 'applied'].includes(operation.state)) throw stmbOperationConflict('StmbRecoverySavedEntriesChanged');
                     await request.activeSessionOperation?.assertAllowed();
                     applyStmbProgress(db, operation);
                 }
-            } else if (operation && request.body.action === 'ack-effects' && operation.state === 'applied') {
+            } else if (action === 'ack-effects' && operation.state === 'applied') {
                 operation.data.effectsPending = false;
-                writeStmbOperation(db, operation);
-            } else if (operation && request.body.action === 'discard') {
+            } else if (action === 'discard') {
                 operation.state = 'discarded';
                 operation.data.effectsPending = false;
-                writeStmbOperation(db, operation);
-            } else if (request.body.action) throw stmbOperationConflict();
-            const header = getChatHeader(db);
-            return { ok: true, status: 'noop', chat_revision: Number(header.chat_revision || 0), highestMemoryProcessed: header.chat_metadata?.STMemoryBooks?.highestMemoryProcessed ?? null,
-                retryRange,
-                highestMemoryProcessedManuallySet: header.chat_metadata?.STMemoryBooks?.highestMemoryProcessedManuallySet === true,
-                hideRanges: operation?.data.hideRanges || [], clearScene: operation?.data.clearScene === true,
-                postSaveLorebook: operation?.state === 'applied' && operation.data.effectsPending ? operation.data.targets?.[0]?.name : null,
-                operations: readStmbOperations(db).filter(item => item.data.effectsPending || !['applied', 'discarded'].includes(item.state)).map(publicStmbOperation) };
+            } else if (action) throw stmbOperationConflict();
+            // Applied state is durable before this acknowledgement: a crash here cannot repeat a write.
+            return action ? acknowledgeStmbOperation(db, request, operation) : buildStmbOperationResult(db);
         } finally { db.close(); }
     }));
 }

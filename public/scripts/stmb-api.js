@@ -5,6 +5,7 @@ import { parseStructuredMemoryResponse } from './stmb-core.js';
 import { parseSummaryJsonResponse } from './stmb-summary.js';
 import { consumeChatCompletionStream } from './chat-completion-stream.js';
 import { applyStmbRequestTransport } from './stmb-request-transport.js';
+import { translate } from './i18n.js';
 
 const STMB_RATE_LIMIT_RETRY_DELAYS_MS = [3000, 8000];
 const stmbGenerationCooldowns = new Map();
@@ -15,17 +16,65 @@ export function getStmbOperations(chatRef) { return postStmb('operations', { cha
 /** Captures the source and marker before generation begins. */
 export function prepareStmbOperation(payload) { return postStmb('operations', { ...payload, action: 'prepare' }); }
 
+/** Cancels only work the server can prove has not begun writing, including after a chat switch. */
+export function cancelUnstartedStmbOperation(chatRef, id) { return postStmb('operations', { chatRef, id, action: 'cancel-unstarted' }); }
+
 /** Resolves progress in the same acknowledged revision queue as other chat mutations. */
-export async function resolveStmbOperation(chatRef, id, action = 'retry', isCurrent = () => true) {
+export async function resolveStmbOperation(chatRef, id, action = 'retry', isCurrent = () => true, onAcknowledged = null) {
     const result = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId, saveSessionId }) => {
         if (!isCurrent()) throw new DOMException('Chat changed', 'AbortError');
         return {
             url: '/api/stmb/operations',
             body: { chatRef, id, action, base_revision: baseRevision, operation_id: operationId, save_session_id: saveSessionId },
+            onAcknowledged: (data, { baseRevision }) => {
+                let current = isCurrent() && (data.chat_revision === baseRevision || (data.previous_revision === baseRevision && data.chat_revision === baseRevision + 1));
+                if (current && data.chat_revision !== baseRevision) current = onAcknowledged?.(data) !== false;
+                data.requiresChatReload = !current;
+                return current;
+            },
         };
     });
-    if (!result.response.ok) throw new Error('Memory Books recovery could not complete.');
+    if (!result.response.ok) {
+        const error = result.errorData?.error;
+        throw Object.assign(new Error('Memory Books recovery could not complete.'), {
+            code: error?.code, type: error?.type, status: result.response.status,
+        });
+    }
     return result.responseData;
+}
+
+/** Maps recovery failures to localized guidance without displaying server text or entry metadata. */
+export function getStmbRecoveryErrorMessage(error) {
+    switch (error?.code) {
+        case 'StmbRecoveryViewStaleAfterSave':
+            return translate('The memory was saved, but this chat view is out of date. Reopen the chat before continuing.');
+        case 'StmbRecoveryRevisionChanged':
+            return translate('The chat has a newer saved version. Reopen the chat, then retry the pending operation.');
+        case 'StmbRecoverySourceChanged':
+            return translate('The source messages were changed, removed, or moved. This operation cannot safely resume. Review the current memories before discarding the pending operation and generating again.');
+        case 'StmbRecoveryProgressChanged':
+            return translate('Memory progress or message-deletion history changed after this operation began. Review the current memories and processed-message marker before discarding the pending operation.');
+        case 'StmbRecoveryOperationMissing':
+            return translate('This pending operation no longer exists. Reopen pending operations to refresh the list.');
+        case 'StmbRecoverySavedEntriesChanged':
+            return translate('The saved memory entries are missing, changed, or incomplete. Retry cannot safely recreate them. Review the current memories before discarding the pending operation.');
+        case 'StmbRecoveryOwnershipUnclear':
+            return translate('Rollback cannot safely identify the memories and summaries affected by the deletion. Review them manually before discarding the pending operation.');
+        case 'StmbRecoverySnapshotUnavailable':
+            return translate('A Side Prompt has no usable restoration snapshot. Restore it manually if needed, then discard the pending operation.');
+        case 'StmbRecoverySidePromptChanged':
+            return translate('A Side Prompt was edited after its saved update. Rollback stopped to avoid overwriting those edits. Review it before discarding the pending operation.');
+        case 'StmbRecoveryBookChanged':
+            return translate('A lorebook changed after rollback began. Recovery stopped to avoid overwriting newer edits. Review the current memories before discarding the pending operation.');
+    }
+    switch (error?.type) {
+        case 'LorebookCheckoutRequired':
+            return translate('A required lorebook must be checked out before recovery can continue. Check it out, then retry.');
+        case 'LorebookNotFound':
+        case 'LorebookAccessDenied':
+            return translate('A required lorebook is unavailable or you do not have access. Check your lorebook access before retrying.');
+    }
+    return translate('Recovery did not finish. Reopen the chat and retry. If it fails again, contact an administrator. Some steps may already be saved; Discard only abandons the remaining work.');
 }
 
 async function postStmb(path, payload) {
@@ -49,6 +98,7 @@ async function postStmb(path, payload) {
 }
 
 export async function saveStmbMemoryEntry(payload, options = {}) {
+    if (payload.operation) return saveStmbOperation('save-memory', payload, options);
     const { signal = null } = options;
     return signal ? postStmbWithSignal('save-memory', payload, signal) : postStmb('save-memory', payload);
 }
@@ -60,8 +110,32 @@ export async function saveStmbMemoryEntry(payload, options = {}) {
  * @returns {Promise<object>}
  */
 export async function saveStmbGroupMemoryEntries(payload, options = {}) {
+    if (payload.operation) return saveStmbOperation('save-group-memory', payload, options);
     const { signal = null } = options;
     return signal ? postStmbWithSignal('save-group-memory', payload, signal) : postStmb('save-group-memory', payload);
+}
+
+/** A dispatched memory write is acknowledged even if generation is canceled while saving. */
+async function saveStmbOperation(path, payload, { signal, isCurrent, onAcknowledged, onSaved } = {}) {
+    const result = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId, saveSessionId }) => {
+        if (signal?.aborted || !isCurrent?.()) throw new DOMException('Chat changed or generation canceled', 'AbortError');
+        return {
+            url: `/api/stmb/${path}`,
+            body: { ...payload, base_revision: baseRevision, operation_id: operationId, save_session_id: saveSessionId },
+            onAcknowledged: (data, { baseRevision }) => {
+                onSaved?.(data);
+                let current = isCurrent() && (data.chat_revision === baseRevision || (data.previous_revision === baseRevision && data.chat_revision === baseRevision + 1));
+                if (current && data.chat_revision !== baseRevision) current = onAcknowledged?.(data) !== false;
+                data.requiresChatReload = !current;
+                return current;
+            },
+        };
+    });
+    if (!result.response.ok) {
+        const error = result.errorData?.error;
+        throw Object.assign(new Error(getStmbRecoveryErrorMessage(error)), { code: error?.code, type: error?.type, status: result.response.status });
+    }
+    return result.responseData;
 }
 
 /**
