@@ -202,6 +202,7 @@ import {
     normalizeMemoryAssistanceMode,
 } from './stmb-clip-review-policy.js';
 import { escapeHtml, flashHighlight, withGoBackButton } from './utils.js';
+import { createAikobotsUuid } from './chat-identities.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
 import { getTokenCountAsync } from './tokenizers.js';
@@ -9850,7 +9851,7 @@ async function runMemoryJob(job, context) {
         ? payload.contextSettingKey
         : STMB_CONTEXT_NONE_KEY;
     const multiCharacterSnapshot = normalizeMultiCharacterSnapshot(payload);
-    payload.operationId ||= crypto.randomUUID();
+    payload.operationId ||= createAikobotsUuid();
 
     if (!Number.isInteger(Number(range?.sceneStart)) || !Number.isInteger(Number(range?.sceneEnd))) {
         throw new Error('Memory job is missing a valid scene range.');
