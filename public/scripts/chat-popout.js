@@ -213,19 +213,31 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                 statusMessage: 'Loading chat…',
                 loadingBefore: false,
                 loadingAfter: false,
+                beforeTrigger: null,
+                afterTrigger: null,
             };
             if (!root) {
                 return;
             }
 
             const setLoadingState = ({ text = '', mode = 'initial', visible = true } = {}) => {
+                const hidden = visible ? 'false' : 'true';
+                if (loading?.dataset.mode === mode && loading?.dataset.hidden === hidden
+                    && (!loadingText || loadingText.textContent === text)) {
+                    return;
+                }
+                const previousScrollTop = state.initialLoading ? 0 : root.scrollTop;
+                const previousChatTop = state.initialLoading ? 0 : chat.offsetTop;
                 if (loadingText) {
                     loadingText.textContent = text;
                 }
 
                 if (loading) {
                     loading.dataset.mode = mode;
-                    loading.dataset.hidden = visible ? 'false' : 'true';
+                    loading.dataset.hidden = hidden;
+                }
+                if (!state.initialLoading) {
+                    root.scrollTo({ top: previousScrollTop + chat.offsetTop - previousChatTop, behavior: 'instant' });
                 }
             };
 
@@ -270,8 +282,9 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                 footer.dataset.hidden = atEnd ? 'false' : 'true';
             };
 
-            const wireMessageUi = () => {
-                root.querySelectorAll('.mes_buttons > *, .extraMesButtons > *').forEach((action) => {
+            /** Prepares only incoming messages before they enter the live chat. */
+            const wireMessageUi = (fragment) => {
+                fragment.querySelectorAll('.mes_buttons > *, .extraMesButtons > *').forEach((action) => {
                     if (!(action instanceof HTMLElement)) {
                         return;
                     }
@@ -282,7 +295,7 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                     }
                 });
 
-                root.querySelectorAll('.extraMesButtons').forEach((container) => {
+                fragment.querySelectorAll('.extraMesButtons').forEach((container) => {
                     if (!(container instanceof HTMLElement)) {
                         return;
                     }
@@ -293,7 +306,7 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                     }
                 });
 
-                root.querySelectorAll('.mes_text').forEach((messageText) => {
+                fragment.querySelectorAll('.mes_text').forEach((messageText) => {
                     if (!(messageText instanceof HTMLElement)) {
                         return;
                     }
@@ -310,7 +323,6 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
             };
 
             const highlightFocusMessage = () => {
-                root.querySelectorAll('.chat-popout-target').forEach((element) => element.classList.remove('chat-popout-target'));
                 if (!Number.isInteger(focusMessageId)) {
                     return;
                 }
@@ -327,9 +339,8 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                 }
                 const target = root.querySelector(\`.mes[mesid="\${focusMessageId}"]\`);
                 if (target instanceof HTMLElement) {
-                    requestAnimationFrame(() => {
-                        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-                    });
+                    const top = root.scrollTop + target.getBoundingClientRect().top - root.getBoundingClientRect().top;
+                    root.scrollTo({ top, behavior: 'instant' });
                 }
             };
 
@@ -366,22 +377,29 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                     return;
                 }
 
+                const template = document.createElement('template');
+                template.innerHTML = chunk.html;
+                wireMessageUi(template.content);
+
                 if (direction === 'before') {
+                    const previousScrollTop = root.scrollTop;
                     const previousHeight = chat.scrollHeight;
-                    chat.insertAdjacentHTML('afterbegin', chunk.html);
+                    chat.prepend(template.content);
                     const newHeight = chat.scrollHeight;
-                    root.scrollTop += newHeight - previousHeight;
+                    // Native scroll anchoring may already have adjusted the current position.
+                    root.scrollTo({ top: previousScrollTop + newHeight - previousHeight, behavior: 'instant' });
                     state.loadedStart = chunk.loadedRangeStart;
                     state.loadedEnd = state.loadedEnd === null ? chunk.loadedRangeEnd : state.loadedEnd;
                 } else {
-                    chat.insertAdjacentHTML('beforeend', chunk.html);
+                    chat.append(template.content);
                     state.loadedStart = state.loadedStart === null ? chunk.loadedRangeStart : state.loadedStart;
                     state.loadedEnd = chunk.loadedRangeEnd;
                 }
 
                 state.totalMessages = chunk.totalMessages;
-                wireMessageUi();
-                highlightFocusMessage();
+                const messages = chat.querySelectorAll('.mes');
+                state.afterTrigger = messages[Math.max(0, messages.length - threshold)];
+                state.beforeTrigger = messages[Math.min(messages.length - 1, threshold - 1)];
                 maybeToggleFooter();
             };
 
@@ -437,29 +455,17 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
             };
 
             const maybeLoadMore = () => {
-                if (!(chat instanceof HTMLElement)) {
+                if (state.initialLoading || !(chat instanceof HTMLElement)) {
                     return;
                 }
 
-                const messages = Array.from(chat.querySelectorAll('.mes'));
-                if (!messages.length) {
-                    return;
+                const afterRect = state.afterTrigger?.getBoundingClientRect();
+                const beforeRect = state.beforeTrigger?.getBoundingClientRect();
+                if (afterRect && afterRect.top <= window.innerHeight) {
+                    void loadMoreAfter();
                 }
-
-                const afterTrigger = messages[Math.max(0, messages.length - threshold)];
-                if (afterTrigger instanceof HTMLElement) {
-                    const rect = afterTrigger.getBoundingClientRect();
-                    if (rect.top <= window.innerHeight) {
-                        void loadMoreAfter();
-                    }
-                }
-
-                const beforeTrigger = messages[Math.min(messages.length - 1, threshold - 1)];
-                if (beforeTrigger instanceof HTMLElement) {
-                    const rect = beforeTrigger.getBoundingClientRect();
-                    if (rect.bottom >= 0) {
-                        void loadMoreBefore();
-                    }
+                if (beforeRect && beforeRect.bottom >= 0) {
+                    void loadMoreBefore();
                 }
             };
 
@@ -511,8 +517,10 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                         count: Number.isInteger(focusMessageId) ? initialBatchSize : batchSize,
                     });
                     insertChunk(chunk, 'after');
+                    highlightFocusMessage();
+                    setLoadingState({ visible: false });
+                    await new Promise(resolve => requestAnimationFrame(resolve));
                     scrollFocusIntoView();
-                    maybeLoadMore();
                 } catch (error) {
                     console.error('[Chat Popout] Failed to initialize reader.', error);
                     state.loadError = error?.message || 'Failed to load chat.';
@@ -520,6 +528,9 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                     state.initialLoading = false;
                     state.statusMessage = '';
                     syncLoadingState();
+                }
+                if (!state.loadError) {
+                    maybeLoadMore();
                 }
             };
 
