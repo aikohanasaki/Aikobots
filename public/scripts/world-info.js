@@ -5109,10 +5109,6 @@ function enableKeysInputHelper({ template, entry, entryPropName, originalDataVal
         if (isRegex) {
             content.html(highlightRegex(item.text));
             content.addClass('regex_item').prepend($('<span>').addClass('regex_icon').text('•*').attr('title', translate('Regex')));
-        } else if (worldInfoFilter.getFilterData(FILTER_TYPES.WORLD_INFO_SEARCH)) {
-            const matches = worldInfoFilter.getWorldInfoMatches(entry.uid)
-                .filter(match => match.key === entryPropName && match.value === item.text);
-            content.html(renderWorldInfoSearchHighlight(item.text, matches, entryPropName));
         }
         if (searchStyle && item.count) {
             const wrapper = $('<span>').addClass('result_block').append(content);
@@ -5178,7 +5174,6 @@ function enableKeysInputHelper({ template, entry, entryPropName, originalDataVal
     } else {
         template.find(`select[name="${entryPropName}"]`).hide();
         input.show();
-        attachWorldInfoSearchHighlight(input, entry);
         /**
         * @param {Event} _event
         * @param {{ skipReset?: boolean, noSave?: boolean }} [arg]
@@ -5525,60 +5520,6 @@ function setCommentPlaceholder(keys, commentInput) {
  * @param {object} data - The world info data object.
  * @param {object} entry - The entry object to be edited.
  */
-function escapeHighlightText(value) {
-    return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
-}
-
-function renderWorldInfoSearchHighlight(value, matches = [], fieldName = '') {
-    const source = String(value ?? '');
-    const spans = matches.filter(match => match.key === fieldName && Array.isArray(match.indices))
-        .flatMap(match => match.indices.map(([start, end]) => ({ start, end, fuzzy: true })));
-    const term = worldInfoFilter.getFilterData(FILTER_TYPES.WORLD_INFO_SEARCH)?.trim();
-    if (term) {
-        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const exact = new RegExp(escaped, 'giu');
-        let found;
-        while ((found = exact.exec(source))) spans.push({ start: found.index, end: found.index + found[0].length - 1, fuzzy: false });
-    }
-    const merged = spans.sort((a, b) => a.start - b.start || Number(a.fuzzy) - Number(b.fuzzy));
-    let html = '', cursor = 0;
-    for (const span of merged) {
-        if (span.start < cursor) continue;
-        html += escapeHighlightText(source.slice(cursor, span.start));
-        html += `<mark class="wi-search-highlight ${span.fuzzy ? 'fuzzy' : 'exact'}">${escapeHighlightText(source.slice(span.start, span.end + 1))}</mark>`;
-        cursor = span.end + 1;
-    }
-    return html + escapeHighlightText(source.slice(cursor));
-}
-
-function attachWorldInfoSearchHighlight(input, entry) {
-    if (!(input?.length && input.is('textarea'))) return;
-    const wrapper = $('<div class="wi-search-highlight-wrap"></div>');
-    input.wrap(wrapper);
-    const container = input.parent();
-    const layer = $('<div class="wi-search-highlight-layer" aria-hidden="true"></div>');
-    const inputStyle = getComputedStyle(input[0]);
-    layer.css({
-        boxSizing: inputStyle.boxSizing,
-        paddingTop: inputStyle.paddingTop,
-        paddingRight: inputStyle.paddingRight,
-        paddingBottom: inputStyle.paddingBottom,
-        paddingLeft: inputStyle.paddingLeft,
-        font: inputStyle.font,
-        lineHeight: inputStyle.lineHeight,
-    });
-    container.prepend(layer);
-    const refresh = () => {
-        layer.html(renderWorldInfoSearchHighlight(input.val(), worldInfoFilter.getWorldInfoMatches(entry.uid), input.attr('name')));
-        layer.scrollTop(input.scrollTop());
-        layer.scrollLeft(input.scrollLeft());
-    };
-    input.on('input.wiSearchHighlight scroll.wiSearchHighlight', refresh);
-    input.on('focus.wiSearchHighlight', () => container.addClass('editing'));
-    input.on('blur.wiSearchHighlight', () => { container.removeClass('editing'); refresh(); });
-    refresh();
-}
-
 export async function getWorldEntry(name, data, entry) {
     if (!data.entries[entry.uid]) return;
 
@@ -5928,7 +5869,6 @@ export async function getWorldEntry(name, data, entry) {
             if (!skipCount) countTokensDebounced(counter, value);
         });
         contentInput.val(entry.content).trigger('input', { skipCount: true, noSave: true });
-        attachWorldInfoSearchHighlight(contentInput, entry);
         editTemplate.find('.editor_maximize').attr('data-for', contentInputId);
 
         // Outlet name
