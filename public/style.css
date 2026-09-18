@@ -845,14 +845,41 @@ hr {
     font-size: calc(var(--mainFontSize) * 0.9);
 }
 
-.chat-find-results article {
+.chat-find-result {
     padding-block: 0.75em;
     border-bottom: 1px solid var(--SmartThemeBorderColor);
 }
 
-.chat-find-results p {
+.chat-find-result > summary {
+    display: flex;
+    gap: 0.75em;
+    cursor: pointer;
+    list-style-position: outside;
+}
+
+.chat-find-result > summary strong {
+    flex: 0 0 auto;
+}
+
+.chat-find-result > summary span,
+.chat-find-result-text {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+}
+
+.chat-find-result[open] > summary span {
+    display: none;
+}
+
+.chat-find-result-text {
+    margin: 0.75em 0 0 1.25em;
+}
+
+.chat-find-result-text mark {
+    color: var(--SmartThemeBodyColor);
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor) 45%, transparent);
+    border-radius: 0.15em;
+    padding-inline: 0.1em;
 }
 
 #top_chat_bar {

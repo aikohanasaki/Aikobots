@@ -40,3 +40,28 @@ export function findChatMessages(messages, query) {
         ? [{ index, name: String(message.name ?? ''), text: message.mes }]
         : []);
 }
+
+/** Returns a 40-word preview while preserving the original message text. */
+export function getChatMessagePreview(text, maxWords = 40) {
+    const value = String(text ?? '');
+    if (!value) return { text: '', truncated: false };
+    const segmenter = typeof Intl.Segmenter === 'function'
+        ? new Intl.Segmenter(undefined, { granularity: 'word' })
+        : null;
+    if (segmenter) {
+        let wordCount = 0;
+        let end = value.length;
+        for (const segment of segmenter.segment(value)) {
+            if (!segment.isWordLike) continue;
+            wordCount++;
+            if (wordCount > maxWords) {
+                end = segment.index;
+                break;
+            }
+        }
+        return { text: value.slice(0, end).trimEnd(), truncated: end < value.length };
+    }
+    const words = [...value.matchAll(/\S+/gu)];
+    if (words.length <= maxWords) return { text: value, truncated: false };
+    return { text: value.slice(0, words[maxWords].index).trimEnd(), truncated: true };
+}

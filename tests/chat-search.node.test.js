@@ -3,7 +3,7 @@ import test from 'node:test';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-import { fetchChatSearchResults, findChatMessages } from '../public/scripts/chat-search.js';
+import { fetchChatSearchResults, findChatMessages, getChatMessagePreview } from '../public/scripts/chat-search.js';
 import { validateChunkedChatPayload } from '../public/scripts/chat-chunking.js';
 
 test('find popup includes unloaded history without changing chat and rejects a switched chat', async () => {
@@ -34,7 +34,7 @@ test('find popup includes unloaded history without changing chat and rejects a s
             getActiveChatRevisionKey: () => key,
             isChatFullyHydrated: () => false,
             getTotalChatMessages: () => 2,
-            chat, findChatMessages, validateChunkedChatPayload,
+            chat, findChatMessages, getChatMessagePreview, validateChunkedChatPayload,
             clearTimeout() {}, setTimeout: callback => callback(),
             fetchChunkedChat: async options => {
                 assert.equal(options.hydrateFull, true);
@@ -54,7 +54,7 @@ test('find popup includes unloaded history without changing chat and rejects a s
         if (!switchChat) {
             input.value = 'needle';
             input.listeners.input();
-            assert.deepEqual(elements.filter(element => element.tag === 'article').map(row => row.children[1].textContent),
+            assert.deepEqual(elements.filter(element => element.tag === 'details').map(row => row.children[0].children[1].textContent),
                 ['<img src=x> needle', 'local needle']);
         } else {
             assert.ok(elements.some(element => element.textContent === 'Could not search this chat. Close and try again.'));
@@ -63,6 +63,15 @@ test('find popup includes unloaded history without changing chat and rejects a s
         assert.equal(chat[1].mes, 'local needle');
         popup.onClose();
     }
+});
+
+test('previews use 40 words and retain short, Japanese, and literal text', () => {
+    const longText = Array.from({ length: 41 }, (_, index) => `word${index}`).join(' ');
+    const preview = getChatMessagePreview(longText);
+    assert.equal(preview.truncated, true);
+    assert.equal(preview.text.split(/\s+/u).length, 40);
+    assert.deepEqual(getChatMessagePreview('short message'), { text: 'short message', truncated: false });
+    assert.equal(getChatMessagePreview('日本語の文章です').text, '日本語の文章です');
 });
 
 test('find-all searches literal current text with absolute indices, excluding swipes and metadata', () => {

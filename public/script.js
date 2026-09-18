@@ -102,7 +102,7 @@ import {
     assignChunkMessagesByAbsoluteId,
     validateChunkedChatPayload,
 } from './scripts/chat-chunking.js';
-import { fetchChatSearchResults, findChatMessages } from './scripts/chat-search.js';
+import { fetchChatSearchResults, findChatMessages, getChatMessagePreview } from './scripts/chat-search.js';
 
 import {
     setOpenAIMessageExamples,
@@ -3360,6 +3360,24 @@ async function searchCurrentChatMessages() {
     let messages = [];
     let timer;
     let closed = false;
+    const appendHighlightedText = (container, text, term) => {
+        const value = String(text ?? '');
+        const normalizedTerm = term.trim();
+        if (!normalizedTerm) {
+            container.append(document.createTextNode(value));
+            return;
+        }
+        const matcher = new RegExp(normalizedTerm.replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&'), 'giu');
+        let lastIndex = 0;
+        for (const match of value.matchAll(matcher)) {
+            container.append(document.createTextNode(value.slice(lastIndex, match.index)));
+            const mark = document.createElement('mark');
+            mark.textContent = match[0];
+            container.append(mark);
+            lastIndex = match.index + match[0].length;
+        }
+        container.append(document.createTextNode(value.slice(lastIndex)));
+    };
     const render = () => {
         const matches = findChatMessages(messages, input.value);
         results.replaceChildren();
@@ -3367,12 +3385,23 @@ async function searchCurrentChatMessages() {
             : matches.length ? t`Matching messages: ${matches.length}` : translate('No matching messages.');
         const fragment = document.createDocumentFragment();
         for (const match of matches) {
-            const row = document.createElement('article');
+            const row = document.createElement('details');
+            row.className = 'chat-find-result';
             const title = document.createElement('strong');
             title.textContent = `#${match.index} · ${match.name}`;
-            const text = document.createElement('p');
-            text.textContent = match.text;
-            row.append(title, text);
+            const preview = getChatMessagePreview(match.text);
+            const summary = document.createElement('summary');
+            const previewText = document.createElement('span');
+            previewText.textContent = `${preview.text}${preview.truncated ? '…' : ''}`;
+            summary.append(title, previewText);
+            const fullText = document.createElement('p');
+            fullText.className = 'chat-find-result-text';
+            row.addEventListener('toggle', () => {
+                if (row.open && !fullText.hasChildNodes()) {
+                    appendHighlightedText(fullText, match.text, input.value);
+                }
+            });
+            row.append(summary, fullText);
             fragment.append(row);
         }
         results.append(fragment);
