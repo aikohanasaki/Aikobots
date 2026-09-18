@@ -85,6 +85,9 @@ export class FilterHelper {
      */
     scoreCache;
 
+    /** Match metadata for the active lorebook search, kept transiently. */
+    searchMatchCache = new Map();
+
     /**
      * Cache for fuzzy search results per category.
      * @type {Object.<string, { resultMap: Map<string, any> }>}
@@ -174,14 +177,21 @@ export class FilterHelper {
         const term = this.filterData[FILTER_TYPES.WORLD_INFO_SEARCH];
 
         if (!term) {
+            this.searchMatchCache.clear();
             return data;
         }
 
         const fuzzySearchResults = fuzzySearchWorldInfo(data, term, this.fuzzySearchCaches);
         this.cacheScores(FILTER_TYPES.WORLD_INFO_SEARCH, new Map(fuzzySearchResults.map(i => [i.item?.uid, i.score])));
+        this.searchMatchCache = new Map(fuzzySearchResults.map(i => [i.item?.uid, i.matches ?? []]));
 
         const filteredData = data.filter(entity => fuzzySearchResults.find(x => x.item === entity));
         return filteredData;
+    }
+
+    /** Returns Fuse field matches for a lorebook entry. */
+    getWorldInfoMatches(uid) {
+        return this.searchMatchCache.get(uid) ?? [];
     }
 
     /**

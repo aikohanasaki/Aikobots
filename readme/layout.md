@@ -1109,4 +1109,6 @@ Run `npm run test:frontend:smoke -- --layouts` for the focused layout browser ma
 
 ### Memory Books help drawer
 
+Lorebook search highlights use the smart-theme quote color for exact text and the emphasis color with a dashed underline for fuzzy spans. The highlight mirror is hidden while an entry textarea is focused so native editing remains unchanged.
+
 The smart-theme rules in `public/style.css` give `.stmb-help-drawer-copy` a flexible 24-character basis and allow long words to wrap. The download link can shrink and wrap within the drawer's width. The existing flex wrapping, theme colors, and mobile rules remain authoritative; there are no browser-specific sizing overrides.

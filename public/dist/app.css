@@ -11253,6 +11253,15 @@ p.stmb-help-drawer-copy {
     border-radius: 4px;
 }
 
+/* Lorebook search matches. The mirror is visible only while the native editor is idle. */
+.wi-search-highlight-wrap { position: relative; display: block; }
+.wi-search-highlight-wrap > textarea { position: relative; z-index: 1; background: transparent; color: transparent; caret-color: var(--SmartThemeBodyColor); }
+.wi-search-highlight-wrap.editing > textarea { color: var(--SmartThemeBodyColor); }
+.wi-search-highlight-layer { position: absolute; inset: 0; z-index: 0; overflow: auto; box-sizing: border-box; padding: 0; white-space: pre-wrap; overflow-wrap: break-word; color: var(--SmartThemeBodyColor); pointer-events: none; }
+.wi-search-highlight-wrap.editing > .wi-search-highlight-layer { visibility: hidden; }
+.wi-search-highlight { border-radius: 2px; color: inherit; background: color-mix(in srgb, var(--SmartThemeQuoteColor) 35%, transparent); }
+.wi-search-highlight.fuzzy { background: color-mix(in srgb, var(--SmartThemeEmColor) 35%, transparent); text-decoration: underline dashed var(--SmartThemeEmColor); text-underline-offset: 2px; }
+
 .world-info-locks-bar {
     flex: 1 1 100%;
     min-width: 0;

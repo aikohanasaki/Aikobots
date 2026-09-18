@@ -2798,12 +2798,13 @@ function switchMaxContextSize() {
  * @param {Object.<string, { resultMap: Map<string, any> }>} [fuzzySearchCaches=null] - Optional fuzzy search caches
  * @returns {import('fuse.js').FuseResult<T>[]} Results as items with their score
  */
-export function performFuzzySearch(type, data, keys, searchValue, fuzzySearchCaches = null) {
+export function performFuzzySearch(type, data, keys, searchValue, fuzzySearchCaches = null, { includeMatches = false } = {}) {
+    const cacheKey = `${includeMatches ? 'matches' : 'results'}:${searchValue}`;
     // Check cache if provided
     if (fuzzySearchCaches) {
         const cache = fuzzySearchCaches[type];
-        if (cache?.resultMap.has(searchValue)) {
-            return cache.resultMap.get(searchValue);
+        if (cache?.resultMap.has(cacheKey)) {
+            return cache.resultMap.get(cacheKey);
         }
     }
 
@@ -2812,6 +2813,7 @@ export function performFuzzySearch(type, data, keys, searchValue, fuzzySearchCac
         includeScore: true,
         ignoreLocation: true,
         useExtendedSearch: true,
+        includeMatches,
         threshold: 0.2,
     });
 
@@ -2819,7 +2821,7 @@ export function performFuzzySearch(type, data, keys, searchValue, fuzzySearchCac
 
     // Store in cache if provided
     if (fuzzySearchCaches) {
-        fuzzySearchCaches[type].resultMap.set(searchValue, results);
+        fuzzySearchCaches[type].resultMap.set(cacheKey, results);
     }
     return results;
 }
@@ -2866,7 +2868,7 @@ export function fuzzySearchWorldInfo(data, searchValue, fuzzySearchCaches = null
         { name: 'automationId', weight: 1 },
     ];
 
-    return performFuzzySearch(fuzzySearchCategories.worldInfo, data, keys, searchValue, fuzzySearchCaches);
+    return performFuzzySearch(fuzzySearchCategories.worldInfo, data, keys, searchValue, fuzzySearchCaches, { includeMatches: true });
 }
 
 /**
