@@ -1,15 +1,15 @@
 {
   "formatVersion": 1,
   "initialRequestCount": 10,
-  "initialGzipBytes": 1706416,
+  "initialGzipBytes": 1706090,
   "builtinExtensionCount": 13,
   "stmbModuleCount": 32,
   "assets": [
     {
       "name": "app.css",
-      "bytes": 500258,
-      "gzipBytes": 93097,
-      "sha256": "d8e8e34ec122eaa86522508801186f595d094c2fe3412c7f5787e7625f7a7ee9"
+      "bytes": 500907,
+      "gzipBytes": 92771,
+      "sha256": "7946c93dc32ed315fe8d1c1debcf498b4c71c53de238bb4df2b12c340aabe550"
     },
     {
       "name": "app.js",
