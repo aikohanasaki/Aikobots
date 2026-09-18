@@ -21232,7 +21232,7 @@ async function retrieveCatalogCharacter(publishedFilename) {
     return data;
 }
 
-function getCatalogCharacterRow(entry) {
+function getCatalogCharacterRow(entry, onRetrieved) {
     const publishedFilename = String(entry.publishedFilename || '').trim();
     const displayName = String(entry.name || publishedFilename || 'Unknown bot').trim();
     const botmakerName = String(entry.creator || entry.botmakerName || '').trim();
@@ -21266,6 +21266,7 @@ function getCatalogCharacterRow(entry) {
             try {
                 await retrieveCatalogCharacter(publishedFilename);
                 entry.alreadyInstalled = true;
+                onRetrieved();
                 avatar.attr('src', getThumbnailUrl('avatar', publishedFilename, true));
                 retrieveButton.find('span').text(translate('Installed'));
                 toastr.success(t`${displayName} was retrieved from The Catalog.`);
@@ -21283,10 +21284,12 @@ function getCatalogCharacterRow(entry) {
 
 async function showCharacterCatalog() {
     const container = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
+    const summary = $('<div class="opacity50p" aria-live="polite"></div>').hide();
     const list = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
 
     container
         .append($('<h3 class="margin0"></h3>').text(translate('The Catalog')))
+        .append(summary)
         .append(list.append($('<div class="opacity50p"></div>').text(translate('Loading catalog...'))));
 
     const popupPromise = callGenericPopup(container, POPUP_TYPE.TEXT, '', {
@@ -21297,15 +21300,22 @@ async function showCharacterCatalog() {
 
     try {
         const entries = await getCatalogCharacters();
+        /** Refresh counts from the same entries used to render the catalog rows. */
+        function updateSummary() {
+            const downloaded = entries.filter(entry => entry.alreadyInstalled).length;
+            summary.text(t`Bots: ${entries.length} total · ${downloaded} downloaded`).show();
+        }
+        updateSummary();
         list.empty();
         if (!entries.length) {
             list.append($('<div class="opacity50p"></div>').text(translate('No globally pushed bots are available.')));
         } else {
             for (const entry of entries) {
-                list.append(getCatalogCharacterRow(entry));
+                list.append(getCatalogCharacterRow(entry, updateSummary));
             }
         }
     } catch (error) {
+        summary.hide();
         list.empty().append($('<div class="text_block"></div>').text(error?.message || 'Failed to load The Catalog.'));
         toastr.error(error?.message || 'Failed to load The Catalog.');
     }

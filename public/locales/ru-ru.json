@@ -6509,5 +6509,6 @@
   ,"Claude capabilities determine whether adaptive or manual thinking is used. Auto leaves thinking and effort at Anthropic's defaults.": "Возможности Claude определяют использование адаптивного или ручного мышления. Авто оставляет мышление и усилие со значениями Anthropic по умолчанию."
   ,"Claude refused this request.": "Claude отклонил этот запрос.",
     "Disabled because Chat Width is controlled by the active layout CSS.": "Отключено, поскольку ширина чата задаётся CSS активного макета.",
-    "Disabled because the chat has a movable panel width. Reset movable panels to restore layout sizing.": "Отключено, поскольку ширина чата задана перемещаемой панелью. Сбросьте перемещаемые панели, чтобы восстановить размеры макета."
+    "Disabled because the chat has a movable panel width. Reset movable panels to restore layout sizing.": "Отключено, поскольку ширина чата задана перемещаемой панелью. Сбросьте перемещаемые панели, чтобы восстановить размеры макета.",
+    "Bots: ${0} total \u00b7 ${1} downloaded": "Боты: всего ${0} · скачано ${1}"
 }
