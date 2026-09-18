@@ -2303,6 +2303,12 @@ export async function showTopicalClipPopup(options = {}) {
         void loadSelectedLorebook(getSelectedLorebookName());
     });
     targetSelect?.addEventListener('change', () => {
+        const target = getSelectedTargetEntry();
+        if (keywordsInput) {
+            keywordsInput.value = getMode() === 'update' && target
+                ? getEntryKeys(target).join(', ')
+                : '';
+        }
         renderTargetMetadataMessage();
         clearSourceSelection();
         renderDiagnostics();

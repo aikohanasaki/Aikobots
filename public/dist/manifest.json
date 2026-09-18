@@ -1,7 +1,7 @@
 {
   "formatVersion": 1,
   "initialRequestCount": 10,
-  "initialGzipBytes": 1705113,
+  "initialGzipBytes": 1705130,
   "builtinExtensionCount": 13,
   "stmbModuleCount": 32,
   "assets": [
@@ -37,9 +37,9 @@
     },
     {
       "name": "stmb.js",
-      "bytes": 753459,
-      "gzipBytes": 189198,
-      "sha256": "9b3152c1f9ecb4a028fe27bae24de8ae2d8c2753680fd3401dea1a3bd3bc07ff"
+      "bytes": 753524,
+      "gzipBytes": 189215,
+      "sha256": "3cf29a071430da3fcd92cc46e0c20a2e2f9d0fc98738a40bc4bb40ec1064e5df"
     },
     {
       "name": "vendor.js",
