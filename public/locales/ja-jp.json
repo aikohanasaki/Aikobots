@@ -6438,5 +6438,10 @@
   ,"Claude refused this request.": "Claudeがこのリクエストを拒否しました。",
     "Disabled because Chat Width is controlled by the active layout CSS.": "チャットの幅は現在のレイアウトのCSSで制御されているため、無効になっています。",
     "Disabled because the chat has a movable panel width. Reset movable panels to restore layout sizing.": "移動可能なパネルの幅がチャットに設定されているため、無効になっています。レイアウトのサイズに戻すには、移動可能なパネルをリセットしてください。",
-    "Bots: ${0} total \u00b7 ${1} downloaded": "ボット: 合計 ${0} · ダウンロード済み ${1}"
+    "Bots: ${0} total \u00b7 ${1} downloaded": "ボット: 合計 ${0} · ダウンロード済み ${1}",
+    "Find in chat": "チャット内を検索",
+    "Search messages": "メッセージを検索",
+    "Matching messages: ${0}": "一致するメッセージ: ${0}",
+    "No matching messages.": "一致するメッセージはありません。",
+    "Could not search this chat. Close and try again.": "このチャットを検索できませんでした。閉じてからもう一度お試しください。"
 }

@@ -6510,5 +6510,10 @@
   ,"Claude refused this request.": "Claude отклонил этот запрос.",
     "Disabled because Chat Width is controlled by the active layout CSS.": "Отключено, поскольку ширина чата задаётся CSS активного макета.",
     "Disabled because the chat has a movable panel width. Reset movable panels to restore layout sizing.": "Отключено, поскольку ширина чата задана перемещаемой панелью. Сбросьте перемещаемые панели, чтобы восстановить размеры макета.",
-    "Bots: ${0} total \u00b7 ${1} downloaded": "Боты: всего ${0} · скачано ${1}"
+    "Bots: ${0} total \u00b7 ${1} downloaded": "Боты: всего ${0} · скачано ${1}",
+    "Find in chat": "Поиск в чате",
+    "Search messages": "Поиск сообщений",
+    "Matching messages: ${0}": "Найдено сообщений: ${0}",
+    "No matching messages.": "Сообщения не найдены.",
+    "Could not search this chat. Close and try again.": "Не удалось выполнить поиск в этом чате. Закройте окно и попробуйте ещё раз."
 }

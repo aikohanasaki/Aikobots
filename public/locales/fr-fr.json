@@ -6495,5 +6495,10 @@
   ,"Claude refused this request.": "Claude a refusé cette requête.",
     "Disabled because Chat Width is controlled by the active layout CSS.": "Désactivé car la largeur du chat est contrôlée par le CSS de la disposition active.",
     "Disabled because the chat has a movable panel width. Reset movable panels to restore layout sizing.": "Désactivé car la largeur du chat est définie par un panneau déplaçable. Réinitialisez les panneaux déplaçables pour rétablir les dimensions de la disposition.",
-    "Bots: ${0} total \u00b7 ${1} downloaded": "Bots : ${0} au total · ${1} téléchargés"
+    "Bots: ${0} total \u00b7 ${1} downloaded": "Bots : ${0} au total · ${1} téléchargés",
+    "Find in chat": "Rechercher dans le chat",
+    "Search messages": "Rechercher dans les messages",
+    "Matching messages: ${0}": "Messages correspondants : ${0}",
+    "No matching messages.": "Aucun message correspondant.",
+    "Could not search this chat. Close and try again.": "Impossible de rechercher dans ce chat. Fermez la fenêtre et réessayez."
 }

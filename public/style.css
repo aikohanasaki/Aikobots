@@ -845,6 +845,16 @@ hr {
     font-size: calc(var(--mainFontSize) * 0.9);
 }
 
+.chat-find-results article {
+    padding-block: 0.75em;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
+.chat-find-results p {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 #top_chat_bar {
     height: var(--topBarBlockSize);
     border-radius: 10px 10px 0 0;

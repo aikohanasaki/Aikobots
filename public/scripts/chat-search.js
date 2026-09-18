@@ -31,3 +31,12 @@ export async function fetchChatSearchResults({
 
     return results;
 }
+
+/** Finds literal, case-insensitive matches in current message text, excluding alternate swipes and metadata. */
+export function findChatMessages(messages, query) {
+    const term = query.trim().toLowerCase();
+    if (!term) return [];
+    return messages.flatMap((message, index) => typeof message?.mes === 'string' && message.mes.toLowerCase().includes(term)
+        ? [{ index, name: String(message.name ?? ''), text: message.mes }]
+        : []);
+}

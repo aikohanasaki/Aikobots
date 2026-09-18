@@ -1014,6 +1014,8 @@ Use spacing and reasonable maximum widths to improve density. Do not solve overf
 
 The key long-chat invariant is one usable chat scroll region with a reachable composer. Do not use `height: auto` on the shell as a way to fit the conversation into the document, or set overflow hidden on the message list. Large histories should remain inside the existing scrolling model.
 
+The Chat Top Bar's `#top_chat_bar_search` opens a find-all popup. `.chat-find-results` uses smart-theme borders and preserves message line breaks while wrapping long text. Keep these results readable within the scrolling popup on mobile.
+
 Core feature styling belongs to the smart theme in `public/style.css`. Custom layouts should normally leave these surfaces inherited; targeted spacing changes must preserve:
 
 | Surface | Required behavior |
