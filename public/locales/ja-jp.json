@@ -1,4 +1,10 @@
 {
+    "Save all versions": "すべてのバージョンを保存",
+    "Enable sideprompt versioning": "サイドプロンプトのバージョン管理を有効にする",
+    "Requires Enable sideprompt versioning in the Side Prompt Manager. Older versions are kept disabled.": "サイドプロンプトマネージャーでバージョン管理を有効にする必要があります。古いバージョンは無効な状態で保持されます。",
+    "STMemoryBooks_SidePromptVersioningHelp": "このチェックボックスをオンにすると、サイドプロンプトごとのバージョン管理設定が有効になります。オフの場合、新しいバージョンは作成されず、既存の履歴が保持されて最新の出力が更新されます。",
+    "Side-prompt history is ambiguous. No changes were saved.": "サイドプロンプトの履歴を一意に特定できません。変更は保存されませんでした。",
+    "Invalid side-prompt history request.": "サイドプロンプト履歴のリクエストが無効です。",
     "The memory was saved, but this chat view is out of date. Reopen the chat before continuing.": "メモリは保存されましたが、このチャット表示は最新ではありません。続行する前にチャットを開き直してください。",
     "The chat has a newer saved version. Reopen the chat, then retry the pending operation.": "チャットに新しい保存済みバージョンがあります。チャットを開き直してから、未完了の操作を再試行してください。",
     "The source messages were changed, removed, or moved. This operation cannot safely resume. Review the current memories before discarding the pending operation and generating again.": "元メッセージが変更、削除、または移動されています。この操作は安全に再開できません。未完了の操作を破棄して再生成する前に、現在のメモリを確認してください。",

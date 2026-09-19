@@ -1,4 +1,10 @@
 {
+    "Save all versions": "Guardar todas as versões",
+    "Enable sideprompt versioning": "Ativar o histórico de versões dos prompts auxiliares",
+    "Requires Enable sideprompt versioning in the Side Prompt Manager. Older versions are kept disabled.": "Requer a ativação do histórico de versões no gestor de prompts auxiliares. As versões anteriores são mantidas desativadas.",
+    "STMemoryBooks_SidePromptVersioningHelp": "Marque esta caixa para ativar as definições individuais de versões dos prompts auxiliares. Se estiver desmarcada, não serão criadas novas versões; o histórico existente será mantido e o resultado mais recente será atualizado.",
+    "Side-prompt history is ambiguous. No changes were saved.": "O histórico do prompt auxiliar é ambíguo. Não foram guardadas alterações.",
+    "Invalid side-prompt history request.": "Pedido de histórico do prompt auxiliar inválido.",
     "The memory was saved, but this chat view is out of date. Reopen the chat before continuing.": "A memória foi guardada, mas esta vista do chat está desatualizada. Volte a abrir o chat antes de continuar.",
     "The chat has a newer saved version. Reopen the chat, then retry the pending operation.": "O chat tem uma versão guardada mais recente. Volte a abrir o chat e tente novamente a operação pendente.",
     "The source messages were changed, removed, or moved. This operation cannot safely resume. Review the current memories before discarding the pending operation and generating again.": "As mensagens de origem foram alteradas, removidas ou movidas. Esta operação não pode ser retomada em segurança. Reveja as memórias atuais antes de descartar a operação pendente e gerar novamente.",

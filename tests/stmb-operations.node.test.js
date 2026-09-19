@@ -8,7 +8,7 @@ import { beginStmbOperation, captureStmbOperationSource, applyStmbProgress, reco
 import { setConfigFilePath } from '../src/util.js';
 
 setConfigFilePath(fs.existsSync(path.resolve('config.yaml')) ? path.resolve('config.yaml') : path.resolve('../config.yaml'));
-const { planStmbRollbackBook, stampStmbSidePromptRollback } = await import('../src/stmb-rollback.js');
+const { planStmbRollbackBook, stampStmbSidePromptRollback, updateStmbSidePromptArchiveState } = await import('../src/stmb-rollback.js');
 
 async function createChat(t) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'stmb-operation-test-'));
@@ -93,6 +93,31 @@ test('Side Prompt rollback restores one server snapshot and rejects edits and v1
     assert.throws(() => planStmbRollbackBook(db, operation, { entries: { 1: { ...entry, content: 'Manually edited' } } }), { code: 'StmbRecoverySidePromptChanged' });
     entry.STMB_sidePromptRegeneration.version = 1;
     assert.throws(() => planStmbRollbackBook(db, operation, { entries: { 1: entry } }), { code: 'StmbRecoverySnapshotUnavailable' });
+});
+
+test('rollback of a versioned Side Prompt reactivates its predecessor without hiding manual edits', async t => {
+    const { db, messages } = await createChat(t);
+    recordStmbDeletion(db, getChatHeader(db), 2, 2, 'delete-version');
+    const operation = readStmbOperations(db)[0];
+    const makeVersion = (sequence, messageIndex) => {
+        const entry = {
+            uid: sequence, content: `Ordinary output ${sequence}`, disable: false,
+            STMB_sidePromptHistory: { version: 1, templateKey: 'assess', chatKey: 'chat', titleSource: 'name', titleBase: 'Assess', sequence },
+            STMB_sidePromptRegeneration: { version: 1, sceneStartUuid: messages[messageIndex].aikobots_message_uuid, sceneEndUuid: messages[messageIndex].aikobots_message_uuid },
+        };
+        stampStmbSidePromptRollback(entry, null);
+        return entry;
+    };
+    const older = makeVersion(1, 0);
+    const latest = makeVersion(2, 2);
+    updateStmbSidePromptArchiveState(older, () => { older.disable = true; });
+    const result = planStmbRollbackBook(db, operation, { entries: { 1: older, 2: latest } });
+    assert.deepEqual(Object.keys(result.entries), ['1']);
+    assert.equal(result.entries[1].disable, false);
+    assert.equal(result.entries[1].content, older.content);
+    latest.content = 'A manual change';
+    updateStmbSidePromptArchiveState(latest, () => { latest.disable = true; });
+    assert.throws(() => planStmbRollbackBook(db, operation, { entries: { 1: older, 2: latest } }), { code: 'StmbRecoverySidePromptChanged' });
 });
 
 test('rollback rejects ambiguous legacy ownership and does not treat unrelated entry metadata as a dependency', async t => {

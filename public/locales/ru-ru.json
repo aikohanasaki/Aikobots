@@ -1,4 +1,10 @@
 {
+    "Save all versions": "Сохранять все версии",
+    "Enable sideprompt versioning": "Включить хранение версий побочных промптов",
+    "Requires Enable sideprompt versioning in the Side Prompt Manager. Older versions are kept disabled.": "Требуется включить хранение версий в менеджере побочных промптов. Старые версии сохраняются отключёнными.",
+    "STMemoryBooks_SidePromptVersioningHelp": "Установите этот флажок, чтобы включить индивидуальные настройки версий побочных промптов. Если флажок снят, новые версии создаваться не будут; существующая история версий сохранится, а последний результат будет обновляться.",
+    "Side-prompt history is ambiguous. No changes were saved.": "Не удалось однозначно определить историю побочного промпта. Изменения не сохранены.",
+    "Invalid side-prompt history request.": "Некорректный запрос истории побочного промпта.",
     "The memory was saved, but this chat view is out of date. Reopen the chat before continuing.": "Воспоминание сохранено, но отображаемый чат устарел. Откройте чат заново, прежде чем продолжить.",
     "The chat has a newer saved version. Reopen the chat, then retry the pending operation.": "В чате есть более новая сохранённая версия. Откройте чат заново и повторите незавершённую операцию.",
     "The source messages were changed, removed, or moved. This operation cannot safely resume. Review the current memories before discarding the pending operation and generating again.": "Исходные сообщения были изменены, удалены или перемещены. Безопасно продолжить эту операцию невозможно. Проверьте текущие воспоминания, прежде чем отбросить незавершённую операцию и запустить генерацию заново.",

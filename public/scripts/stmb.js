@@ -4686,6 +4686,7 @@ function buildSidePromptLorebookTargetHtml(template = null) {
                 </select>
             </label>
             <small class="opacity70p" data-i18n="Changing this target will ask whether to save it for this chat only or for this side prompt going forward.">Changing this target will ask whether to save it for this chat only or for this side prompt going forward.</small>
+            <hr>
         </div>
     `;
 }
@@ -4813,6 +4814,10 @@ function buildSidePromptEditorHtml(template = null, options = {}) {
                 </label>
             </div>
             ${buildSidePromptLorebookTargetHtml(template)}
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-save-all-versions" ${template?.settings?.saveAllVersions === true ? 'checked' : ''}> <span data-i18n="Save all versions">Save all versions</span></label>
+                <small class="opacity70p" data-i18n="Requires Enable sideprompt versioning in the Side Prompt Manager. Older versions are kept disabled.">Requires Enable sideprompt versioning in the Side Prompt Manager. Older versions are kept disabled.</small>
+            </div>
             <div class="world_entry_form_control">
                 <div class="flex-container" style="gap:12px; flex-wrap: wrap;">
                     <label>
@@ -5048,6 +5053,7 @@ async function readSidePromptEditorPayload(dialog, template = null) {
 
     const settings = {
         ...(template?.settings || {}),
+        saveAllVersions: Boolean(dialog?.querySelector('#stmb-sp-editor-save-all-versions')?.checked),
         previousMemoriesCount,
         additionalContext: readAdditionalContextSourceSetting(dialog?.querySelector('#stmb-sp-editor-additional-context')),
         overrideProfileEnabled: Boolean(dialog?.querySelector('#stmb-sp-editor-override-profile-enabled')?.checked),
@@ -5158,6 +5164,10 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             </div>
             <div id="stmb-sp-set-controls"></div>
             <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-versioning-enabled" ${stmbSettings?.moduleSettings?.sidePromptVersioningEnabled === true ? 'checked' : ''}> <span data-i18n="Enable sideprompt versioning">Enable sideprompt versioning</span></label>
+                <small class="opacity70p" data-i18n="STMemoryBooks_SidePromptVersioningHelp">Check this box to enable individual sideprompt versioning settings. If this box is unchecked, no new versions will be created; existing version history is retained and the latest output is updated.</small>
+            </div>
+            <div class="world_entry_form_control">
                 <input type="text" id="stmb-sp-search" class="text_pole" placeholder="Search side prompts..." aria-label="Search side prompts" data-i18n="[placeholder]Search side prompts...;[aria-label]Search side prompts">
             </div>
             <div class="world_entry_form_control">
@@ -5191,6 +5201,13 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
 
     popup.dlg?.querySelector('#stmb-sp-search')?.addEventListener('input', async () => {
         await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
+    });
+
+    popup.dlg?.querySelector('#stmb-sp-versioning-enabled')?.addEventListener('change', async event => {
+        stmbSettings.moduleSettings.sidePromptVersioningEnabled = event.target.checked;
+        stmbSettings = normalizeStmbSettings(stmbSettings);
+        saveSettingsDebounced();
+        await notifyChange();
     });
 
     popup.dlg?.querySelector('#stmb-sp-max-concurrent')?.addEventListener('change', async event => {

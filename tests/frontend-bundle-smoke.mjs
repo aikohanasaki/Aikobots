@@ -55,6 +55,36 @@ async function testStmbSettingsControls(page) {
     assert.equal(await page.locator('#stmb-settings-auto-summary-token-threshold').inputValue(), '5555');
     await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
+
+    await page.locator('#stmb-menu-item').evaluate(element => element.click());
+    await page.locator('#stmb-settings-open-sideprompt-manager').click();
+    const versioning = page.locator('#stmb-sp-versioning-enabled');
+    assert.equal(await versioning.isChecked(), false);
+    const versioningSaved = page.waitForResponse(response => response.url().endsWith('/api/settings/save') && response.request().postDataJSON()?.stmb_settings?.moduleSettings?.sidePromptVersioningEnabled === true);
+    await versioning.focus();
+    await versioning.press('Space');
+    assert.equal((await versioningSaved).ok(), true);
+    await page.locator('#stmb-sp-new').click();
+    await page.locator('#stmb-sp-editor-name').fill('Versioned Test');
+    await page.locator('#stmb-sp-editor-prompt').fill('Assess the scene.');
+    const saveAll = page.locator('#stmb-sp-editor-save-all-versions');
+    assert.equal(await saveAll.isChecked(), false);
+    await saveAll.focus();
+    await saveAll.press('Space');
+    const promptSaved = page.waitForResponse(response => response.url().endsWith('/api/stmb/side-prompts') && response.request().method() === 'PUT');
+    await page.locator('dialog.popup').filter({ has: saveAll }).locator('.popup-button-ok').click();
+    const savedPromptResponse = await promptSaved;
+    assert.equal(savedPromptResponse.ok(), true);
+    const prompt = Object.values(savedPromptResponse.request().postDataJSON().document.prompts).find(item => item.name === 'Versioned Test');
+    assert.equal(prompt.settings.saveAllVersions, true);
+    await saveAll.waitFor({ state: 'detached' });
+    await page.keyboard.press('Escape');
+    await versioning.waitFor({ state: 'detached' });
+    await page.locator('#stmb-settings-open-sideprompt-manager').click();
+    assert.equal(await page.locator('#stmb-sp-versioning-enabled').isChecked(), true);
+    await page.keyboard.press('Escape');
+    await versioning.waitFor({ state: 'detached' });
+    await page.keyboard.press('Escape');
 }
 
 function getAvailablePort() {

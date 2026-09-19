@@ -1,7 +1,8 @@
 import express from 'express';
 import { fingerprintStmbSource } from '../../public/scripts/stmb-source.js';
 import { withStmbMemoryTransaction, resolveStmbOperations } from '../stmb-operation-service.js';
-import { stampStmbSidePromptRollback } from '../stmb-rollback.js';
+import { stampStmbSidePromptRollback, updateStmbSidePromptArchiveState } from '../stmb-rollback.js';
+import { SIDE_PROMPT_HISTORY_KEY, formatSidePromptVersionTitle, resolveSidePromptHistory, sidePromptHistoryError, validateSidePromptHistoryRequest } from '../../public/scripts/stmb-sideprompt-history.js';
 import { getStmbMemoryRole } from '../../public/scripts/stmb-group-policy.js';
 import { resolveLogicalChatReference, resolveSqliteLogicalChatReference } from './chats.js';
 import { stableHashString } from '../../public/scripts/hashing.js';
@@ -478,7 +479,7 @@ function createLorebookEntry(lorebookData) {
     return entry;
 }
 
-const RESERVED_LOREBOOK_ENTRY_UPDATE_FIELDS = new Set(['uid', 'comment', 'content', 'STMB_operationId']);
+const RESERVED_LOREBOOK_ENTRY_UPDATE_FIELDS = new Set(['uid', 'comment', 'content', 'STMB_operationId', 'STMB_sidePromptHistory']);
 
 function findReservedLorebookEntryUpdateField(updates = {}) {
     for (const key of Object.keys(updates || {})) {
@@ -512,8 +513,27 @@ function upsertLorebookEntryByTitleData(lorebookData, {
     metadataUpdates = {},
     entryOverrides = {},
     allowRollback = false,
+    sidePromptHistory = null,
 }) {
-    let entry = Object.values(lorebookData.entries).find(candidate => String(candidate?.comment || '') === title);
+    const history = sidePromptHistory ? resolveSidePromptHistory(lorebookData, sidePromptHistory) : null;
+    if (history && !String(content).trim()) throw sidePromptHistoryError(400);
+    let entry = history ? history.latest : Object.values(lorebookData.entries).find(candidate => String(candidate?.comment || '') === title);
+    const versioned = history && (sidePromptHistory.append || history.versions.length > 0);
+    const group = history?.versions[0]?.group || sidePromptHistory?.group;
+    if (versioned && history.legacy) {
+        const legacy = history.legacy;
+        updateStmbSidePromptArchiveState(legacy, () => {
+            legacy[SIDE_PROMPT_HISTORY_KEY] = makeSidePromptHistoryMetadata(sidePromptHistory, 1);
+            legacy.comment = formatSidePromptVersionTitle(sidePromptHistory.titleBase, 1);
+            legacy.group = group;
+        }, allowRollback);
+        history.versions.push(legacy);
+    }
+    const sequence = versioned
+        ? (history.versions.at(-1)?.[SIDE_PROMPT_HISTORY_KEY].sequence || 0) + (sidePromptHistory.append ? 1 : 0)
+        : 0;
+    if (versioned && (!Number.isSafeInteger(sequence) || sequence < 1)) throw sidePromptHistoryError();
+    if (versioned && sidePromptHistory.append) entry = null;
     const priorEntry = entry ? structuredClone(entry) : null;
     let created = false;
     if (!entry) {
@@ -528,7 +548,9 @@ function upsertLorebookEntryByTitleData(lorebookData, {
         created = true;
     }
 
-    entry.comment = title;
+    entry.comment = versioned
+        ? (sidePromptHistory.append ? formatSidePromptVersionTitle(sidePromptHistory.titleBase, sequence) : entry.comment)
+        : title;
     entry.content = content;
     for (const [key, value] of Object.entries(metadataUpdates)) {
         if (RESERVED_LOREBOOK_ENTRY_UPDATE_FIELDS.has(key)) {
@@ -543,8 +565,22 @@ function upsertLorebookEntryByTitleData(lorebookData, {
         entry[key] = value;
     }
 
+    if (versioned) {
+        entry[SIDE_PROMPT_HISTORY_KEY] = makeSidePromptHistoryMetadata(sidePromptHistory, sequence);
+        entry.group = group;
+        entry.disable = false;
+        for (const previous of history.versions) {
+            if (previous !== entry) updateStmbSidePromptArchiveState(previous, () => { previous.disable = true; }, allowRollback);
+        }
+    }
     if (allowRollback) stampStmbSidePromptRollback(entry, priorEntry);
     return { created, entry };
+}
+
+/** Stores only the stream identity and allocated sequence on each version. */
+function makeSidePromptHistoryMetadata(history, sequence) {
+    const { templateKey, chatKey, titleBase, titleSource } = history;
+    return { version: 1, templateKey, chatKey, titleBase, titleSource, sequence };
 }
 
 function initializeLorebookEntryDefaults(entry, defaults = {}) {
@@ -1628,6 +1664,7 @@ router.post('/upsert-entry-by-title', async (request, response) => {
     }
 
     try {
+        if (request.body.sidePromptHistory != null) validateSidePromptHistoryRequest(request.body.sidePromptHistory);
         return await withLorebookManagementTransaction(async transaction => {
             const { data: lorebookData, metadata } = await getLorebookForManagement(
                 request.user,
@@ -1639,6 +1676,7 @@ router.post('/upsert-entry-by-title', async (request, response) => {
 
             const { created, entry } = upsertLorebookEntryByTitleData(lorebookData, {
                 allowRollback: metadata.storage === 'user',
+                sidePromptHistory: request.body.sidePromptHistory,
                 title,
                 content,
                 defaults,
@@ -1904,6 +1942,9 @@ router.post('/upsert-entries-batch', async (request, response) => {
     }
 
     try {
+        for (const item of items) {
+            if (item.sidePromptHistory != null) validateSidePromptHistoryRequest(item.sidePromptHistory);
+        }
         return await withLorebookManagementTransaction(async transaction => {
             const { data: lorebookData, metadata } = await getLorebookForManagement(
                 request.user,
@@ -1917,6 +1958,7 @@ router.post('/upsert-entries-batch', async (request, response) => {
             for (const item of items) {
                 const result = upsertLorebookEntryByTitleData(lorebookData, {
                     allowRollback: metadata.storage === 'user',
+                    sidePromptHistory: item.sidePromptHistory,
                     title: String(item.title || '').trim(),
                     content: item.content != null ? String(item.content) : '',
                     defaults: item.defaults || {},

@@ -634,6 +634,7 @@ export function createDefaultStmbSettings() {
             compactionProfileIndex: 0,
             memoryAssistanceMode: 'off',
             sidePromptsMaxConcurrent: 1,
+            sidePromptVersioningEnabled: false,
             defaultSoloSidePromptSetKey: '',
             defaultGroupSidePromptSetKey: '',
             useRegex: false,
@@ -968,6 +969,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.sidePromptsMaxConcurrent = Number.isFinite(Number(moduleSettings.sidePromptsMaxConcurrent))
         ? Math.max(1, Math.min(10, Math.trunc(Number(moduleSettings.sidePromptsMaxConcurrent))))
         : defaults.moduleSettings.sidePromptsMaxConcurrent;
+    moduleSettings.sidePromptVersioningEnabled = moduleSettings.sidePromptVersioningEnabled === true;
     moduleSettings.memoryAssistanceMode = normalizeMemoryAssistanceMode(
         Object.hasOwn(inputModuleSettings, 'memoryAssistanceMode') ? moduleSettings.memoryAssistanceMode : '',
         inputModuleSettings.clipReviewAlwaysAfterMemory === true,

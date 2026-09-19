@@ -10,6 +10,13 @@ import { translate } from './i18n.js';
 const STMB_RATE_LIMIT_RETRY_DELAYS_MS = [3000, 8000];
 const stmbGenerationCooldowns = new Map();
 
+/** Localizes history failures without exposing entry metadata in the UI. */
+export function localizeSidePromptHistoryError(error) {
+    if (error?.type === 'StmbSidePromptHistoryConflict') error.message = translate('Side-prompt history is ambiguous. No changes were saved.');
+    if (error?.type === 'StmbSidePromptHistoryInvalid') error.message = translate('Invalid side-prompt history request.');
+    return error;
+}
+
 /** Lists content-free durable STMB operations for one chat. */
 export function getStmbOperations(chatRef) { return postStmb('operations', { chatRef }); }
 
@@ -91,7 +98,7 @@ async function postStmb(path, payload) {
         if (data?.error && typeof data.error === 'object') {
             Object.assign(error, data.error);
         }
-        throw error;
+        throw localizeSidePromptHistoryError(error);
     }
 
     return data;
@@ -282,7 +289,7 @@ async function postStmbWithSignal(path, payload, signal) {
         if (data?.error && typeof data.error === 'object') {
             Object.assign(error, data.error);
         }
-        throw error;
+        throw localizeSidePromptHistoryError(error);
     }
 
     return data;

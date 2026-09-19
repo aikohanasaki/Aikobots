@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { buildSidePromptHistoryRequest, SIDE_PROMPT_HISTORY_KEY } from '../../public/scripts/stmb-sideprompt-history.js';
 
 const getLorebookForManagement = jest.fn();
 const saveLorebookForManagement = jest.fn();
@@ -8,6 +9,7 @@ const isReservedRecommendedTemplateSource = jest.fn();
 const resolveLogicalChatReference = jest.fn();
 const resolveSqliteLogicalChatReference = jest.fn();
 const withChatSaveLock = jest.fn(async (_path, callback) => await callback());
+let lorebookMutationQueue = Promise.resolve();
 
 class MockLorebookRepositoryError extends Error {
     constructor(type, message, status = 400) {
@@ -23,7 +25,11 @@ jest.unstable_mockModule('../lorebook-repository.js', () => ({
     getLorebookForManagement,
     LorebookRepositoryError: MockLorebookRepositoryError,
     saveLorebookForManagement,
-    withLorebookManagementTransaction: operation => operation({ save: transactionSave }),
+    withLorebookManagementTransaction: operation => {
+        const next = lorebookMutationQueue.then(() => operation({ save: transactionSave }));
+        lorebookMutationQueue = next.catch(() => {});
+        return next;
+    },
 }));
 
 jest.unstable_mockModule('../recommended-chat-template-store.js', () => ({
@@ -60,6 +66,8 @@ let handler;
 let syncHandler;
 let createEntryHandler;
 let updateEntryHandler;
+let upsertEntryHandler;
+let upsertBatchHandler;
 
 beforeAll(async () => {
     const { router } = await import('../endpoints/stmb.js');
@@ -67,6 +75,8 @@ beforeAll(async () => {
     syncHandler = router.stack.find(layer => layer.route?.path === '/sync-group-stlo').route.stack[0].handle;
     createEntryHandler = router.stack.find(layer => layer.route?.path === '/create-entry').route.stack[0].handle;
     updateEntryHandler = router.stack.find(layer => layer.route?.path === '/update-entry-by-uid').route.stack[0].handle;
+    upsertEntryHandler = router.stack.find(layer => layer.route?.path === '/upsert-entry-by-title').route.stack[0].handle;
+    upsertBatchHandler = router.stack.find(layer => layer.route?.path === '/upsert-entries-batch').route.stack[0].handle;
 });
 
 beforeEach(() => {
@@ -140,6 +150,92 @@ function mockLoadedLorebooks() {
     ]);
     getLorebookForManagement.mockImplementation((_user, name) => structuredClone(books.get(name)));
 }
+
+describe('Side Prompt version saves', () => {
+    const template = { key: 'assess', name: 'Assess', settings: { saveAllVersions: true } };
+    const scene = { chatId: 'Chat One', chatRef: { type: 'character', avatarUrl: 'alice.png', fileName: 'Chat One' } };
+    const history = () => buildSidePromptHistoryRequest(template, { moduleSettings: { sidePromptVersioningEnabled: true } }, scene, 'Assess', ['Assess (STMB SidePrompt)']);
+    const item = (overrides = {}) => ({ title: 'Assess (STMB SidePrompt)', content: 'Next output', defaults: { order: 42 }, sidePromptHistory: history(), ...overrides });
+    let book;
+
+    beforeEach(() => {
+        book = { entries: {} };
+        getLorebookForManagement.mockImplementation(() => ({ data: structuredClone(book), metadata: { name: 'Book', storage: 'user' } }));
+        transactionSave.mockImplementation(async (_user, name, data) => {
+            book = structuredClone(data);
+            return { name, storage: 'user' };
+        });
+    });
+
+    async function save(value = item(), batch = false) {
+        const response = makeResponse();
+        await (batch ? upsertBatchHandler : upsertEntryHandler)(makeRequest({ body: {
+            lorebookName: 'Book', storage: 'user', ...(batch ? { items: value } : value),
+        } }), response);
+        return response;
+    }
+
+    it('adopts the existing output, archives versions, and updates latest when switched off', async () => {
+        book.entries[5] = { uid: 5, comment: 'Assess (STMB SidePrompt)', content: 'Original', order: 42, disable: false };
+        const first = await save();
+        expect(first.statusCode).toBe(200);
+        expect(first.payload.entry.comment).toBe('Assess-002 (STMB SidePrompt)');
+        expect(book.entries[5]).toMatchObject({ content: 'Original', comment: 'Assess-001 (STMB SidePrompt)', disable: true, order: 42, group: 'Assess-ChatOne' });
+        const second = await save(item({ content: 'Changed latest', sidePromptHistory: { ...history(), append: false } }));
+        expect(second.payload.created).toBe(false);
+        expect(second.payload.entry.uid).toBe(first.payload.entry.uid);
+        expect(Object.values(book.entries)).toHaveLength(2);
+        const third = await save();
+        expect(third.payload.entry.comment).toBe('Assess-003 (STMB SidePrompt)');
+        expect(Object.values(book.entries).filter(entry => !entry.disable)).toHaveLength(1);
+        expect(Object.values(book.entries).every(entry => entry.order === 42 && entry.group === 'Assess-ChatOne')).toBe(true);
+    });
+
+    it('allocates sequential versions within a batch and keeps chats with identical titles separate', async () => {
+        const response = await save([item(), item({ content: 'Second' })], true);
+        expect(response.statusCode).toBe(200);
+        expect(response.payload.results.map(result => result.entry.comment)).toEqual(['Assess-001 (STMB SidePrompt)', 'Assess-002 (STMB SidePrompt)']);
+        const other = history();
+        other.chatKey = JSON.stringify(['character', 'bob.png', scene.chatId]);
+        const another = await save(item({ sidePromptHistory: other }));
+        expect(another.payload.entry.comment).toBe('Assess-001 (STMB SidePrompt)');
+        expect(Object.values(book.entries).filter(entry => !entry.disable)).toHaveLength(2);
+    });
+
+    it('reads and allocates inside the transaction when single and batch saves compete', async () => {
+        const responses = await Promise.all([save(), save([item(), item()], true), save()]);
+        expect(responses.every(response => response.statusCode === 200)).toBe(true);
+        const versions = Object.values(book.entries).sort((a, b) => a[SIDE_PROMPT_HISTORY_KEY].sequence - b[SIDE_PROMPT_HISTORY_KEY].sequence);
+        expect(versions.map(entry => entry[SIDE_PROMPT_HISTORY_KEY].sequence)).toEqual([1, 2, 3, 4]);
+        expect(versions.map(entry => entry.disable)).toEqual([true, true, true, false]);
+    });
+
+    it('does not change persistent history on blank, ambiguous, invalid, or failed saves', async () => {
+        await save();
+        const original = structuredClone(book);
+        expect((await save(item({ content: '  ' }))).statusCode).toBe(400);
+        expect((await save(item({ sidePromptHistory: { ...history(), append: 'yes' } }))).statusCode).toBe(400);
+        expect((await save(item({ metadataUpdates: { [SIDE_PROMPT_HISTORY_KEY]: {} } }))).statusCode).toBe(400);
+        transactionSave.mockRejectedValueOnce(Object.assign(new Error('Save unavailable'), { status: 503 }));
+        expect((await save()).statusCode).toBe(503);
+        expect(book).toEqual(original);
+        book = { entries: { 1: { uid: 1, comment: item().title }, 2: { uid: 2, comment: item().title } } };
+        const ambiguous = structuredClone(book);
+        expect((await save()).statusCode).toBe(409);
+        expect(book).toEqual(ambiguous);
+        book = original;
+        expect((await save([item(), item({ content: ' ' })], true)).statusCode).toBe(400);
+        expect(book).toEqual(original);
+    });
+
+    it('keeps old callers and unversioned output behavior compatible', async () => {
+        const first = await save(item({ sidePromptHistory: undefined }));
+        const second = await save(item({ content: 'Replacement', sidePromptHistory: { ...history(), append: false } }));
+        expect(second.payload.entry.uid).toBe(first.payload.entry.uid);
+        expect(second.payload.entry.comment).toBe(item().title);
+        expect(second.payload.entry[SIDE_PROMPT_HISTORY_KEY]).toBeUndefined();
+    });
+});
 
 function makeNarratorRequest() {
     const request = makeRequest();

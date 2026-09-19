@@ -233,7 +233,10 @@ describe('STMB regeneration route', () => {
     });
 
     it('atomically replaces only side-prompt content using its UUID range', async () => {
-        const entry = sidePromptEntry();
+        const entry = sidePromptEntry({
+            comment: 'Assess-001 (STMB SidePrompt)', disable: true, group: 'Assess-Chat',
+            STMB_sidePromptHistory: { version: 1, templateKey: 'assess', chatKey: 'chat', titleSource: 'name', titleBase: 'Assess', sequence: 1 },
+        });
         loadBook({ 8: entry });
         const request = requestFor(entry, {
             replacementMode: 'content-only',
@@ -256,6 +259,9 @@ describe('STMB regeneration route', () => {
             key: entry.key,
             order: entry.order,
             STMB_sidePromptRegeneration: entry.STMB_sidePromptRegeneration,
+            STMB_sidePromptHistory: entry.STMB_sidePromptHistory,
+            disable: true,
+            group: entry.group,
         });
         expect(JSON.stringify(res.payload)).not.toContain('Regenerated output');
     });

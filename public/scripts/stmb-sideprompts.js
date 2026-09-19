@@ -3,7 +3,7 @@ import {
     chat_metadata,
 } from '../script.js';
 import { getContext } from './extensions.js';
-import { generateStmbText, upsertStmbEntriesBatch, upsertStmbEntryByTitle } from './stmb-api.js';
+import { generateStmbText, localizeSidePromptHistoryError, upsertStmbEntriesBatch, upsertStmbEntryByTitle } from './stmb-api.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { removeReasoningFromString } from './reasoning.js';
 import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, reloadEditor, world_names, worldInfoCache } from './world-info.js';
@@ -14,7 +14,6 @@ import {
     applyStmbMaxTokensToGenerateData,
     applyStmbProfileConnection,
     buildSidePromptCheckpointMetadata,
-    findFirstLorebookEntryByTitle,
     getActiveStmbProfile,
     readSidePromptCheckpoint,
     resolveAfterMemorySidePromptSetKey,
@@ -43,6 +42,7 @@ import {
 import { filterAutomaticSidePromptSetItems } from './stmb-sideprompt-set-policy.js';
 import { awaitStmbJobApproval, enqueueStmbJob, registerStmbJobExecutor } from './stmb-jobs.js';
 import { refreshStmbMacroCache } from './stmb-macros.js';
+import { SIDE_PROMPT_SUFFIX, buildSidePromptHistoryRequest, resolveSidePromptHistory as resolveSidePromptHistoryData } from './stmb-sideprompt-history.js';
 import {
     applyConnectionProfileSnapshot,
     createConnectionProfileRequestSnapshot,
@@ -62,7 +62,7 @@ let trackerEvaluationPromise = null;
 let hasShownSidePromptRangeTip = false;
 let sidePromptJobExecutorRegistered = false;
 
-export const STMB_SIDE_PROMPT_TITLE_SUFFIX = ' (STMB SidePrompt)';
+export const STMB_SIDE_PROMPT_TITLE_SUFFIX = SIDE_PROMPT_SUFFIX;
 
 export function getSidePromptTitleSuffix() {
     return STMB_SIDE_PROMPT_TITLE_SUFFIX;
@@ -402,6 +402,37 @@ function getSidePromptLookupTitles(template, runtimeMacros = {}, fallbackKinds =
     return titles;
 }
 
+/** Uses captured chat identity for latest-output reads and transactional saves. */
+function getSidePromptHistory(template, runtimeMacros = {}, settings = null, sceneContext = buildStmbSceneContext(), fallbackKinds = []) {
+    return buildSidePromptHistoryRequest(template, settings, sceneContext,
+        getResolvedSidePromptTitleBase(template, runtimeMacros),
+        getSidePromptLookupTitles(template, runtimeMacros, fallbackKinds));
+}
+
+/** Adds localized guidance to shared history validation failures. */
+function resolveSidePromptHistory(lorebookData, history) {
+    try {
+        return resolveSidePromptHistoryData(lorebookData, history);
+    } catch (error) {
+        throw localizeSidePromptHistoryError(error);
+    }
+}
+
+/** Refreshes archive states without reporting an already-saved output as a failed save. */
+async function refreshSidePromptHistory(lorebookName, lorebookData) {
+    try {
+        const fresh = await loadWorldInfo(lorebookName);
+        if (fresh) lorebookData.entries = fresh.entries;
+    } catch {
+        console.warn('STMB side prompt history refresh failed.');
+    }
+}
+
+/** Resolves checkpoints from the same latest output used for generation. */
+function findLatestSidePromptEntry(lorebookData, template, runtimeMacros, sceneContext, fallbackKinds = []) {
+    return resolveSidePromptHistory(lorebookData, getSidePromptHistory(template, runtimeMacros, null, sceneContext, fallbackKinds)).latest;
+}
+
 async function upsertLorebookEntryByTitle(lorebookName, lorebookData, title, content, options = {}) {
     const {
         defaults = {
@@ -412,6 +443,7 @@ async function upsertLorebookEntryByTitle(lorebookName, lorebookData, title, con
         },
         metadataUpdates = {},
         entryOverrides = {},
+        sidePromptHistory = null,
         refreshEditor = true,
         signal = null,
     } = options;
@@ -425,6 +457,7 @@ async function upsertLorebookEntryByTitle(lorebookName, lorebookData, title, con
         defaults,
         metadataUpdates,
         entryOverrides,
+        sidePromptHistory,
     }, { signal });
     throwIfStmbAborted(signal);
     worldInfoCache.delete(lorebookName);
@@ -433,6 +466,9 @@ async function upsertLorebookEntryByTitle(lorebookName, lorebookData, title, con
     }
     if (result?.entry && result.entry.uid !== undefined) {
         lorebookData.entries[result.entry.uid] = result.entry;
+    }
+    if (sidePromptHistory) {
+        await refreshSidePromptHistory(lorebookName, lorebookData);
     }
     void refreshStmbMacroCache(lorebookName, lorebookData);
     if (refreshEditor) {
@@ -468,6 +504,9 @@ async function upsertLorebookEntriesBatch(lorebookName, lorebookData, items, opt
         if (batchResult?.entry?.uid !== undefined) {
             lorebookData.entries[batchResult.entry.uid] = batchResult.entry;
         }
+    }
+    if (items.some(item => item.sidePromptHistory)) {
+        await refreshSidePromptHistory(lorebookName, lorebookData);
     }
     void refreshStmbMacroCache(lorebookName, lorebookData);
 
@@ -592,9 +631,11 @@ async function prepareSidePromptRun({
     contextSettingKey,
     signal = null,
     priorContentOverride = undefined,
+    sceneContext = buildStmbSceneContext(),
 }) {
     const unifiedTitle = getUnifiedSidePromptTitle(template, runtimeMacros);
-    const existing = findFirstLorebookEntryByTitle(lorebookData, getSidePromptLookupTitles(template, runtimeMacros, fallbackKinds));
+    const sidePromptHistory = getSidePromptHistory(template, runtimeMacros, settings, sceneContext, fallbackKinds);
+    const existing = priorContentOverride === undefined ? resolveSidePromptHistory(lorebookData, sidePromptHistory).latest : null;
     const priorContent = priorContentOverride === undefined
         ? String(existing?.content || '')
         : String(priorContentOverride || '');
@@ -617,6 +658,7 @@ async function prepareSidePromptRun({
         : (profile || resolveSidePromptProfile(settings, null));
     return {
         unifiedTitle,
+        sidePromptHistory,
         existing,
         priorContent,
         finalPrompt: String(finalPrompt || ''),
@@ -1062,8 +1104,7 @@ export async function evaluateTrackers(settings, options = {}) {
                 const targetLorebook = await resolveSidePromptLorebook(template, settings, lorebookResolveContext);
                 const lorebookName = targetLorebook.name;
                 const lorebookData = targetLorebook.data || { entries: {} };
-                const lookupTitles = getSidePromptLookupTitles(template, runtimeMacros, ['tracker']);
-                const existing = findFirstLorebookEntryByTitle(lorebookData, lookupTitles);
+                const existing = findLatestSidePromptEntry(lorebookData, template, runtimeMacros, sceneContext, ['tracker']);
                 const checkpoint = resolveSidePromptCheckpoint(template.key, existing);
                 const lastMessageId = checkpoint.lastMsgId;
                 const lastRunAt = checkpoint.lastRunAt;
@@ -1245,10 +1286,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
                 hasShownSidePromptRangeTip = true;
             }
 
-            const existing = findFirstLorebookEntryByTitle(
-                lorebookData,
-                getSidePromptLookupTitles(template, parsed.runtimeMacros, ['scoreboard', 'plotpoints', 'tracker']),
-            );
+            const existing = findLatestSidePromptEntry(lorebookData, template, parsed.runtimeMacros, sceneContext, ['scoreboard', 'plotpoints', 'tracker']);
             const checkpoint = resolveSidePromptCheckpoint(template.key, existing, { includeLegacyScore: true });
             const lastMessageId = checkpoint.lastMsgId;
             const sceneStart = Math.max(0, lastMessageId + 1);
@@ -1393,10 +1431,7 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
                 const target = await resolveSidePromptLorebook(runItem.template, settings, resolveContext);
                 targetByItemId.set(runItem.setItemId, target);
                 const lorebookData = target.data || { entries: {} };
-                const existing = findFirstLorebookEntryByTitle(
-                    lorebookData,
-                    getSidePromptLookupTitles(runItem.template, runItem.runtimeMacros, ['scoreboard', 'plotpoints', 'tracker']),
-                );
+                const existing = findLatestSidePromptEntry(lorebookData, runItem.template, runItem.runtimeMacros, sceneContext, ['scoreboard', 'plotpoints', 'tracker']);
                 const checkpoint = resolveSidePromptCheckpoint(runItem.template.key, existing, { includeLegacyScore: true });
                 earliestLastMessageId = earliestLastMessageId === null
                     ? checkpoint.lastMsgId
@@ -1506,6 +1541,7 @@ async function executeSidePromptJob(job, context) {
         runtimeMacros: payload.runtimeMacros || {},
         fallbackKinds: payload.fallbackKinds || [],
         contextSettingKey: payload.contextSettingKey,
+        sceneContext: job.sceneContext,
         signal,
     });
 
@@ -1573,6 +1609,7 @@ async function executeSidePromptJob(job, context) {
         {
             defaults,
             entryOverrides,
+            sidePromptHistory: prepared.sidePromptHistory,
             metadataUpdates: {
                 ...(payload.metadataUpdates || {}),
                 ...getSidePromptRegenerationMetadata(
@@ -1588,7 +1625,7 @@ async function executeSidePromptJob(job, context) {
     );
     context.setResult({
         type: 'sidePrompt',
-        title: prepared.unifiedTitle,
+        title: result?.entry?.comment || prepared.unifiedTitle,
         lorebookName,
         created: Boolean(result?.created),
         uid: result?.uid,
@@ -1664,6 +1701,7 @@ async function executeSidePromptBatchJob(job, context) {
                 runtimeMacros: input?.runtimeMacros || {},
                 fallbackKinds: input?.fallbackKinds || [],
                 contextSettingKey: payload.contextSettingKey,
+                sceneContext: job.sceneContext,
                 signal,
             });
             const resultText = await runSidePromptAttempt({
@@ -1771,6 +1809,7 @@ async function executeSidePromptBatchJob(job, context) {
         const { defaults, entryOverrides } = makeUpsertParamsFromLorebook(lorebookSettings, input?.runtimeMacros || {});
         batchItems.push({
             title: prepared.unifiedTitle,
+            sidePromptHistory: prepared.sidePromptHistory,
             content: resultText,
             defaults,
             metadataUpdates: {
@@ -1801,6 +1840,7 @@ async function executeSidePromptBatchJob(job, context) {
                 defaults: item.defaults,
                 metadataUpdates: item.metadataUpdates,
                 entryOverrides: item.entryOverrides,
+                sidePromptHistory: item.sidePromptHistory,
             })),
             {
                 refreshEditor: settings?.moduleSettings?.refreshEditor !== false,
@@ -1813,7 +1853,7 @@ async function executeSidePromptBatchJob(job, context) {
             const saveResult = saveResults[index] || {};
             successes.push({
                 templateName: item.templateName,
-                title: item.title,
+                title: saveResult?.entry?.comment || item.title,
                 created: Boolean(saveResult?.created),
                 uid: saveResult?.entry?.uid ?? null,
             });

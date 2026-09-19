@@ -1,4 +1,10 @@
 {
+    "Save all versions": "Alle Versionen speichern",
+    "Enable sideprompt versioning": "Versionierung für Nebenprompts aktivieren",
+    "Requires Enable sideprompt versioning in the Side Prompt Manager. Older versions are kept disabled.": "Erfordert die aktivierte Versionierung im Nebenprompt-Manager. Ältere Versionen bleiben deaktiviert erhalten.",
+    "STMemoryBooks_SidePromptVersioningHelp": "Aktivieren Sie dieses Kontrollkästchen, um individuelle Versionierungseinstellungen für Nebenprompts zu aktivieren. Wenn es deaktiviert ist, werden keine neuen Versionen erstellt; der bestehende Versionsverlauf bleibt erhalten und die neueste Ausgabe wird aktualisiert.",
+    "Side-prompt history is ambiguous. No changes were saved.": "Der Versionsverlauf des Nebenprompts ist nicht eindeutig. Es wurden keine Änderungen gespeichert.",
+    "Invalid side-prompt history request.": "Ungültige Anfrage zum Versionsverlauf des Nebenprompts.",
     "The memory was saved, but this chat view is out of date. Reopen the chat before continuing.": "Die Erinnerung wurde gespeichert, aber diese Chatansicht ist veraltet. Öffne den Chat erneut, bevor du fortfährst.",
     "The chat has a newer saved version. Reopen the chat, then retry the pending operation.": "Der Chat hat eine neuere gespeicherte Version. Öffne den Chat erneut und versuche den ausstehenden Vorgang noch einmal.",
     "The source messages were changed, removed, or moved. This operation cannot safely resume. Review the current memories before discarding the pending operation and generating again.": "Die Quellnachrichten wurden geändert, entfernt oder verschoben. Dieser Vorgang kann nicht sicher fortgesetzt werden. Prüfe die aktuellen Erinnerungen, bevor du den ausstehenden Vorgang verwirfst und erneut generierst.",

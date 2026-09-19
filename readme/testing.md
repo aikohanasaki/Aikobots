@@ -5,15 +5,17 @@
 Use Node 24.18.0 and npm 12.0.1, then run this once with registry access:
 
 ```sh
-npm ci
+npm ci --include=dev
 ```
 
 The lockfile is the only dependency source. npm stores downloaded packages in the ignored repository-local `.npm-cache/` directory. Test commands never install packages, invoke `npx`, download browsers, or contact the npm registry. `npm audit` remains an explicit, networked command.
 
+`Start.bat` and `start.sh` explicitly include development dependencies so launching the app does not remove webpack, ESLint, or the test tools, even with `NODE_ENV=production`. Keep `--omit=dev` installs in dedicated production environments such as the Docker image; running one in a development checkout removes its development dependencies.
+
 After a successful online install, a clean reinstall can use only the populated cache:
 
 ```sh
-npm ci --offline
+npm ci --offline --include=dev
 ```
 
 On Node 24, `better-sqlite3` uses its published prebuild. MSVC Build Tools are needed on Windows only if a future dependency version has no matching prebuild. The production image retains Alpine's native build toolchain during installation.

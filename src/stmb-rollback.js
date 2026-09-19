@@ -3,12 +3,27 @@ import { getChatHeader, getLogicalMessageRowByUuid, getMetadata, setMetadata } f
 import { stmbOperationConflict, writeStmbOperation } from './stmb-operations.js';
 import { assertLorebookCheckoutForManagement, getCanonicalLorebookName, getLorebookForManagement } from './lorebook-repository.js';
 import { getStmbMemoryRole, hasStmbSharedRoles } from '../public/scripts/stmb-group-policy.js';
+import { SIDE_PROMPT_HISTORY_KEY } from '../public/scripts/stmb-sideprompt-history.js';
 
 const SNAPSHOT = 'STMB_sidePromptRegeneration';
 
 /** Hashes ordinary entry state without persisting its content in the operation journal. */
 export function hashStmbRollbackState(value) {
     return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+/** Keeps automatic archive changes rollback-safe without blessing prior manual edits. */
+export function updateStmbSidePromptArchiveState(entry, update, allowRollback = true) {
+    const snapshot = entry[SNAPSHOT];
+    const state = { ...entry };
+    delete state[SNAPSHOT];
+    const unchanged = allowRollback && snapshot?.version === 2 && hashStmbRollbackState(state) === snapshot.writtenFingerprint;
+    update();
+    if (unchanged) {
+        const next = { ...entry };
+        delete next[SNAPSHOT];
+        snapshot.writtenFingerprint = hashStmbRollbackState(next);
+    }
 }
 
 /** Stores exactly one ordinary Side Prompt restoration layer at the authoritative write. */
@@ -37,12 +52,18 @@ function affectedRange(db, operation, startUuid, endUuid) {
     return start.logicalIndex < operation.data.start && end.logicalIndex >= operation.data.start;
 }
 
+/** Groups rollback history by stable identity, ignoring default-title display-name changes. */
+function sidePromptRollbackHistoryKey(history) {
+    return JSON.stringify([history.templateKey, history.chatKey, history.titleSource, history.titleSource === 'name' ? null : history.titleBase]);
+}
+
 /** Plans one ordinary book mutation without changing the supplied book. */
 export function planStmbRollbackBook(db, operation, book) {
     const next = structuredClone(book);
     const entries = next.entries || {};
     const shared = hasStmbSharedRoles(Object.values(entries));
     const removed = new Set();
+    const changedHistories = new Map();
     if (operation.data.settings.deleteMemories !== false) {
         const parents = new Map();
         const addParent = (child, parent) => {
@@ -85,9 +106,26 @@ export function planStmbRollbackBook(db, operation, book) {
             const current = structuredClone(entry);
             delete current[SNAPSHOT];
             if (hashStmbRollbackState(current) !== snapshot.writtenFingerprint) throw stmbOperationConflict('StmbRecoverySidePromptChanged');
+            const history = entry[SIDE_PROMPT_HISTORY_KEY];
+            if (history) changedHistories.set(sidePromptRollbackHistoryKey(history), []);
             if (snapshot.priorEntry === null) delete entries[key];
-            else entries[key] = structuredClone(snapshot.priorEntry);
+            else {
+                entries[key] = structuredClone(snapshot.priorEntry);
+                if (history) updateStmbSidePromptArchiveState(entries[key], () => {
+                    entries[key][SIDE_PROMPT_HISTORY_KEY] = history;
+                    entries[key].comment = entry.comment;
+                    entries[key].group = entry.group;
+                });
+            }
         }
+    }
+    for (const entry of Object.values(entries)) {
+        const history = entry[SIDE_PROMPT_HISTORY_KEY];
+        if (history?.version === 1) changedHistories.get(sidePromptRollbackHistoryKey(history))?.push(entry);
+    }
+    for (const surviving of changedHistories.values()) {
+        const newest = surviving.reduce((latest, entry) => !latest || entry[SIDE_PROMPT_HISTORY_KEY].sequence > latest[SIDE_PROMPT_HISTORY_KEY].sequence ? entry : latest, null);
+        for (const entry of surviving) updateStmbSidePromptArchiveState(entry, () => { entry.disable = entry !== newest; });
     }
     return next;
 }
