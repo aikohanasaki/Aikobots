@@ -1695,9 +1695,11 @@ async function handlePlannerCompletedJob(job) {
             const topicMessage = topicCount === 1
                 ? translate('1 new topic', 'STMemoryBooks_ClipReview_NewTopicOne')
                 : withParams(translate('{{count}} new topics', 'STMemoryBooks_ClipReview_NewTopicMany'), { count: topicCount });
-            const message = result.mode === 'update_and_suggest'
-                ? withParams(translate('Memory Assistance found {{updateMessage}} and {{topicMessage}}.', 'STMemoryBooks_ClipReview_FoundUpdatesAndTopics'), { updateMessage, topicMessage })
-                : withParams(translate('Memory Assistance found {{updateMessage}}.', 'STMemoryBooks_ClipReview_FoundUpdates'), { updateMessage });
+            const message = result.mode === 'suggest'
+                ? withParams(translate('Memory Assistance found {{topicMessage}}.', 'STMemoryBooks_ClipReview_FoundTopics'), { topicMessage })
+                : result.mode === 'update_and_suggest'
+                    ? withParams(translate('Memory Assistance found {{updateMessage}} and {{topicMessage}}.', 'STMemoryBooks_ClipReview_FoundUpdatesAndTopics'), { updateMessage, topicMessage })
+                    : withParams(translate('Memory Assistance found {{updateMessage}}.', 'STMemoryBooks_ClipReview_FoundUpdates'), { updateMessage });
             toastr.info(message, 'STMB');
         }
         if (Number(result.candidateCount || 0) > 0 || Number(result.topicSuggestionCount || 0) > 0) {
@@ -4197,9 +4199,10 @@ function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
                         <td style="padding: 8px;">${escapeHtml(template.name || 'Untitled Side Prompt')}</td>
                         <td style="padding: 8px;">
                             ${template.specialKind === 'clipReview' ? `
-                                <select class="text_pole stmb-sp-special-mode" aria-label="${escapeHtml(translate('Memory Assistance mode', 'STMemoryBooks_ClipReview_ModeLabel'))}" title="${escapeHtml(translate('Memory Assistance uses its own Off, Update, Update and Suggest, and Automatic mode setting.', 'STMemoryBooks_ClipReview_SpecialToggleInfo'))}" data-i18n="[aria-label]STMemoryBooks_ClipReview_ModeLabel;[title]STMemoryBooks_ClipReview_SpecialToggleInfo">
+                                <select class="text_pole stmb-sp-special-mode" aria-label="${escapeHtml(translate('Memory Assistance mode', 'STMemoryBooks_ClipReview_ModeLabel'))}" title="${escapeHtml(translate('Memory Assistance uses its own Off, Update, Suggest, Update and Suggest, and Automatic mode setting.', 'STMemoryBooks_ClipReview_SpecialToggleInfo'))}" data-i18n="[aria-label]STMemoryBooks_ClipReview_ModeLabel;[title]STMemoryBooks_ClipReview_SpecialToggleInfo">
                                     <option value="off" ${getModuleSettings().memoryAssistanceMode === 'off' ? 'selected' : ''}>${escapeHtml(translate('Off', 'STMemoryBooks_ClipReview_ModeOff'))}</option>
                                     <option value="update" ${getModuleSettings().memoryAssistanceMode === 'update' ? 'selected' : ''}>${escapeHtml(translate('Update', 'STMemoryBooks_ClipReview_ModeUpdate'))}</option>
+                                    <option value="suggest" ${getModuleSettings().memoryAssistanceMode === 'suggest' ? 'selected' : ''}>${escapeHtml(translate('Suggest', 'STMemoryBooks_ClipReview_ModeSuggest'))}</option>
                                     <option value="update_and_suggest" ${getModuleSettings().memoryAssistanceMode === 'update_and_suggest' ? 'selected' : ''}>${escapeHtml(translate('Update and Suggest', 'STMemoryBooks_ClipReview_ModeUpdateAndSuggest'))}</option>
                                     <option value="automatic" ${getModuleSettings().memoryAssistanceMode === 'automatic' ? 'selected' : ''}>${escapeHtml(translate('Automatic', 'STMemoryBooks_ClipReview_ModeAutomatic'))}</option>
                                 </select>` : getSidePromptTriggerBadges(template).length > 0
@@ -4732,7 +4735,7 @@ function buildMemoryAssistanceEditorHtml(template) {
                 <label for="stmb-sp-editor-override-profile-index"><h4 data-i18n="Connection Profile:">Connection Profile:</h4></label>
                 <select id="stmb-sp-editor-override-profile-index" class="text_pole">${buildSidePromptProfileOptionsHtml(overrideProfileIndex)}</select>
             </div>
-            <div class="info_block" data-i18n="STMemoryBooks_ClipReview_FixedContractHelp">${escapeHtml(translate('Update saves existing-Clip changes for approval. Update and Suggest first discovers new Topical Clip topics, then performs the same update review. Automatic directly applies ordinary Clip additions and leaves Topical Clip replacements for approval. Both response contracts remain fixed for safe validation.', 'STMemoryBooks_ClipReview_FixedContractHelp'))}</div>
+            <div class="info_block" data-i18n="STMemoryBooks_ClipReview_FixedContractHelp">${escapeHtml(translate('Update saves existing-Clip changes for approval. Suggest discovers new Topical Clip topics without updating existing Clips. Update and Suggest first discovers new Topical Clip topics, then performs the same update review. Automatic directly applies ordinary Clip additions and leaves Topical Clip replacements for approval. Both response contracts remain fixed for safe validation.', 'STMemoryBooks_ClipReview_FixedContractHelp'))}</div>
         </div>`;
 }
 

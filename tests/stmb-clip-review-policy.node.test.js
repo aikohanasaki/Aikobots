@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import * as clipPolicy from '../public/scripts/stmb-clip-review-policy.js';
 import { buildLorebookEntryProfileOverrides } from '../public/scripts/stmb-core.js';
 import {
     CLIP_REVIEW_REQUIRES_REVIEW,
@@ -37,10 +40,55 @@ test('reads only checked Memory Assistance Clip choices', () => {
 
 test('normalizes Memory Assistance modes and migrates the legacy checkbox', () => {
     assert.equal(normalizeMemoryAssistanceMode('off', true), 'off');
-    assert.equal(normalizeMemoryAssistanceMode('Suggest'), 'update');
+    assert.equal(normalizeMemoryAssistanceMode('Suggest'), 'suggest');
     assert.equal(normalizeMemoryAssistanceMode('update and suggest'), 'update_and_suggest');
     assert.equal(normalizeMemoryAssistanceMode('automatic'), 'automatic');
     assert.equal(normalizeMemoryAssistanceMode('', true), 'update');
+});
+
+test('Suggest generates topics without selecting or updating existing Clips', async () => {
+    const source = fs.readFileSync(new URL('../public/scripts/stmb-clip-review.js', import.meta.url), 'utf8');
+    const start = source.indexOf('async function executeMemoryAssistanceJob(');
+    const end = source.indexOf('/** Builds dependent Memory Assistance jobs', start);
+    for (const clipCount of [0, 6]) {
+        let requests = 0;
+        let saved;
+        let result;
+        const context = vm.createContext({
+            ...clipPolicy,
+            runtime: {},
+            tr: text => text,
+            getLorebookStorageForRequest: () => 'user',
+            loadWorldInfo: async () => ({ entries: {} }),
+            findReportEntry: () => null,
+            getClipEntries: () => Array.from({ length: clipCount }, (_, uid) => ({ uid, comment: 'Clip', content: 'Existing' })),
+            selectRecords: () => assert.fail('Suggest must skip update selection'),
+            getTemplate: async () => ({ settings: { suggestionsPrompt: 'Suggest topics' } }),
+            buildTopicPrompt: (_instructions, _scene, records) => {
+                assert.equal(records.length, clipCount);
+                return 'Topic prompt';
+            },
+            allowOversizedBatch: async () => true,
+            requestText: async () => {
+                requests++;
+                return '{"topics":[{"topic":"New alliance","keywords":["alliance"]}]}';
+            },
+            compiledSceneToText: () => 'Scene',
+            buildMessageSource: () => ({}),
+            saveReport: async (...args) => { saved = args; },
+        });
+        const execute = vm.runInContext(source.slice(start, end) + '; executeMemoryAssistanceJob', context);
+        await execute({ lorebookName: 'Book', payload: { mode: 'suggest', compiledScene: { messages: [], metadata: {} } } }, {
+            setState() {},
+            setResult(value) { result = value; },
+        });
+        assert.equal(requests, 1);
+        assert.equal(result.mode, 'suggest');
+        assert.equal(result.candidateCount, 0);
+        assert.equal(result.topicSuggestionCount, 1);
+        assert.equal(saved[2].length, 0);
+        assert.equal(saved[4].suggestionPassCompleted, true);
+    }
 });
 
 test('classifies Clip content above the 500-token estimate as long', () => {

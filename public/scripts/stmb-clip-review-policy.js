@@ -6,6 +6,7 @@ export const LEGACY_CLIP_REVIEW_ENTRY_TITLE = 'Clip Review (STMB SidePrompt)';
 export const CLIP_REVIEW_METADATA_KEY = 'STMB_clipReview';
 export const MEMORY_ASSISTANCE_MODE_OFF = 'off';
 export const MEMORY_ASSISTANCE_MODE_UPDATE = 'update';
+export const MEMORY_ASSISTANCE_MODE_SUGGEST = 'suggest';
 export const MEMORY_ASSISTANCE_MODE_UPDATE_AND_SUGGEST = 'update_and_suggest';
 export const MEMORY_ASSISTANCE_MODE_AUTOMATIC = 'automatic';
 export const CLIP_LONG_ENTRY_TOKEN_THRESHOLD = 500;
@@ -54,9 +55,8 @@ export function getSelectedClipReviewUids(choices = []) {
 /** Normalizes persisted Memory Assistance modes, including the legacy checkbox. */
 export function normalizeMemoryAssistanceMode(value, legacyAlwaysRun = false) {
     const normalized = String(value || '').trim().toLowerCase();
-    if (normalized === 'suggest') return MEMORY_ASSISTANCE_MODE_UPDATE;
     if (['update and suggest', 'update-and-suggest'].includes(normalized)) return MEMORY_ASSISTANCE_MODE_UPDATE_AND_SUGGEST;
-    if ([MEMORY_ASSISTANCE_MODE_OFF, MEMORY_ASSISTANCE_MODE_UPDATE, MEMORY_ASSISTANCE_MODE_UPDATE_AND_SUGGEST, MEMORY_ASSISTANCE_MODE_AUTOMATIC].includes(normalized)) {
+    if ([MEMORY_ASSISTANCE_MODE_OFF, MEMORY_ASSISTANCE_MODE_UPDATE, MEMORY_ASSISTANCE_MODE_SUGGEST, MEMORY_ASSISTANCE_MODE_UPDATE_AND_SUGGEST, MEMORY_ASSISTANCE_MODE_AUTOMATIC].includes(normalized)) {
         return normalized;
     }
     return legacyAlwaysRun ? MEMORY_ASSISTANCE_MODE_UPDATE : MEMORY_ASSISTANCE_MODE_OFF;

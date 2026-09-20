@@ -9,6 +9,7 @@ import {
     LEGACY_CLIP_REVIEW_ENTRY_TITLE,
     MEMORY_ASSISTANCE_MODE_AUTOMATIC,
     MEMORY_ASSISTANCE_MODE_OFF,
+    MEMORY_ASSISTANCE_MODE_SUGGEST,
     MEMORY_ASSISTANCE_MODE_UPDATE_AND_SUGGEST,
     applyAutomaticClipReviewCandidates,
     classifyMemoryAssistanceOutcome,
@@ -221,7 +222,7 @@ async function executeMemoryAssistanceJob(job, context) {
     const priorReportEntry = findReportEntry(lorebookData);
     const priorReportHash = priorReportEntry ? makeClipReviewRecord(priorReportEntry).contentHash : '';
     const records = getClipEntries(lorebookData).map(makeClipReviewRecord);
-    const suggestTopics = mode === MEMORY_ASSISTANCE_MODE_UPDATE_AND_SUGGEST;
+    const suggestTopics = mode === MEMORY_ASSISTANCE_MODE_SUGGEST || mode === MEMORY_ASSISTANCE_MODE_UPDATE_AND_SUGGEST;
     if (records.length === 0 && !suggestTopics) {
         if (priorReportEntry) {
             await saveReport(lorebookName, compiledScene, [], 'complete', {}, { expectedReportHash: priorReportHash });
@@ -229,14 +230,14 @@ async function executeMemoryAssistanceJob(job, context) {
         context.setResult({ type: 'memoryAssistance', status: 'complete', candidateCount: 0 });
         return;
     }
-    const selected = await selectRecords(context, records, mode);
+    const selected = mode === MEMORY_ASSISTANCE_MODE_SUGGEST ? [] : await selectRecords(context, records, mode);
     if (selected === null) {
         context.patch({ state: 'canceled', detail: tr('Cancel', 'STMemoryBooks_Cancel') });
         return;
     }
     const template = await getTemplate(CLIP_REVIEW_TEMPLATE_KEY);
-    if (!String(template?.prompt || '').trim()) throw new Error('The Memory Assistance prompt is missing.');
-    const profile = template.settings?.overrideProfileEnabled
+    if (mode !== MEMORY_ASSISTANCE_MODE_SUGGEST && !String(template?.prompt || '').trim()) throw new Error('The Memory Assistance prompt is missing.');
+    const profile = template?.settings?.overrideProfileEnabled
         ? runtime.getProfile?.(Number(template.settings.overrideProfileIndex)) || payload.profile
         : payload.profile;
 
