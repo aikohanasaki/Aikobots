@@ -72,15 +72,15 @@ class NativeStatementAdapter {
  * executing against a native, file-backed SQLite connection.
  */
 class NativeDatabaseAdapter {
-    constructor(filePath, { initialize = false, journalMode = 'WAL' } = {}) {
+    constructor(filePath, { initialize = false, journalMode = 'WAL', readonly = false } = {}) {
         this.filePath = filePath;
-        this.database = new Database(filePath);
+        this.database = new Database(filePath, { readonly, fileMustExist: readonly });
         this.database.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
         this.database.pragma('synchronous = FULL');
         this.database.pragma('foreign_keys = ON');
         this.database.function('aikobots_lower', { deterministic: true }, value => String(value ?? '').toLowerCase());
-        this.database.pragma(`journal_mode = ${journalMode}`);
-        if (journalMode === 'WAL') {
+        if (!readonly) this.database.pragma(`journal_mode = ${journalMode}`);
+        if (!readonly && journalMode === 'WAL') {
             this.database.pragma('wal_autocheckpoint = 1000');
         }
 
@@ -112,7 +112,7 @@ class NativeDatabaseAdapter {
         );
         INSERT INTO metadata (key, value) VALUES ('storage_version', '${SQLITE_STORAGE_VERSION}');
             `);
-        } else {
+        } else if (!readonly) {
             this.upgradeSchema();
         }
     }
@@ -233,13 +233,14 @@ class NativeDatabaseAdapter {
 /**
  * Opens a native file-backed SQLite database, creating the chat schema when absent.
  * @param {string} filePath
+ * @param {{readonly?: boolean}} [options] Read-only opens require an existing database and never upgrade its schema.
  * @returns {Promise<NativeDatabaseAdapter>}
  */
-export async function loadDb(filePath) {
+export async function loadDb(filePath, { readonly = false } = {}) {
     const resolvedPath = path.resolve(filePath);
-    const initialize = !fs.existsSync(resolvedPath);
-    fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
-    return new NativeDatabaseAdapter(resolvedPath, { initialize });
+    const initialize = !readonly && !fs.existsSync(resolvedPath);
+    if (!readonly) fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+    return new NativeDatabaseAdapter(resolvedPath, { initialize, readonly });
 }
 
 /**

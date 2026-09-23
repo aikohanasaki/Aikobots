@@ -12,6 +12,7 @@ import { chromium, firefox, webkit } from 'playwright';
 import { resolveSystemChromiumPath } from '../scripts/browser-path.mjs';
 import { defaultOutputDirectory, hashDirectory } from '../scripts/frontend-build-lib.mjs';
 import { testLayoutSizing } from './layout-sizing-smoke.mjs';
+import { testChatExtractor } from './chat-extractor-smoke.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const serverStartAttempts = 3;
@@ -579,6 +580,9 @@ try {
     await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 4)}\n`);
     const worldsPath = path.join(dataRoot, 'default-user', 'worlds');
     await fs.mkdir(worldsPath, { recursive: true });
+    await fs.writeFile(path.join(worldsPath, 'Extractor Smoke.json'), JSON.stringify({ entries: {
+        0: { uid: 0, comment: 'Necklace [STMB Clip]', content: 'Existing necklace details.', key: ['necklace'], keysecondary: [] },
+    } }));
     await fs.writeFile(path.join(worldsPath, 'Bulk Delete Smoke.json'), JSON.stringify({
         entries: Object.fromEntries([0, 1, 2].map(uid => [uid, {
             uid,
@@ -661,6 +665,8 @@ try {
         assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected World Info bulk-delete diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
         await testLayoutSizing(page);
         assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected layout diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
+        await testChatExtractor(page);
+        assert.deepEqual(pageErrors, [], 'Chat extraction produced browser errors.');
     }
     assert.equal(await page.evaluate(async () => (await (await globalThis.fetch('/version')).json()).pkgVersion), '5.1.0', 'Runtime version is not v5.');
     assert.deepEqual(await hashDirectory(defaultOutputDirectory), committedBundleHashes, 'Production startup modified committed frontend artifacts.');

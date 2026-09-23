@@ -1,3 +1,4 @@
+import { saveConsolidationBatch, getConsolidationConsumedIds } from './stmb-consolidation-commit.js';
 import { captureStmbGroupPolicy, applyStmbGroupPolicy, filterStmbMemoryRole, getStmbMemoryRole, hasStmbSharedRoles } from './stmb-group-policy.js';
 import { evaluateStmbAutoSummary } from './stmb-auto-summary-policy.js';
 import { getStmbOperations, resolveStmbOperation, prepareStmbOperation, cancelUnstartedStmbOperation, getStmbRecoveryErrorMessage } from './stmb-api.js';
@@ -9245,6 +9246,8 @@ async function runConsolidationPreviewWorkflow({
     targetLabel,
     generateAnalysis,
     commitCandidates,
+    checkpoint,
+    persistCheckpoint,
 }) {
     const originalEntries = Array.isArray(selectedEntries) ? selectedEntries : [];
     const pendingIds = new Set(
@@ -9252,9 +9255,9 @@ async function runConsolidationPreviewWorkflow({
             .map(getSummarySourceUid)
             .filter(uid => uid !== null),
     );
-    const committedCandidates = [];
-    const committedEntries = [];
-    const rejectedIds = new Set();
+    const committedCandidates = [...checkpoint.completedCandidates];
+    const committedEntries = [...checkpoint.completedEntries];
+    const rejectedIds = new Set(checkpoint.rejectedIds);
     let analysis = initialAnalysis || {};
     const getWorkflowLeftovers = () => Array.from(new Set([
         ...rejectedIds,
@@ -9320,6 +9323,11 @@ async function runConsolidationPreviewWorkflow({
         const rejectedCandidates = Array.isArray(approvalResult.editedData?.rejectedCandidates)
             ? approvalResult.editedData.rejectedCandidates
             : [];
+        checkpoint.rejectedIds = [...new Set([
+            ...checkpoint.rejectedIds,
+            ...collectSummaryMemberIds(rejectedCandidates),
+        ])];
+        persistCheckpoint();
         if (acceptedCandidates.length > 0) {
             const createdEntries = await commitCandidates(acceptedCandidates);
             committedEntries.push(...(Array.isArray(createdEntries) ? createdEntries : []));
@@ -9764,9 +9772,12 @@ async function commitSummaryCandidates(summaryCandidates, {
     groupPolicy = null,
     showSuccessToast = true,
     signal = null,
+    checkpoint = null,
+    persistCheckpoint = () => {},
 }) {
     throwIfStmbAborted(signal);
-    const result = await commitStmbSummaries({
+    const request = {
+        batchId: createAikobotsUuid(),
         lorebookName,
         storage: getLorebookStorageForRequest(lorebookName),
         summaryCandidates,
@@ -9778,9 +9789,19 @@ async function commitSummaryCandidates(summaryCandidates, {
         summaryEntrySettings: summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
         sourceFingerprints,
         sourceIds: sourceIds ? Array.from(sourceIds).map(String) : null,
-    }, { signal });
+    };
+    let result;
+    try {
+        result = checkpoint
+            ? await saveConsolidationBatch(checkpoint, request, {
+                send: pending => commitStmbSummaries(pending, { signal }),
+                persist: persistCheckpoint,
+            })
+            : await commitStmbSummaries(request, { signal });
+    } finally {
+        worldInfoCache.delete(lorebookName);
+    }
     throwIfStmbAborted(signal);
-    worldInfoCache.delete(lorebookName);
     void refreshStmbMacroCache(lorebookName);
     const createdEntries = Array.isArray(result?.createdEntries) ? result.createdEntries : [];
     await applyPostSummarySaveLorebookEffects(lorebookName);
@@ -10569,6 +10590,30 @@ function buildSummaryRepairHandler(contextBase = {}) {
 async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLimitWait = null, context = null) {
     const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(payload.normalizedTargetTier || payload.targetTier) || 1)));
     const lorebookName = String(payload.lorebookName || '').trim() || await ensureLorebookName();
+    worldInfoCache.delete(lorebookName);
+    if (payload.consolidationNeedsReview) {
+        await loadWorldInfo(lorebookName);
+        throw Object.assign(new Error(translate('This consolidation has no save receipt. Review saved summaries and start a new consolidation.')), { name: 'StmbJobNeedsReview', status: 409 });
+    }
+    const checkpoint = payload.consolidationCommit || {
+        preview: Boolean(getModuleSettings().showConsolidationPreviews && context),
+        completedEntries: [], completedCandidates: [], rejectedIds: [], pending: null,
+    };
+    const persistCheckpoint = () => context?.patch({ payload: { ...context.job.payload, consolidationCommit: checkpoint } });
+    persistCheckpoint();
+    /** Resumes post-save effects without sending another generation or commit. */
+    const finishSaved = async () => {
+        await applyPostSummarySaveLorebookEffects(lorebookName);
+        await runPostConsolidationCommitFlow({ created: checkpoint.completedEntries.length, normalizedTargetTier, lorebookName, sceneContext: payload.sceneContext || null });
+        return { lorebookName, targetTier: normalizedTargetTier, summaryCandidates: checkpoint.completedCandidates, entries: checkpoint.completedEntries, leftovers: checkpoint.preview ? checkpoint.rejectedIds : (checkpoint.leftovers || []) };
+    };
+    if (checkpoint.pending) {
+        context?.setState('saving', { detail: lorebookName });
+        await commitSummaryCandidates(checkpoint.pending.summaryCandidates, {
+            normalizedTargetTier, lorebookName, signal, checkpoint, persistCheckpoint, showSuccessToast: false,
+        });
+    }
+    if (!checkpoint.preview && checkpoint.completedEntries.length > 0) return await finishSaved();
     const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
     if (!lorebookData.entries || typeof lorebookData.entries !== 'object') {
         lorebookData.entries = {};
@@ -10578,11 +10623,13 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
     const selectedEntryIds = Array.isArray(payload.selectedEntryIds)
         ? payload.selectedEntryIds.map(value => String(value))
         : null;
+    const consumedIds = getConsolidationConsumedIds(checkpoint);
     const realSourceEntries = resolveSelectedSummarySourceEntries(
         lorebookData.entries,
         normalizedTargetTier,
         selectedEntryIds,
-    );
+    ).filter(entry => !consumedIds.has(String(entry.uid)));
+    if (realSourceEntries.length === 0 && consumedIds.size > 0) return await finishSaved();
     const gapMarkers = (Array.isArray(payload.gapMarkers) ? payload.gapMarkers : [])
         .filter(marker => marker?.__stmbGapMarker)
         .map(marker => structuredClone(marker));
@@ -10591,7 +10638,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
         payload.requiredMin,
         configuredMinimum ?? getDefaultSummaryMinChildren(normalizedTargetTier),
     );
-    if (realSourceEntries.length < requiredMinimum) {
+    if (realSourceEntries.length < requiredMinimum && consumedIds.size === 0) {
         throw new Error(
             `Not enough ${getSummaryTierLabel(normalizedTargetTier - 1).toLowerCase()} entries to create a ${getSummaryTierLabel(normalizedTargetTier).toLowerCase()} summary (${realSourceEntries.length}/${requiredMinimum})`,
         );
@@ -10642,8 +10689,12 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
             );
         };
 
-        const analysisResult = await runAnalysis(realSourceEntries, []);
+        const analysisResult = await runAnalysis(realSourceEntries, checkpoint.completedCandidates);
         const { summaryCandidates, leftovers, rawResponse, retryRawResponse } = analysisResult;
+        if (!checkpoint.preview) {
+            checkpoint.leftovers = leftovers;
+            persistCheckpoint();
+        }
         if (summaryCandidates.length === 0) {
             const emptyError = new Error(`Model did not return a usable ${getSummaryTierLabel(normalizedTargetTier).toLowerCase()} summary`);
             emptyError.name = 'StmbSummaryParseError';
@@ -10653,9 +10704,11 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
             throw emptyError;
         }
 
-        if (getModuleSettings().showConsolidationPreviews && context) {
+        if (checkpoint.preview && context) {
             const previewResult = await runConsolidationPreviewWorkflow({
                 context,
+                checkpoint,
+                persistCheckpoint,
                 initialAnalysis: analysisResult,
                 selectedEntries: realSourceEntries,
                 sourceLabel,
@@ -10672,6 +10725,8 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
                         groupPolicy: payload.groupPolicy,
                         summaryEntrySettings: chosenSummaryEntrySettings,
                         sourceFingerprints,
+                        checkpoint,
+                        persistCheckpoint,
                         sourceIds: collectSummaryMemberIds(candidates),
                         showSuccessToast: false,
                         signal,
@@ -10703,6 +10758,9 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
             groupPolicy: payload.groupPolicy,
             summaryEntrySettings: chosenSummaryEntrySettings,
             sourceFingerprints,
+            sourceIds: collectSummaryMemberIds(summaryCandidates),
+            checkpoint,
+            persistCheckpoint,
             showSuccessToast: false,
             signal,
         });

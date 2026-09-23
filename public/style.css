@@ -7279,6 +7279,25 @@ body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDra
     pointer-events: none;
 }
 
+.stmb_floating_clip_button > button {
+    margin: 0;
+}
+
+.chat-extract-result {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5em;
+}
+
+.chat-extract-result > details {
+    flex: 1;
+    min-width: 0;
+}
+
+.chat-extract-result > input {
+    margin-top: 1em;
+}
+
 .stmb_floating_clip_button:active {
     transform: translateY(1px);
 }

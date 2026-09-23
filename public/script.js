@@ -102,7 +102,7 @@ import {
     assignChunkMessagesByAbsoluteId,
     validateChunkedChatPayload,
 } from './scripts/chat-chunking.js';
-import { fetchChatSearchResults, findChatMessages, getChatMessagePreview } from './scripts/chat-search.js';
+import { fetchChatSearchResults } from './scripts/chat-search.js';
 
 import {
     setOpenAIMessageExamples,
@@ -3339,106 +3339,10 @@ async function toggleChatWorkspaceTabs(show = undefined) {
     scheduleWorkspaceGenerationRefresh();
 }
 
-/** Opens a read-only find-all snapshot without hydrating or replacing the active chat. */
+/** Opens the shared read-only history picker without hydrating the active chat. */
 async function searchCurrentChatMessages() {
-    const chatKey = getActiveChatRevisionKey();
-    const content = document.createElement('div');
-    const heading = document.createElement('h3');
-    heading.textContent = translate('Find in chat');
-    const input = document.createElement('input');
-    input.type = 'search';
-    input.className = 'text_pole';
-    input.placeholder = translate('Search messages');
-    input.setAttribute('aria-label', translate('Search messages'));
-    input.disabled = true;
-    const status = document.createElement('p');
-    status.setAttribute('role', 'status');
-    status.textContent = translate('Loading...');
-    const results = document.createElement('div');
-    results.className = 'chat-find-results';
-    content.append(heading, input, status, results);
-    let messages = [];
-    let timer;
-    let closed = false;
-    const appendHighlightedText = (container, text, term) => {
-        const value = String(text ?? '');
-        const normalizedTerm = term.trim();
-        if (!normalizedTerm) {
-            container.append(document.createTextNode(value));
-            return;
-        }
-        const matcher = new RegExp(normalizedTerm.replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&'), 'giu');
-        let lastIndex = 0;
-        for (const match of value.matchAll(matcher)) {
-            container.append(document.createTextNode(value.slice(lastIndex, match.index)));
-            const mark = document.createElement('mark');
-            mark.textContent = match[0];
-            container.append(mark);
-            lastIndex = match.index + match[0].length;
-        }
-        container.append(document.createTextNode(value.slice(lastIndex)));
-    };
-    const render = () => {
-        const matches = findChatMessages(messages, input.value);
-        results.replaceChildren();
-        status.textContent = !input.value.trim() ? translate('Search messages')
-            : matches.length ? t`Matching messages: ${matches.length}` : translate('No matching messages.');
-        const fragment = document.createDocumentFragment();
-        for (const match of matches) {
-            const row = document.createElement('details');
-            row.className = 'chat-find-result';
-            const title = document.createElement('strong');
-            title.textContent = `#${match.index} · ${match.name}`;
-            const preview = getChatMessagePreview(match.text);
-            const summary = document.createElement('summary');
-            const previewText = document.createElement('span');
-            previewText.textContent = `${preview.text}${preview.truncated ? '…' : ''}`;
-            summary.append(title, previewText);
-            const fullText = document.createElement('p');
-            fullText.className = 'chat-find-result-text';
-            row.addEventListener('toggle', () => {
-                if (row.open && !fullText.hasChildNodes()) {
-                    appendHighlightedText(fullText, match.text, input.value);
-                }
-            });
-            row.append(summary, fullText);
-            fragment.append(row);
-        }
-        results.append(fragment);
-    };
-    input.addEventListener('input', () => {
-        clearTimeout(timer);
-        timer = setTimeout(render, 200);
-    });
-    const popup = new Popup(content, POPUP_TYPE.TEXT, '', {
-        okButton: translate('Close'), wider: true, allowVerticalScrolling: true, leftAlign: true,
-        onClose: () => { closed = true; clearTimeout(timer); },
-        onOpen: async () => {
-            try {
-                if (isChatFullyHydrated()) {
-                    messages = chat.slice();
-                } else {
-                    // Full snapshot is O(chat size); use server-side search if this becomes too large.
-                    const response = await fetchChunkedChat({ hydrateFull: true, count: getTotalChatMessages() });
-                    const payload = validateChunkedChatPayload(response, { requireLatestTail: true });
-                    if (closed) return;
-                    if (response.revisionChatKey !== chatKey || getActiveChatRevisionKey() !== chatKey || payload.loadedRangeStart !== 0) throw new Error('Search snapshot unavailable');
-                    messages = payload.messages;
-                    // Preserve locally loaded edits in this read-only snapshot.
-                    chat.forEach((message, index) => { messages[index] = message; });
-                }
-                if (closed) return;
-                if (getActiveChatRevisionKey() !== chatKey) throw new Error('Chat changed');
-                messages = messages.map(message => ({ name: message?.name, mes: message?.mes }));
-                input.disabled = false;
-                render();
-                input.focus();
-            } catch {
-                if (!closed) status.textContent = translate('Could not search this chat. Close and try again.');
-            }
-        },
-    });
-    await popup.show();
+    const { openChatMessageExtractor } = await import('./scripts/stmb-clips.js');
+    await openChatMessageExtractor();
 }
 
 function initTopChatUi() {

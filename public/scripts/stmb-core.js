@@ -1554,7 +1554,15 @@ export function compileScene(messages, sceneRequest, options = {}) {
     let hiddenMessageCount = 0;
     let skippedMessageCount = 0;
 
-    for (let index = sceneStart; index <= sceneEnd; index++) {
+    const selectedIndices = options.messageIndices;
+    if (selectedIndices !== undefined && (!Array.isArray(selectedIndices) || !selectedIndices.length
+        || selectedIndices.some(index => !Number.isInteger(index) || index < sceneStart || index > sceneEnd || !sourceMessages[index]))) {
+        throw new Error('Invalid selected message identities');
+    }
+    const indices = selectedIndices === undefined ? null : [...new Set(selectedIndices)].sort((a, b) => a - b);
+    const requestedCount = indices ? indices.length : sceneEnd - sceneStart + 1;
+    for (let offset = 0; offset < requestedCount; offset++) {
+        const index = indices ? indices[offset] : sceneStart + offset;
         const message = sourceMessages[index];
         if (!message) {
             skippedMessageCount++;
@@ -1603,7 +1611,8 @@ export function compileScene(messages, sceneRequest, options = {}) {
         sceneStart,
         sceneEnd,
         messageCount: sceneMessages.length,
-        totalRequestedRange: sceneEnd - sceneStart + 1,
+        totalRequestedRange: requestedCount,
+        ...(selectedIndices === undefined ? {} : { sourceMode: 'selection', messageIndices: indices }),
         hiddenMessagesSkipped: hiddenMessageCount,
         messagesSkipped: skippedMessageCount,
         compiledAt: new Date().toISOString(),
@@ -1637,11 +1646,13 @@ export function compiledSceneToText(compiledScene) {
     const messages = Array.isArray(compiledScene?.messages) ? compiledScene.messages : [];
     const output = [];
     output.push('=== SCENE METADATA ===');
-    output.push(`Range: ${metadata.sceneStart}-${metadata.sceneEnd}`);
+    output.push(metadata.sourceMode === 'selection'
+        ? `Selected messages (may be noncontiguous): ${messages.map(message => message.id).join(', ')}`
+        : `Range: ${metadata.sceneStart}-${metadata.sceneEnd}`);
     output.push(`Chat: ${metadata.chatId || 'unknown'}`);
     output.push(`Character: ${metadata.characterName || 'Unknown'}`);
     output.push(`User: ${metadata.userName || 'User'}`);
-    output.push(`Visible messages: ${messages.length}`);
+    output.push(`${metadata.sourceMode === 'selection' ? 'Selected messages' : 'Visible messages'}: ${messages.length}`);
     output.push('');
     output.push('=== SCENE MESSAGES ===');
     for (const message of messages) {

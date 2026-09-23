@@ -13,7 +13,7 @@ const READ_ONLY_POST_ROUTES = [
     /^\/api\/backends\/chat-completions\/(?:status|bias)$/,
     /^\/api\/backends\/chat-completions\/generations\/[^/]+\/cancel$/,
     /^\/api\/characters\/(?:all|get|chats|export|repush-blacklist\/list|distribution-policy)$/,
-    /^\/api\/chats\/(?:get|group\/get|search|orphaned|recent|export)$/,
+    /^\/api\/chats\/(?:get|group\/get|search|find-messages|read-selected-messages|orphaned|recent|export)$/,
     /^\/api\/extra\/classify(?:\/labels)?$/,
     /^\/api\/files\/(?:sanitize-filename|verify)$/,
     /^\/api\/groups\/all$/,

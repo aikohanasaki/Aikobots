@@ -24,6 +24,9 @@ export function isStmbJobRetryable(job = {}) {
  */
 export function buildStmbRetryPayload(sourceJob = {}, { includeDependents = false } = {}) {
     const payload = cloneValue(sourceJob.payload) || {};
+    if (sourceJob.type === 'consolidation' && !payload.consolidationCommit) {
+        payload.consolidationNeedsReview = true;
+    }
     if (AFTER_MEMORY_JOB_TYPES.has(String(sourceJob.type || ''))) {
         delete payload.dependsOnJobId;
     }

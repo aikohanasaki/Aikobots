@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { recordStmbDeletion } from '../stmb-operations.js';
 import { recoverStmbRollback } from '../stmb-operation-service.js';
 import crypto from 'node:crypto';
+import { readChatMessageSearch } from '../chat-message-search.js';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -7299,6 +7300,17 @@ router.post('/group/save', async (request, response) => {
         return response.status(500).send({ error: 'save_failed' });
     }
 });
+
+for (const endpoint of ['find-messages', 'read-selected-messages']) {
+    router.post(`/${endpoint}`, async (request, response) => {
+        try {
+            return response.send(await readChatMessageSearch(request.user.directories, request.body, resolveLogicalChatReference, endpoint === 'read-selected-messages'));
+        } catch (error) {
+            const status = isChatPathValidationError(error) ? 400 : [400, 404, 409].includes(error.status) ? error.status : 500;
+            return response.status(status).send({ error: status === 409 ? 'chat_search_stale' : 'chat_search_unavailable' });
+        }
+    });
+}
 
 router.post('/search', validateAvatarUrlMiddleware, async function (request, response) {
     try {

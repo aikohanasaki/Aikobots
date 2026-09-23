@@ -3,65 +3,148 @@ import test from 'node:test';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-import { fetchChatSearchResults, findChatMessages, getChatMessagePreview } from '../public/scripts/chat-search.js';
-import { validateChunkedChatPayload } from '../public/scripts/chat-chunking.js';
+import { fetchChatSearchResults, findChatMessages, getChatMessagePreview, showChatMessagePicker } from '../public/scripts/chat-search.js';
 
-test('find popup includes unloaded history without changing chat and rejects a switched chat', async () => {
-    const source = fs.readFileSync(new URL('../public/script.js', import.meta.url), 'utf8');
-    const start = source.indexOf('async function searchCurrentChatMessages()');
-    const end = source.indexOf('function initTopChatUi()', start);
-    assert.ok(start >= 0 && end > start);
-    for (const switchChat of [false, true]) {
-        const elements = [];
-        const chat = [, { name: 'User', mes: 'local needle' }];
-        let key = 'original';
-        let popup;
-        const createElement = tag => {
-            const element = {
-                tag, children: [], value: '', listeners: {},
-                append(...children) { this.children.push(...children); },
-                replaceChildren() { this.children = []; },
-                setAttribute() {}, focus() {},
-                addEventListener(event, handler) { this.listeners[event] = handler; },
-            };
-            elements.push(element);
-            return element;
+/** Supplies the DOM operations used by the picker while retaining real async event handlers. */
+function pickerHarness(t, options = {}) {
+    const elements = [];
+    const createElement = tag => {
+        const node = {
+            tag, children: [], value: '', listeners: {}, attributes: {},
+            append(...children) { this.children.push(...children); },
+            replaceChildren() { this.children = []; },
+            insertBefore(child, before) { const index = this.children.indexOf(before); this.children.splice(index < 0 ? this.children.length : index, 0, child); },
+            setAttribute(key, value) { this.attributes[key] = value; }, focus() {},
+            addEventListener(event, callback) { this.listeners[event] = callback; },
         };
-        const context = vm.createContext({
-            document: { createElement, createDocumentFragment: () => createElement('fragment') },
-            translate: text => text,
-            t: (strings, value) => strings[0] + value,
-            getActiveChatRevisionKey: () => key,
-            isChatFullyHydrated: () => false,
-            getTotalChatMessages: () => 2,
-            chat, findChatMessages, getChatMessagePreview, validateChunkedChatPayload,
-            clearTimeout() {}, setTimeout: callback => callback(),
-            fetchChunkedChat: async options => {
-                assert.equal(options.hydrateFull, true);
-                if (switchChat) key = 'another';
-                return { revisionChatKey: 'original', totalMessages: 2, loadedRangeStart: 0, loadedRangeEnd: 1,
-                    messages: [{ name: 'Bot', mes: '<img src=x> needle' }, { name: 'User', mes: 'old text' }] };
-            },
-            POPUP_TYPE: { TEXT: 1 },
-            Popup: class {
-                constructor(_content, _type, _value, options) { popup = options; }
-                async show() { await popup.onOpen(); }
-            },
-        });
-        await vm.runInContext(source.slice(start, end) + '; searchCurrentChatMessages()', context);
-        const input = elements.find(element => element.tag === 'input');
-        assert.equal(input.disabled, switchChat);
-        if (!switchChat) {
-            input.value = 'needle';
-            input.listeners.input();
-            assert.deepEqual(elements.filter(element => element.tag === 'details').map(row => row.children[0].children[1].textContent),
-                ['<img src=x> needle', 'local needle']);
-        } else {
-            assert.ok(elements.some(element => element.textContent === 'Could not search this chat. Close and try again.'));
+        elements.push(node);
+        return node;
+    };
+    t.mock.method(globalThis, 'setTimeout', callback => { callback(); return 0; });
+    const originalDocument = globalThis.document;
+    globalThis.document = { createElement, createTextNode: text => Object.assign(createElement('#text'), { textContent: text }) };
+    t.after(() => { globalThis.document = originalDocument; });
+    let popup;
+    let opened;
+    let finish;
+    const done = new Promise(resolve => { finish = resolve; });
+    const pending = showChatMessagePicker({
+        Popup: class {
+            constructor(_content, _type, _value, callbacks) { popup = callbacks; }
+            show() { opened = Promise.resolve(popup.onOpen()); return done; }
+            async completeAffirmative() { popup.onClose(); finish(); }
+            async completeCancelled() { popup.onClose(); finish(); }
+        },
+        popupType: 1, translate: text => text, prepare: async () => {}, isCurrent: () => true,
+        acceptLabel: 'Use selected messages', ...options,
+    });
+    return { elements, pending, opened, close: () => { popup.onClose(); finish(); }, find: text => elements.find(node => node.textContent === text) };
+}
+
+test('typed picker searches paged history, selects neighbors once and returns sources without opening another editor', async t => {
+    const records = [0, 2].map(index => ({ index, uuid: `id-${index}`, hash: `hash-${index}`, name: 'Speaker', preview: '<literal needle>', is_system: index === 0 }));
+    const calls = [];
+    const harness = pickerHarness(t, { request: async (endpoint, body) => {
+        calls.push({ endpoint, body });
+        if (endpoint === 'find-messages') return body.cursor === null
+            ? { revision: 'r1', matches: [records[0]], nextCursor: 1 }
+            : { revision: 'r1', matches: [records[1]], nextCursor: null };
+        if (body.neighbor) return { messages: [{ index: 1, uuid: 'id-1', hash: 'hash-1', name: 'User', mes: 'neighbor' }] };
+        return { messages: body.messages.map(message => ({ ...message, mes: 'full needle <literal>' })) };
+    } });
+    await harness.opened;
+    assert.equal(calls.length, 0);
+    const input = harness.elements.find(node => node.type === 'search');
+    input.value = 'needle';
+    await input.listeners.keydown({ key: 'Enter', preventDefault() {} });
+    // loadPage is intentionally fire-and-forget for browser events.
+    for (let index = 0; index < 10; index++) await Promise.resolve();
+    assert.deepEqual(calls.filter(call => call.endpoint === 'find-messages').map(call => call.body.limit), [50, 49]);
+    assert.equal(harness.find('Use selected messages').disabled, true);
+    const details = harness.elements.find(node => node.tag === 'details');
+    details.open = true;
+    await details.listeners.toggle();
+    assert.ok(harness.elements.some(node => node.tag === 'mark' && node.textContent === 'needle'));
+    assert.ok(harness.elements.some(node => node.tag === '#text' && node.textContent === ' <literal>'));
+    await harness.find('Next message').listeners.click();
+    assert.equal(harness.elements.filter(node => node.tag === 'details').length, 3);
+    harness.find('Select loaded results').listeners.click();
+    assert.equal(harness.find('Use selected messages').disabled, false);
+    await harness.find('Use selected messages').listeners.click();
+    const selected = await harness.pending;
+    assert.deepEqual(selected.messages.map(message => message.index).sort(), [0, 1, 2]);
+    assert.equal(selected.query, 'needle');
+    assert.equal(selected.revision, 'r1');
+    assert.equal(selected.messages.some(message => 'mes' in message), false);
+});
+
+test('picker rejects stale sources and aborts outstanding requests when its chat changes', async t => {
+    const signal = new AbortController();
+    let requestSignal;
+    const harness = pickerHarness(t, { query: 'needle', signal: signal.signal, request: async (_endpoint, _body, activeSignal) => {
+        requestSignal = activeSignal;
+        throw Object.assign(new Error('stale'), { status: 409 });
+    } });
+    await harness.opened;
+    assert.ok(harness.find('Chat changed. Search again to refresh the results.'));
+    assert.equal(harness.find('Use selected messages').disabled, true);
+    signal.abort();
+    assert.equal(await harness.pending, null);
+    assert.equal(requestSignal.aborted, true);
+});
+
+test('changing the phrase cancels the old response instead of mixing results', async t => {
+    let finishOld;
+    let oldSignal;
+    const harness = pickerHarness(t, { query: 'old', request: async (_endpoint, body, signal) => {
+        if (body.query === 'old') {
+            oldSignal = signal;
+            return new Promise(resolve => { finishOld = resolve; });
         }
-        assert.equal(0 in chat, false);
-        assert.equal(chat[1].mes, 'local needle');
-        popup.onClose();
+        return { revision: 'new-revision', matches: [{ index: 2, uuid: 'new', hash: 'new', name: 'New', preview: 'new match' }], nextCursor: null };
+    } });
+    await Promise.resolve();
+    const input = harness.elements.find(node => node.type === 'search');
+    input.value = 'new';
+    input.listeners.keydown({ key: 'Enter', preventDefault() {} });
+    finishOld({ revision: 'old-revision', matches: [{ index: 0, uuid: 'old', hash: 'old', name: 'Old', preview: 'old match' }], nextCursor: null });
+    await harness.opened;
+    for (let index = 0; index < 10; index++) await Promise.resolve();
+    assert.equal(oldSignal.aborted, true);
+    assert.equal(harness.elements.filter(node => node.tag === 'details').length, 1);
+    assert.ok(harness.find('new match'));
+    harness.close();
+    assert.equal(await harness.pending, null);
+});
+
+test('Topical Clip extraction preserves configured fields, cancels without changes and invalidates accepted sources', async () => {
+    const source = fs.readFileSync(new URL('../public/scripts/stmb-clips.js', import.meta.url), 'utf8');
+    const start = source.indexOf('const extractMessages = async');
+    const end = source.indexOf("dlg.querySelector('#stmb-topical-clip-extract')", start);
+    for (const cancel of [true, false]) {
+        const topicInput = { value: 'Existing topic' };
+        const keywordsInput = { value: 'existing, keys' };
+        const includeMessagesInput = { checked: false };
+        const messageMode = { value: 'range' };
+        let cleared = 0;
+        const selection = { query: 'needle', messages: [{ index: 7 }] };
+        const context = vm.createContext({
+            topicInput, keywordsInput, includeMessagesInput, messageMode, selectedMessages: null,
+            openChatMessageExtractor: async options => { assert.equal(options.selectOnly, true); return cancel ? null : selection; },
+            clearDraft: () => { cleared++; }, renderSourceVisibility() {},
+        });
+        await vm.runInContext(source.slice(start, end) + '; extractMessages()', context);
+        assert.equal(topicInput.value, 'Existing topic');
+        assert.equal(keywordsInput.value, 'existing, keys');
+        assert.equal(cleared, cancel ? 0 : 1);
+        assert.equal(messageMode.value, cancel ? 'range' : 'selection');
+        if (!cancel) {
+            topicInput.value = '';
+            keywordsInput.value = '';
+            await vm.runInContext('extractMessages()', context);
+            assert.equal(topicInput.value, 'needle');
+            assert.equal(keywordsInput.value, 'needle');
+        }
     }
 });
 

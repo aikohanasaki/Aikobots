@@ -1110,3 +1110,5 @@ Run `npm run test:frontend:smoke -- --layouts` for the focused layout browser ma
 ### Memory Books help drawer
 
 The smart-theme rules in `public/style.css` give `.stmb-help-drawer-copy` a flexible 24-character basis and allow long words to wrap. The download link can shrink and wrap within the drawer's width. The existing flex wrapping, theme colors, and mobile rules remain authoritative; there are no browser-specific sizing overrides.
+
+The floating `.stmb_floating_clip_button` contains native **Clip** and **Extract** buttons and retains its existing SmartTheme colors and viewport positioning. The shared Find/Extract picker uses `.chat-extract-result` to place a selection checkbox beside an expandable `.chat-find-result`; the details can shrink and long message text wraps using existing Find styling. Preserve these controls' keyboard access, hidden states, and wrapping in custom layouts. **Extract…** inside Topical Clip opens the same picker above the editor without replacing its fields.

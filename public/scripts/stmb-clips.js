@@ -1,11 +1,13 @@
-import { chat_metadata, getFirstDisplayedMessageId, getLastDisplayedMessageId, saveSettingsDebounced } from '../script.js';
+import { CHAT_SAVE_RESULT, chat_metadata, flushDebouncedChatSave, getRequestHeaders, getFirstDisplayedMessageId, getLastDisplayedMessageId, saveSettingsDebounced } from '../script.js';
 import { DOMPurify } from '../lib.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { stableHashString } from './hashing.js';
 import { getCurrentLocale, translate } from './i18n.js';
 import { createStmbEntry, generateStmbText, updateStmbEntryByUid } from './stmb-api.js';
-import { buildTopicalClipEntryOverrides, normalizeLorebookEntrySettings, compiledSceneToText, STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
-import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
+import { buildTopicalClipEntryOverrides, normalizeLorebookEntrySettings, compileScene, compiledSceneToText, STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
+import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo, getStmbChatKey } from './stmb-scene.js';
+import { readSelectedChatMessages, showChatMessagePicker } from './chat-search.js';
+import { eventSource, event_types } from './events.js';
 import { syncStmbLocalizedPromptFields } from './stmb-prompt-default-migration.js';
 import {
     CLIP_LONG_ENTRY_TOKEN_THRESHOLD,
@@ -84,6 +86,7 @@ CRITICAL:
 export const STMB_CLIP_TITLE_SUFFIX = ' [STMB Clip]';
 
 let floatingClipButton = null;
+let floatingClipSelection = null;
 let floatingClipListenersBound = false;
 let floatingClipUpdateTimer = null;
 let runtime = {};
@@ -95,6 +98,70 @@ export function configureStmbClipRuntime(nextRuntime = {}) {
 
 function tr(fallback, key = fallback) {
     return translate(fallback, key);
+}
+
+/** Flushes committed edits without submitting an unfinished message edit. */
+async function prepareChatExtraction(sceneContext) {
+    const isCurrent = () => getStmbChatKey(sceneContext) === getStmbChatKey(buildStmbSceneContext());
+    if (!isCurrent()) throw Object.assign(new Error('Chat changed'), { status: 409 });
+    if (document.querySelector('#chat .edit_textarea')) throw Object.assign(new Error('Unfinished edit'), { code: 'unfinished_edit' });
+    if (await flushDebouncedChatSave() !== CHAT_SAVE_RESULT.SAVED) throw Object.assign(new Error('Save failed'), { code: 'save_failed' });
+    if (!isCurrent()) throw Object.assign(new Error('Chat changed'), { status: 409 });
+}
+
+/** Reads revision-bound ordinary chat text through the shared search endpoints. */
+async function requestExtractionMessages(sceneContext, endpoint, payload, signal) {
+    const response = await fetch(`/api/chats/${endpoint}`, {
+        method: 'POST', headers: getRequestHeaders(), signal,
+        body: JSON.stringify({ ...payload, chatRef: sceneContext.chatRef }),
+    });
+    if (!response.ok) throw Object.assign(new Error('Chat extraction unavailable'), { status: response.status });
+    return response.json();
+}
+
+/** Opens Extract/Find, optionally returning sources to an existing Topical Clip editor. */
+export async function openChatMessageExtractor({ query = '', initialSelection = null, selectOnly = false } = {}) {
+    const sceneContext = initialSelection?.sceneContext || buildStmbSceneContext();
+    const controller = new AbortController();
+    const changed = () => controller.abort();
+    eventSource.on(event_types.CHAT_CHANGED, changed);
+    let selection;
+    try {
+        selection = await showChatMessagePicker({
+            Popup, popupType: POPUP_TYPE.TEXT, translate: tr, query, initialSelection,
+            signal: controller.signal,
+            isCurrent: () => getStmbChatKey(sceneContext) === getStmbChatKey(buildStmbSceneContext()),
+            prepare: () => prepareChatExtraction(sceneContext),
+            request: (endpoint, payload, signal) => requestExtractionMessages(sceneContext, endpoint, payload, signal),
+            acceptLabel: selectOnly ? tr('Use selected messages', 'ChatExtract_UseSelected') : tr('Topical Clip'),
+        });
+    } finally {
+        eventSource.removeListener(event_types.CHAT_CHANGED, changed);
+    }
+    if (!selection || controller.signal.aborted) return null;
+    selection.sceneContext = sceneContext;
+    if (selectOnly) return selection;
+    return showTopicalClipPopup({ topic: selection.query, keywords: [selection.query], messageSelection: selection });
+}
+
+/** Captures exactly the selected identities, rejecting changed sources before generation. */
+async function captureExtractedMessages(selection) {
+    if (!selection?.messages?.length) throw new Error('No selected messages');
+    const sceneContext = selection.sceneContext;
+    await prepareChatExtraction(sceneContext);
+    const messages = await readSelectedChatMessages((endpoint, payload, signal) => requestExtractionMessages(sceneContext, endpoint, payload, signal), selection);
+    if (getStmbChatKey(sceneContext) !== getStmbChatKey(buildStmbSceneContext())) throw new Error('Chat changed');
+    const sparse = [];
+    for (const message of messages) sparse[message.index] = message;
+    const compiledScene = compileScene(sparse, {
+        ...sceneContext, sceneStart: messages[0].index, sceneEnd: messages.at(-1).index,
+        stmbPromptTarget: sceneContext.isGroupChat ? 'group' : 'character',
+    }, { messageIndices: messages.map(message => message.index), skipSystemMessages: false, groupParticipants: sceneContext.groupParticipants });
+    return {
+        compiledScene,
+        messageSource: { mode: 'selection', chat_id: sceneContext.chatId, chat_ref: sceneContext.chatRef,
+            revision: selection.revision, message_hashes: messages.map(message => ({ id: message.index, uuid: message.uuid, hash: message.hash })) },
+    };
 }
 
 function readIntInput(input, fallback = 0) {
@@ -908,24 +975,28 @@ function scheduleFloatingClipUpdate() {
 
 function createFloatingClipButton() {
     const button = document.createElement('div');
-    button.classList.add('stmb_floating_clip_button', 'fa-solid', 'fa-scissors', 'interactable');
-    button.title = tr('Clip highlighted text to Memory Book');
-    button.setAttribute('role', 'button');
-    button.setAttribute('tabindex', '0');
+    button.classList.add('stmb_floating_clip_button');
     button.addEventListener('mousedown', event => {
         event.preventDefault();
         event.stopPropagation();
     });
-    button.addEventListener('click', async event => {
-        event.preventDefault();
-        event.stopPropagation();
-        const state = getFloatingSelectionState();
-        if (!state) {
+    for (const extract of [false, true]) {
+        const action = document.createElement('button');
+        action.type = 'button';
+        action.className = 'menu_button';
+        action.textContent = extract ? tr('Extract', 'ChatExtract_Extract') : tr('Clip');
+        action.title = extract ? tr('Extract matching chat messages', 'ChatExtract_HighlightHelp') : tr('Clip highlighted text to Memory Book');
+        action.addEventListener('click', async event => {
+            event.preventDefault();
+            event.stopPropagation();
+            const selectedText = getFloatingSelectionState()?.selectedText || floatingClipSelection;
             hideFloatingClipButton();
-            return;
-        }
-        await openClipModalFromSelection({ selectedText: state.selectedText, source: 'floating' });
-    });
+            if (!selectedText) return;
+            if (extract) await openChatMessageExtractor({ query: selectedText });
+            else await openClipModalFromSelection({ selectedText, source: 'floating' });
+        });
+        button.append(action);
+    }
     document.body.appendChild(button);
     return button;
 }
@@ -939,6 +1010,7 @@ function updateFloatingClipButton() {
     }
 
     if (!floatingClipButton) floatingClipButton = createFloatingClipButton();
+    floatingClipSelection = state.selectedText;
 
     const buttonWidth = floatingClipButton.offsetWidth || 32;
     const buttonHeight = floatingClipButton.offsetHeight || 32;
@@ -966,6 +1038,7 @@ function bindFloatingClipListeners() {
     document.addEventListener('keyup', scheduleFloatingClipUpdate);
     document.addEventListener('mousedown', handleFloatingClipDocumentMouseDown, true);
     window.addEventListener('scroll', hideFloatingClipButton, true);
+    eventSource.on(event_types.CHAT_CHANGED, hideFloatingClipButton);
     floatingClipListenersBound = true;
 }
 
@@ -976,6 +1049,7 @@ function unbindFloatingClipListeners() {
     document.removeEventListener('keyup', scheduleFloatingClipUpdate);
     document.removeEventListener('mousedown', handleFloatingClipDocumentMouseDown, true);
     window.removeEventListener('scroll', hideFloatingClipButton, true);
+    eventSource.removeListener(event_types.CHAT_CHANGED, hideFloatingClipButton);
     floatingClipListenersBound = false;
 }
 
@@ -2054,6 +2128,15 @@ function buildTopicalClipPopupHtml(defaultLorebookName) {
                 <h4>${escapeHtml(tr('Sources', 'STMemoryBooks_TopicalClip_SourceTypes'))}</h4>
                 <label class="checkbox_label"><input id="stmb-topical-clip-include-memories" type="checkbox" checked> <span>${escapeHtml(tr('Include saved Memories', 'STMemoryBooks_TopicalClip_IncludeMemories'))}</span></label>
                 <label class="checkbox_label"><input id="stmb-topical-clip-include-messages" type="checkbox"> <span>${escapeHtml(tr('Include chat messages', 'STMemoryBooks_TopicalClip_IncludeMessages'))}</span></label>
+                <button id="stmb-topical-clip-extract" type="button" class="menu_button">${escapeHtml(tr('Extract…', 'ChatExtract_Open'))}</button>
+                <select id="stmb-topical-clip-message-mode" class="text_pole" aria-label="${escapeHtml(tr('Message sources', 'ChatExtract_SourceMode'))}" hidden>
+                    <option value="range">${escapeHtml(tr('Message range'))}</option>
+                    <option value="selection">${escapeHtml(tr('Selected messages', 'ChatExtract_Selected'))}</option>
+                </select>
+                <div id="stmb-topical-clip-selected-messages" hidden>
+                    <span id="stmb-topical-clip-selection-count"></span>
+                    <button id="stmb-topical-clip-edit-selection" type="button" class="menu_button">${escapeHtml(tr('Edit selection', 'ChatExtract_EditSelection'))}</button>
+                </div>
             </div>
             <div id="stmb-topical-clip-message-range" class="world_entry_form_control" hidden>
                 <h4>${escapeHtml(tr('Message range'))}</h4>
@@ -2120,6 +2203,8 @@ export async function showTopicalClipPopup(options = {}) {
     let currentLorebookData = null;
     let generationContext = null;
     let selectedSourceMemoryKeys = null;
+    let selectedMessages = options.messageSelection || null;
+    let draftRevision = 0;
 
     const showPromise = popup.show();
     initializeCompactionLorebookSelect(popup, 'stmb-topical-clip-lorebook-select', {
@@ -2142,6 +2227,14 @@ export async function showTopicalClipPopup(options = {}) {
     const includeMemoriesInput = dlg?.querySelector('#stmb-topical-clip-include-memories');
     const includeMessagesInput = dlg?.querySelector('#stmb-topical-clip-include-messages');
     const messageRange = dlg?.querySelector('#stmb-topical-clip-message-range');
+    const messageMode = dlg?.querySelector('#stmb-topical-clip-message-mode');
+    const selectedMessagePanel = dlg?.querySelector('#stmb-topical-clip-selected-messages');
+    const selectionCount = dlg?.querySelector('#stmb-topical-clip-selection-count');
+    if (selectedMessages) {
+        includeMessagesInput.checked = true;
+        includeMemoriesInput.checked = false;
+        messageMode.value = 'selection';
+    }
     const messageStartInput = dlg?.querySelector('#stmb-topical-clip-message-start');
     const messageEndInput = dlg?.querySelector('#stmb-topical-clip-message-end');
     const selectMemoriesButton = dlg?.querySelector('#stmb-topical-clip-select-memories');
@@ -2211,6 +2304,7 @@ export async function showTopicalClipPopup(options = {}) {
     };
     const getSelectedTargetEntry = () => findEntryByStableId(currentLorebookData, targetSelect?.value || '');
     const clearDraft = () => {
+        draftRevision++;
         generationContext = null;
         if (draftTextarea) draftTextarea.value = '';
         if (saveButton) saveButton.disabled = true;
@@ -2254,7 +2348,10 @@ export async function showTopicalClipPopup(options = {}) {
     const renderSourceVisibility = () => {
         const updateMode = getMode() === 'update';
         if (rebuildRow) rebuildRow.hidden = !updateMode || !includeMemoriesInput?.checked;
-        if (messageRange) messageRange.hidden = !includeMessagesInput?.checked;
+        if (messageRange) messageRange.hidden = !includeMessagesInput?.checked || messageMode.value === 'selection';
+        messageMode.hidden = !includeMessagesInput?.checked;
+        selectedMessagePanel.hidden = !includeMessagesInput?.checked || messageMode.value !== 'selection';
+        selectionCount.textContent = tr('Selected messages: {{count}}', 'ChatExtract_SelectedCount').replace('{{count}}', String(selectedMessages?.messages?.length || 0));
         if (selectMemoriesButton) selectMemoriesButton.hidden = !includeMemoriesInput?.checked;
     };
     const renderMode = () => {
@@ -2328,6 +2425,20 @@ export async function showTopicalClipPopup(options = {}) {
         renderDiagnostics();
     });
     messageStartInput?.addEventListener('input', clearDraft);
+    messageMode.addEventListener('change', () => { clearDraft(); renderSourceVisibility(); });
+    const extractMessages = async (edit = false) => {
+        const selection = await openChatMessageExtractor({ selectOnly: true, initialSelection: edit ? selectedMessages : null });
+        if (!selection) return;
+        selectedMessages = selection;
+        includeMessagesInput.checked = true;
+        messageMode.value = 'selection';
+        if (!topicInput.value.trim()) topicInput.value = selection.query;
+        if (!keywordsInput.value.trim()) keywordsInput.value = selection.query;
+        clearDraft();
+        renderSourceVisibility();
+    };
+    dlg.querySelector('#stmb-topical-clip-extract').addEventListener('click', () => { void extractMessages(); });
+    dlg.querySelector('#stmb-topical-clip-edit-selection').addEventListener('click', () => { void extractMessages(true); });
     messageEndInput?.addEventListener('input', clearDraft);
     topicInput?.addEventListener('input', clearDraft);
     keywordsInput?.addEventListener('input', clearDraft);
@@ -2392,6 +2503,7 @@ export async function showTopicalClipPopup(options = {}) {
             return;
         }
         const mode = getMode();
+        const requestedDraftRevision = draftRevision;
         const topic = String(topicInput?.value || '').trim();
         if (!topic) {
             toastr.error(tr('Topic is required.'), 'STMB');
@@ -2447,7 +2559,16 @@ export async function showTopicalClipPopup(options = {}) {
 
         let sourceMessages = null;
         let messageSource = null;
-        if (includeMessages) {
+        if (includeMessages && messageMode.value === 'selection') {
+            try {
+                const capture = await captureExtractedMessages(selectedMessages);
+                sourceMessages = capture.compiledScene;
+                messageSource = capture.messageSource;
+            } catch {
+                toastr.error(tr('Selected messages are unavailable or changed. Extract them again before generating.', 'ChatExtract_CaptureFailed'), 'STMB');
+                return;
+            }
+        } else if (includeMessages) {
             const startText = String(messageStartInput?.value ?? '').trim();
             const endText = String(messageEndInput?.value ?? '').trim();
             const start = Number(startText);
@@ -2523,6 +2644,7 @@ export async function showTopicalClipPopup(options = {}) {
                 void popup.completeCancelled();
             }
             const draft = await requestTopicalClipDraft(prompt, profile);
+            if (requestedDraftRevision !== draftRevision) return;
             const draftHeadline = mode === 'update'
                 ? getClipHeadlineFromTitle(target.comment || makeTopicalClipHeadline(topic))
                 : makeTopicalClipHeadline(topic);
@@ -2634,7 +2756,8 @@ export async function showTopicalClipPopup(options = {}) {
     });
 
     try {
-        const rangeInfo = await fetchStmbChatRangeInfo({ sceneContext: buildStmbSceneContext() });
+        // An extracted selection already has authoritative identities; don't flush a separate range capture.
+        const rangeInfo = selectedMessages ? null : await fetchStmbChatRangeInfo({ sceneContext: buildStmbSceneContext() });
         const lastAvailable = Number(rangeInfo?.lastAvailableMessageId ?? -1);
         if (lastAvailable >= 0) {
             messageStartInput?.setAttribute('max', String(lastAvailable));

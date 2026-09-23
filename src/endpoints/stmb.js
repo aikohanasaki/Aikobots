@@ -1,4 +1,5 @@
 import express from 'express';
+import { commitStmbConsolidation } from '../stmb-consolidation-commit.js';
 import { fingerprintStmbSource } from '../../public/scripts/stmb-source.js';
 import { withStmbMemoryTransaction, resolveStmbOperations } from '../stmb-operation-service.js';
 import { stampStmbSidePromptRollback, updateStmbSidePromptArchiveState } from '../stmb-rollback.js';
@@ -1572,67 +1573,66 @@ router.post('/commit-summaries', async (request, response) => {
                 lorebookContext.storage,
             );
             ensureEntriesObject(lorebookData);
-            const schemaMigrated = migrateLorebookSummarySchema(lorebookData);
-            verifySummarySourceFingerprints(lorebookData, sourceFingerprints, sourceIds);
+            await request.activeSessionOperation?.assertAllowed();
+            let needsSave = false;
+            const result = await commitStmbConsolidation({
+                userHandle: request.user.profile.handle,
+                metadata,
+                data: lorebookData,
+                input: request.body,
+                build: () => {
+                    const schemaMigrated = migrateLorebookSummarySchema(lorebookData);
+                    verifySummarySourceFingerprints(lorebookData, sourceFingerprints, sourceIds);
 
-            let nextSummaryNumber = getNextSummaryNumber(lorebookData, targetTier);
-            const createdEntries = [];
-            const orderClampNotifications = [];
+                    let nextSummaryNumber = getNextSummaryNumber(lorebookData, targetTier);
+                    const createdEntries = [];
+                    const orderClampNotifications = [];
 
-            for (const summaryCandidate of summaryCandidates) {
-                const entry = createLorebookEntry(lorebookData);
-                const entryPayload = createManagedSummaryEntryData(summaryCandidate, {
-                    targetTier,
-                    titleFormat,
-                    sequenceNumber: nextSummaryNumber,
-                    sourceEntries: Object.values(lorebookData.entries),
-                    includeSourceUids: metadata.storage === 'user',
-                });
-                Object.assign(entry, entryPayload);
-                if (request.body.groupPolicy?.characterAware === false && !entry.STMB_narratorOwnerIds && !entry.STMB_narratorParticipantIds) delete entry.characterFilter;
-                applyLorebookSettings(entry, summaryEntrySettings, {
-                    orderNumber: nextSummaryNumber,
-                    orderNumberLabel: getSummaryTierLabel(targetTier).toLowerCase(),
-                    onOrderClamped: notification => orderClampNotifications.push(notification),
-                });
-                restoreManagedInclusionGroup(entry);
+                    for (const summaryCandidate of summaryCandidates) {
+                        const entry = createLorebookEntry(lorebookData);
+                        const entryPayload = createManagedSummaryEntryData(summaryCandidate, {
+                            targetTier,
+                            titleFormat,
+                            sequenceNumber: nextSummaryNumber,
+                            sourceEntries: Object.values(lorebookData.entries),
+                            includeSourceUids: metadata.storage === 'user',
+                        });
+                        Object.assign(entry, entryPayload);
+                        if (request.body.groupPolicy?.characterAware === false && !entry.STMB_narratorOwnerIds && !entry.STMB_narratorParticipantIds) delete entry.characterFilter;
+                        applyLorebookSettings(entry, summaryEntrySettings, {
+                            orderNumber: nextSummaryNumber,
+                            orderNumberLabel: getSummaryTierLabel(targetTier).toLowerCase(),
+                            onOrderClamped: notification => orderClampNotifications.push(notification),
+                        });
+                        restoreManagedInclusionGroup(entry);
 
-                if (disableOriginals) {
-                    const sourceIds = new Set((summaryCandidate.memberIds || []).map(String));
-                    for (const sourceEntry of Object.values(lorebookData.entries)) {
-                        if (sourceEntry && sourceIds.has(String(sourceEntry.uid))) {
-                            sourceEntry.disable = true;
-                            sourceEntry.disabledBySummaryId = entry.uid;
+                        if (disableOriginals) {
+                            const sourceIds = new Set((summaryCandidate.memberIds || []).map(String));
+                            for (const sourceEntry of Object.values(lorebookData.entries)) {
+                                if (sourceEntry && sourceIds.has(String(sourceEntry.uid))) {
+                                    sourceEntry.disable = true;
+                                    sourceEntry.disabledBySummaryId = entry.uid;
+                                }
+                            }
                         }
+
+                        createdEntries.push(structuredClone(entry));
+                        nextSummaryNumber++;
                     }
-                }
 
-                createdEntries.push(structuredClone(entry));
-                nextSummaryNumber++;
-            }
-
-            if (createdEntries.length > 0 || migrated || schemaMigrated) {
-                await request.activeSessionOperation?.assertAllowed();
-                const savedMetadata = await transaction.save(request.user, metadata.name, lorebookData, metadata.storage);
-                return response.send({
-                    ok: true,
-                    lorebookName: savedMetadata.name,
-                    storage: savedMetadata.storage,
-                    createdEntries,
-                    orderClampNotifications,
-                });
-            }
-
-            return response.send({
-                ok: true,
-                lorebookName: metadata.name,
-                storage: metadata.storage,
-                createdEntries,
-                orderClampNotifications,
+                    needsSave = createdEntries.length > 0 || migrated || schemaMigrated;
+                    return { createdEntries, orderClampNotifications };
+                },
+                save: async () => {
+                    if (!needsSave) return;
+                    await request.activeSessionOperation?.assertAllowed();
+                    await transaction.save(request.user, metadata.name, lorebookData, metadata.storage);
+                },
             });
+            return response.send({ ok: true, lorebookName: metadata.name, storage: metadata.storage, ...result });
         });
     } catch (error) {
-        return sendStmbError(response, error);
+        return sendSanitizedStmbError(response, error, { logLabel: '[STMB] Consolidation commit failed', type: 'StmbConsolidationCommitFailed', message: 'Consolidation could not be saved.' });
     }
 });
 
