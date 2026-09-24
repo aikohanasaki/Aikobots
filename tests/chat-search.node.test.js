@@ -5,6 +5,75 @@ import vm from 'node:vm';
 
 import { fetchChatSearchResults, findChatMessages, getChatMessagePreview, showChatMessagePicker } from '../public/scripts/chat-search.js';
 
+test('every Topical Clip save revalidates its captured selection before a write', async () => {
+    const source = fs.readFileSync(new URL('../public/scripts/stmb-clips.js', import.meta.url), 'utf8');
+    const start = source.indexOf('async function saveTopicalClipDraft(');
+    const end = source.indexOf('/** Applies one reviewed Clip suggestion', start);
+    const events = [];
+    let stale = true;
+    const save = vm.runInNewContext(source.slice(start, end) + '; saveTopicalClipDraft', {
+        tr: text => text,
+        loadWorldInfo: async () => ({ entries: { 1: { uid: 1, comment: 'About topic [STMB Clip]' } } }),
+        captureExtractedMessages: async selection => { events.push(selection); if (stale) throw new Error('changed source'); },
+        findEntryByStableId: () => ({ uid: 1, comment: 'About topic [STMB Clip]' }),
+        getClipHeadlineFromTitle: () => 'About topic', makeTopicalClipHeadline: () => 'About topic',
+        createTopicalClipRunMetadata: () => ({}), createTopicalClipEntryContent: (_headline, draft) => draft,
+        buildEntryDataWithTopicalMetadata: () => ({}),
+        updateLorebookEntryByUid: async () => { events.push('update'); return { uid: 1 }; },
+        createClipLorebookEntry: async () => { events.push('create'); return { uid: 2 }; },
+        createUniqueTopicalClipTitle: () => 'About topic',
+    });
+    const selection = { messages: [{ uuid: 'original', hash: 'captured' }] };
+    for (const [mode, forceCreateNew] of [['create', false], ['update', false], ['update', true]]) {
+        await assert.rejects(save({ lorebookName: 'Book', mode, messageSelection: selection }, 'Keep this draft', { forceCreateNew }), { code: 'STMB_CLIP_SOURCE_CHANGED' });
+    }
+    assert.deepEqual(events, [selection, selection, selection]);
+    stale = false;
+    await save({ lorebookName: 'Book', mode: 'update', messageSelection: selection }, 'Accepted draft');
+    assert.equal(events.at(-1), 'update');
+});
+
+test('floating Extract bounds the first non-empty line and handles rejected actions', async () => {
+    const source = fs.readFileSync(new URL('../public/scripts/stmb-clips.js', import.meta.url), 'utf8');
+    const start = source.indexOf('function createFloatingClipButton()');
+    const end = source.indexOf('function updateFloatingClipButton()', start);
+    const actions = [];
+    const calls = [];
+    const errors = [];
+    const context = vm.createContext({
+        document: {
+            createElement: () => ({
+                classList: { add() {} }, addEventListener(event, handler) { this[event] = handler; },
+                append(action) { actions.push(action); },
+            }),
+            body: { appendChild() {} },
+        },
+        tr: text => text, MODULE_NAME: 'STMB Clips',
+        getFloatingSelectionState: () => null, floatingClipSelection: '', hideFloatingClipButton() {},
+        openChatMessageExtractor: async options => { calls.push(options); },
+        openClipModalFromSelection: async options => { calls.push(options); },
+        console: { error() {} }, toastr: { error: message => errors.push(message) },
+    });
+    vm.runInContext(source.slice(start, end) + '; createFloatingClipButton()', context);
+    const event = { preventDefault() {}, stopPropagation() {} };
+    for (const [selection, expected] of [
+        ['\n  \n line one \n\nline two', 'line one'],
+        ['x'.repeat(1001) + '\nsecond line', 'x'.repeat(1000)],
+    ]) {
+        context.floatingClipSelection = selection;
+        await actions[1].click(event);
+        assert.equal(calls.at(-1).query, expected);
+        await actions[0].click(event);
+        assert.equal(calls.at(-1).selectedText, selection);
+        assert.equal(calls.at(-1).source, 'floating');
+    }
+    context.openChatMessageExtractor = async () => { throw new Error('Extractor failed'); };
+    context.openClipModalFromSelection = async () => { throw new Error(); };
+    await actions[1].click(event);
+    await actions[0].click(event);
+    assert.deepEqual(errors, ['Extractor failed', 'Could not read messages. Search again to retry.']);
+});
+
 /** Supplies the DOM operations used by the picker while retaining real async event handlers. */
 function pickerHarness(t, options = {}) {
     const elements = [];

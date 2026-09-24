@@ -71,6 +71,8 @@ import { migrateFlatSecrets } from './endpoints/secrets.js';
 import { refreshDefaultContentCharacterIndex } from './character-submissions.js';
 import { drainGenerationTasks } from './generation-drain.js';
 import { cleanupPromptInspectionSnapshots } from './endpoints/backends/chat-completions.js';
+import { cleanupStmbConsolidationReceipts } from './stmb-consolidation-commit.js';
+import { withLorebookManagementTransaction } from './lorebook-repository.js';
 
 // Work around a node v20.0.0, v20.1.0, and v20.2.0 bug. The issue was fixed in v20.3.0.
 // https://github.com/nodejs/node/issues/47822#issuecomment-1564708870
@@ -286,6 +288,13 @@ async function preSetupTasks() {
     migrateFlatSecrets(directories);
     cleanUploads();
     await cleanupPromptInspectionSnapshots();
+    await cleanupStmbConsolidationReceipts(withLorebookManagementTransaction);
+    // Schedule after completion so slow sweeps cannot overlap within a worker.
+    const scheduleReceiptCleanup = () => setTimeout(async () => {
+        await cleanupStmbConsolidationReceipts(withLorebookManagementTransaction);
+        scheduleReceiptCleanup();
+    }, 24 * 60 * 60 * 1000).unref();
+    scheduleReceiptCleanup();
     migrateAccessLog();
 
     await settingsInit();

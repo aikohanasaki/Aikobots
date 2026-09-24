@@ -40,6 +40,8 @@ function isReadOnlyRoute(request) {
         return false;
     }
 
+    if (request.path === '/api/stmb/consolidation-recovery' && request.body?.action === 'list') return true;
+
     return READ_ONLY_POST_ROUTES.some(pattern => pattern.test(request.path));
 }
 

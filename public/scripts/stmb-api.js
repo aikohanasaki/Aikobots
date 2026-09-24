@@ -22,6 +22,11 @@ export function localizeSidePromptHistoryError(error) {
 /** Lists content-free durable STMB operations for one chat. */
 export function getStmbOperations(chatRef) { return postStmb('operations', { chatRef }); }
 
+/** Lists or resolves an accepted ordinary-book consolidation without generating it again. */
+export function resolveStmbConsolidationRecovery(action = 'list', id = null) {
+    return postStmb('consolidation-recovery', { action, ...(id ? { id } : {}) });
+}
+
 /** Captures the source and marker before generation begins. */
 export function prepareStmbOperation(payload) { return postStmb('operations', { ...payload, action: 'prepare' }); }
 

@@ -20,7 +20,11 @@ let resolveStmbOperations;
 let directory;
 let sqlitePath;
 let request;
+let planStmbChatCopyBook;
+let stampStmbSidePromptRollback;
+let hashStmbRollbackState;
 beforeAll(async () => ({ withStmbMemoryTransaction, resolveStmbOperations } = await import('../stmb-operation-service.js')));
+beforeAll(async () => ({ planStmbChatCopyBook, stampStmbSidePromptRollback, hashStmbRollbackState } = await import('../stmb-rollback.js')));
 beforeEach(async () => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), 'stmb-save-recovery-'));
     sqlitePath = path.join(directory, 'chat.sqlite');
@@ -119,4 +123,66 @@ it('offers safe generation retry only for an intent whose save never started', a
     expect(result.operations).toEqual([]);
     expect(result.chat_revision).toBe(1);
     expect(transactionSave).not.toHaveBeenCalled();
+});
+
+it('rolls back an isolated book before remapping retained UUIDs, versions and linked groups', () => {
+    const history = { version: 1, templateKey: 'tracker', chatId: 'parent', chatKey: '["character","a.png","parent"]', titleSource: 'name', titleBase: 'Tracker', group: 'Tracker-parent' };
+    const sidePrompt = (uid, sequence, start, end, disable) => {
+        const entry = { uid, comment: 'Tracker (STMB SidePrompt)', content: `Ordinary version ${sequence}`, disable, group: history.group,
+            STMB_sidePromptHistory: { ...history, sequence },
+            STMB_sidePromptRegeneration: { version: 1, templateKey: 'tracker', chatId: 'parent', sceneStartUuid: `u${start}`, sceneEndUuid: `u${end}` } };
+        stampStmbSidePromptRollback(entry, null);
+        return entry;
+    };
+    const original = { entries: {
+        1: { uid: 1, stmemorybooks: true, STMB_startUuid: 'u0', STMB_endUuid: 'u1', STMB_chatId: 'parent', disable: true, disabledBySummaryId: 3, group: 'Cast-Memory-001', STMB_inclusionGroup: 'Cast-Memory-001', STMB_memoryRole: 'group' },
+        2: { uid: 2, stmemorybooks: true, STMB_startUuid: 'u1', STMB_endUuid: 'u3', STMB_memoryRole: 'group' },
+        3: { uid: 3, stmemorybooks: true, stmbSummary: true, stmbSourceEntryUids: [1, 2], STMB_memoryRole: 'group' },
+        4: { uid: 4, comment: 'Unrelated ordinary entry', content: 'Retain' },
+        5: sidePrompt(5, 1, 0, 1, true),
+        6: sidePrompt(6, 2, 2, 3, false),
+        7: { uid: 7, stmemorybooks: true, STMB_chatId: 'other', STMB_startUuid: 'foreign-start', STMB_endUuid: 'foreign-end', STMB_memoryRole: 'group' },
+    } };
+    const before = structuredClone(original);
+    const options = { sourceChatId: 'parent', targetChatId: 'child', boundary: 1, settings: {},
+        resolveMessage: uuid => /^u\d$/.test(uuid) ? { logicalIndex: Number(uuid.slice(1)) } : null,
+        uuidMap: new Map([['u0', 'child0'], ['u1', 'child1']]) };
+    const { data, highest } = planStmbChatCopyBook(original, options);
+    expect(Object.keys(data.entries)).toEqual(['1', '4', '5', '7']);
+    expect(data.entries[1]).toMatchObject({ STMB_startUuid: 'child0', STMB_endUuid: 'child1', STMB_chatId: 'child', disable: false });
+    expect(data.entries[1].disabledBySummaryId).toBeUndefined();
+    expect(data.entries[1].group).toBe(data.entries[1].STMB_inclusionGroup);
+    expect(data.entries[1].group).not.toBe(original.entries[1].group);
+    expect(data.entries[5].STMB_sidePromptHistory).toMatchObject({ chatId: 'child', chatKey: '["character","a.png","child"]', group: 'Tracker-child' });
+    expect(data.entries[5].disable).toBe(false);
+    const { STMB_sidePromptRegeneration: snapshot, ...written } = data.entries[5];
+    expect(snapshot.writtenFingerprint).toBe(hashStmbRollbackState(written));
+    expect(snapshot.sceneEndUuid).toBe('child1');
+    expect(highest).toBe(1);
+    expect(original).toEqual(before);
+    expect(data.entries[7]).toEqual(original.entries[7]);
+    const malformed = structuredClone(original);
+    malformed.entries[6].STMB_sidePromptHistory.sequence = 1;
+    expect(() => planStmbChatCopyBook(malformed, options)).toThrow();
+    const legacy = structuredClone(original);
+    delete legacy.entries[1].STMB_startUuid;
+    expect(() => planStmbChatCopyBook(legacy, options)).toThrow();
+    const disconnected = structuredClone(original);
+    disconnected.entries[3].stmbSourceEntryUids = [99];
+    expect(() => planStmbChatCopyBook(disconnected, options)).toThrow();
+});
+
+it('restores one exact Side Prompt layer and refuses edited or still-future prior states', () => {
+    const prior = { uid: 1, content: 'Earlier ordinary output', STMB_sidePromptRegeneration: { version: 1, chatId: 'parent', sceneStartUuid: 'u0', sceneEndUuid: 'u1' } };
+    const current = { uid: 1, content: 'Later ordinary output', STMB_sidePromptRegeneration: { version: 1, chatId: 'parent', sceneStartUuid: 'u2', sceneEndUuid: 'u3' } };
+    stampStmbSidePromptRollback(current, prior);
+    const options = { sourceChatId: 'parent', targetChatId: 'child', boundary: 1, settings: {},
+        resolveMessage: uuid => ({ logicalIndex: Number(uuid.slice(1)) }), uuidMap: new Map([['u0', 'c0'], ['u1', 'c1']]) };
+    const result = planStmbChatCopyBook({ entries: { 1: current } }, options);
+    expect(result.data.entries[1]).toMatchObject({ content: prior.content, STMB_sidePromptRegeneration: { version: 1, chatId: 'child', sceneEndUuid: 'c1' } });
+    expect(() => planStmbChatCopyBook({ entries: { 1: { ...current, content: 'Manual edit' } } }, options)).toThrow();
+    const future = structuredClone(current);
+    future.STMB_sidePromptRegeneration.priorEntry.STMB_sidePromptRegeneration.sceneEndUuid = 'u2';
+    expect(() => planStmbChatCopyBook({ entries: { 1: future } }, options)).toThrow();
+    expect(() => planStmbChatCopyBook({ entries: { 1: { uid: 1, comment: 'Legacy (STMB SidePrompt)' } } }, options)).toThrow();
 });

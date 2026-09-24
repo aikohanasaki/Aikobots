@@ -433,6 +433,13 @@ function findLatestSidePromptEntry(lorebookData, template, runtimeMacros, sceneC
     return resolveSidePromptHistory(lorebookData, getSidePromptHistory(template, runtimeMacros, null, sceneContext, fallbackKinds)).latest;
 }
 
+/** Reports an ambiguous stream without exposing its entries or stopping independent prompts. */
+function reportSidePromptHistoryConflict(error) {
+    if (error?.type !== 'StmbSidePromptHistoryConflict') return false;
+    toastr.error(translate('Side-prompt history is ambiguous. No changes were saved.'), 'STMB', { preventDuplicates: true });
+    return true;
+}
+
 async function upsertLorebookEntryByTitle(lorebookName, lorebookData, title, content, options = {}) {
     const {
         defaults = {
@@ -1104,7 +1111,13 @@ export async function evaluateTrackers(settings, options = {}) {
                 const targetLorebook = await resolveSidePromptLorebook(template, settings, lorebookResolveContext);
                 const lorebookName = targetLorebook.name;
                 const lorebookData = targetLorebook.data || { entries: {} };
-                const existing = findLatestSidePromptEntry(lorebookData, template, runtimeMacros, sceneContext, ['tracker']);
+                let existing;
+                try {
+                    existing = findLatestSidePromptEntry(lorebookData, template, runtimeMacros, sceneContext, ['tracker']);
+                } catch (error) {
+                    if (!reportSidePromptHistoryConflict(error)) throw error;
+                    continue;
+                }
                 const checkpoint = resolveSidePromptCheckpoint(template.key, existing);
                 const lastMessageId = checkpoint.lastMsgId;
                 const lastRunAt = checkpoint.lastRunAt;
@@ -1399,6 +1412,7 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
 
         const resolveContext = {};
         const targetByItemId = new Map();
+        const conflictedItems = new Set();
         let compiledScene;
         if (parsed.range) {
             const match = parsed.range.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
@@ -1431,7 +1445,14 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
                 const target = await resolveSidePromptLorebook(runItem.template, settings, resolveContext);
                 targetByItemId.set(runItem.setItemId, target);
                 const lorebookData = target.data || { entries: {} };
-                const existing = findLatestSidePromptEntry(lorebookData, runItem.template, runItem.runtimeMacros, sceneContext, ['scoreboard', 'plotpoints', 'tracker']);
+                let existing;
+                try {
+                    existing = findLatestSidePromptEntry(lorebookData, runItem.template, runItem.runtimeMacros, sceneContext, ['scoreboard', 'plotpoints', 'tracker']);
+                } catch (error) {
+                    if (!reportSidePromptHistoryConflict(error)) throw error;
+                    conflictedItems.add(runItem);
+                    continue;
+                }
                 const checkpoint = resolveSidePromptCheckpoint(runItem.template.key, existing, { includeLegacyScore: true });
                 earliestLastMessageId = earliestLastMessageId === null
                     ? checkpoint.lastMsgId
@@ -1450,6 +1471,7 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
 
         const groups = new Map();
         for (const runItem of runItems) {
+            if (conflictedItems.has(runItem)) continue;
             const target = targetByItemId.get(runItem.setItemId) || await resolveSidePromptLorebook(runItem.template, settings, resolveContext);
             if (!groups.has(target.name)) {
                 groups.set(target.name, []);
@@ -1727,6 +1749,7 @@ async function executeSidePromptBatchJob(job, context) {
             if (isStmbAbortError(error)) {
                 throw error;
             }
+            reportSidePromptHistoryConflict(error);
             return {
                 ok: false,
                 error,

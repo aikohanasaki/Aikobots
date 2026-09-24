@@ -62,11 +62,12 @@ let namedBookmarksSortAscending = true;
 let currentNamedBookmarks = [];
 
 async function chooseStmbChatCopyMode(kind) {
-    const { getStmbChatCopyKind, getStmbChatCopyLockContext, hasStmbChatCopyBindings } = await import('./stmb.js');
+    const { getStmbChatCopyKind, getStmbChatCopyLockContext, hasStmbChatCopyBindings, syncStmbRollbackPolicy } = await import('./stmb.js');
     const copyKind = getStmbChatCopyKind(kind);
     if (!copyKind) {
         return { copyKind: '', copyMemoryBooks: false, prompted: false };
     }
+    await syncStmbRollbackPolicy();
     const lockContext = getStmbChatCopyLockContext();
     if (!hasStmbChatCopyBindings(chat_metadata, lockContext)) {
         const hasLocks = lockContext.soloMemoryBookLocked || lockContext.lockedCharacterBindingKeys.length > 0;
@@ -165,6 +166,7 @@ async function saveDirectChatCopy({ name, mesId, metadata, kind, copyMemoryBooks
 }
 
 function getSafeStmbCopyFailureMessage(errorCode) {
+    if (errorCode === 'stmb_copy_rollback_unsafe') return translate('Memory Book rollback could not be verified. Nothing was created. Disable branch rollback or create a chat-only copy.');
     return errorCode === 'stmb_copy_ambiguous_legacy'
         ? translate('This Memory Book cannot be copied safely at the selected message. Nothing was created. Create the chat copy without Memory Books or cancel.')
         : translate('Memory Books cannot be copied for this chat. Nothing was created. Create the chat copy without Memory Books or cancel.');

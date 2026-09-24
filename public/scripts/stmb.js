@@ -1,8 +1,8 @@
-import { saveConsolidationBatch, getConsolidationConsumedIds } from './stmb-consolidation-commit.js';
+import { saveConsolidationBatch, getConsolidationConsumedIds, buildConsolidationRecoveryContext } from './stmb-consolidation-commit.js';
 import { captureStmbGroupPolicy, applyStmbGroupPolicy, filterStmbMemoryRole, getStmbMemoryRole, hasStmbSharedRoles } from './stmb-group-policy.js';
 import { evaluateStmbAutoSummary } from './stmb-auto-summary-policy.js';
-import { getStmbOperations, resolveStmbOperation, prepareStmbOperation, cancelUnstartedStmbOperation, getStmbRecoveryErrorMessage } from './stmb-api.js';
-import { saveMetadata } from '../script.js';
+import { getStmbOperations, resolveStmbOperation, prepareStmbOperation, cancelUnstartedStmbOperation, getStmbRecoveryErrorMessage, resolveStmbConsolidationRecovery } from './stmb-api.js';
+import { CHAT_SAVE_RESULT, saveMetadata } from '../script.js';
 import {
     applyChunkedChatPayload,
     chat,
@@ -2270,8 +2270,92 @@ export async function reviewStmbOperations({ auto = false } = {}) {
     }
 }
 
+/** Opens the existing operation review and durable ordinary-book consolidation recovery. */
+async function showStmbPendingActions() {
+    let records;
+    try { records = (await resolveStmbConsolidationRecovery()).records || []; }
+    catch { toastr.error(translate('Consolidation recovery could not finish.'), 'STMB'); return; }
+    const rows = records.map(record => `<section class="info_block marginBot5" data-recovery-id="${escapeHtml(record.id)}">
+        <strong>${escapeHtml(record.lorebookName || translate('Unavailable Memory Book'))}</strong>
+        <p>${escapeHtml(record.state === 'unavailable' ? translate('Check your Memory Book access before recovery.')
+        : record.state === 'needsReview' ? translate('Consolidation recovery requires review. Reload the lorebook and review saved summaries before starting again.')
+            : translate('An accepted consolidation save needs recovery.'))}</p>
+        ${record.state === 'unavailable' ? '' : `<button type="button" class="menu_button" data-recovery-action="review">${escapeHtml(translate('Review details'))}</button>
+        ${record.state === 'needsReview' ? '' : `<button type="button" class="menu_button" data-recovery-action="resume">${escapeHtml(translate('Resume'))}</button>`}
+        <button type="button" class="menu_button" data-recovery-action="dismiss">${escapeHtml(translate('Dismiss after review'))}</button>`}
+    </section>`).join('');
+    const popup = new Popup(DOMPurify.sanitize(`<h3>${escapeHtml(translate('Pending Actions'))}</h3>
+        <div class="buttons_block"><button type="button" class="menu_button" data-recovery-action="operations">${escapeHtml(translate('Pending Memory Books operations'))}</button>
+        <button type="button" class="menu_button" data-recovery-action="jobs">${escapeHtml(translate('Memory Books Jobs'))}</button></div>
+        <h4>${escapeHtml(translate('Consolidation saves'))}</h4>${rows || `<p>${escapeHtml(translate('No pending consolidation saves.'))}</p>`}`),
+    POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true, okButton: false, cancelButton: translate('Close') });
+    const shown = popup.show();
+    popup.dlg?.addEventListener('click', async event => {
+        const button = event.target.closest('[data-recovery-action]');
+        if (!button || button.disabled) return;
+        const action = button.dataset.recoveryAction;
+        if (action === 'operations') { await reviewStmbOperations(); return; }
+        if (action === 'jobs') { await popup.completeCancelled(); await openPlannerSidebar(); return; }
+        const row = button.closest('[data-recovery-id]');
+        const record = records.find(item => item.id === row?.dataset.recoveryId);
+        if (!record) return;
+        if (action === 'review') {
+            const details = record.summaries.map(item => `<h4>${escapeHtml(item.title)}</h4><pre class="whitespacenormal">${escapeHtml(item.summary)}</pre>`).join('');
+            await new Popup(DOMPurify.sanitize(details), POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true, okButton: translate('Close') }).show();
+            return;
+        }
+        if (hasActiveStmbTasks() || hasActiveStmbJobs()) {
+            toastr.info(translate('Wait for active Memory Books jobs to finish before recovery.'), 'STMB');
+            return;
+        }
+        const buttons = Array.from(row.querySelectorAll('button'));
+        buttons.forEach(item => { item.disabled = true; });
+        try {
+            if (action === 'dismiss') {
+                const choice = await Popup.show.confirm(translate('Dismiss after review'), translate('Discard remaining consolidation recovery? Saved summaries will be kept.'));
+                if (choice !== POPUP_RESULT.AFFIRMATIVE) return;
+                await resolveStmbConsolidationRecovery('dismiss', record.id);
+            } else {
+                const saved = await resolveStmbConsolidationRecovery('resume', record.id);
+                record.state = saved.record.state;
+                worldInfoCache.delete(record.lorebookName);
+                await applyPostSummarySaveLorebookEffects(record.lorebookName);
+                const origin = record.recovery?.sceneContext;
+                if (origin && !isSceneContextCurrent(origin)) {
+                    toastr.info(translate('Consolidation saved. Open its original chat to finish recovery.'), 'STMB');
+                    return;
+                }
+                if (origin) await runPostConsolidationCommitFlow({ created: saved.createdEntries.length, normalizedTargetTier: record.targetTier, lorebookName: record.lorebookName, sceneContext: origin });
+                await resolveStmbConsolidationRecovery('complete', record.id);
+            }
+            row.remove();
+        } catch {
+            toastr.error(translate('Consolidation recovery could not finish. Review the Memory Book and reopen Pending Actions.'), 'STMB');
+        } finally { buttons.forEach(item => { item.disabled = false; }); }
+    });
+    await shown;
+}
+
+/** Announces unfinished accepted saves after reload without automatically mutating a lorebook. */
+async function notifyPendingConsolidations() {
+    try {
+        const { records } = await resolveStmbConsolidationRecovery();
+        if (records?.length) toastr.info(translate('A consolidation save needs recovery. Open Pending Actions in Memory Books.'), 'STMB', {
+            timeOut: 0, extendedTimeOut: 0, closeButton: true, preventDuplicates: true,
+            onclick: () => { void showStmbPendingActions(); },
+        });
+    } catch { /* The main panel offers an explicit retry after a transient loading failure. */ }
+}
+
+/** Acknowledges post-save effects without losing any unacknowledged batch identity. */
+async function completeConsolidationCheckpoints(checkpoint) {
+    if (checkpoint.recovery?.sceneContext && !isSceneContextCurrent(checkpoint.recovery.sceneContext)) return;
+    for (const id of checkpoint.recoveryIds || []) await resolveStmbConsolidationRecovery('complete', id);
+    checkpoint.recoveryIds = [];
+}
+
 /** Persists the active chat's rollback policy before its next acknowledged deletion. */
-async function syncStmbRollbackPolicy() {
+export async function syncStmbRollbackPolicy() {
     const origin = buildStmbSceneContext();
     if (!origin.chatRef) return;
     const settings = getModuleSettings();
@@ -2281,18 +2365,27 @@ async function syncStmbRollbackPolicy() {
     if (!isSceneContextCurrent(origin)) return;
     const policy = {
         enabled: settings.autoRollbackEnabled === true,
+        applyToBranches: settings.autoRollbackApplyToBranches === true,
         updateProgress: settings.autoRollbackUpdateLastProcessed !== false,
         deleteMemories: settings.autoRollbackDeleteLastMemory !== false,
         restoreSidePrompts: settings.autoRollbackRestorePreviousSidePrompts !== false,
         books: [...new Set([resolveLorebookName(), ...(state.autoRollbackPolicy?.books || []), ...Object.values(state.manualCharacterLorebooks || {}),
             ...Object.values(state.sidePromptLorebookOverrides || {}),
-            ...(templates || []).map(template => template.settings?.lorebook?.targetLorebookName),
+            ...(templates || []).map(template => state.sidePromptLorebookOverrides?.[template.key] ?? template.settings?.lorebook?.targetLorebookName),
             ...(state.narratorMode?.members || []).map(member => member.lorebookName)])]
-            .filter(name => name && getLorebookStorageForRequest(name) === 'user'),
+            .filter(name => name && name !== '__memory__' && getLorebookStorageForRequest(name) === 'user'),
     };
     if (JSON.stringify(state.autoRollbackPolicy) === JSON.stringify(policy)) return;
+    const previousPolicy = state.autoRollbackPolicy;
     state.autoRollbackPolicy = policy;
-    await saveMetadata();
+    try {
+        if (await saveMetadata() !== CHAT_SAVE_RESULT.SAVED) {
+            throw new Error(translate('Memory Books rollback settings could not be saved.'));
+        }
+    } catch (error) {
+        if (state.autoRollbackPolicy === policy) state.autoRollbackPolicy = previousPolicy;
+        throw error;
+    }
 }
 
 function getStmbOrdinaryUserLorebookNames() {
@@ -2843,6 +2936,8 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
             <h3 class="stmb-section-title" data-i18n="Automatic Memories">Automatic Memories</h3>
             <div class="world_entry_form_control">
                 <label class="checkbox_label"><input type="checkbox" data-stmb-rollback="autoRollbackEnabled" ${moduleSettings.autoRollbackEnabled === true ? 'checked' : ''}><span data-i18n="Auto-rollback after message deletion">Auto-rollback after message deletion</span></label>
+                <label class="checkbox_label"><input type="checkbox" data-stmb-rollback="autoRollbackApplyToBranches" ${moduleSettings.autoRollbackApplyToBranches === true ? 'checked' : ''} ${moduleSettings.autoRollbackEnabled === true ? '' : 'disabled'}><span data-i18n="Apply auto-rollback to branches/checkpoints">Apply auto-rollback to branches/checkpoints</span></label>
+                <small data-i18n="Roll back new copies to their retained messages. Every affected Memory Book must have an independent copy.">Roll back new copies to their retained messages. Every affected Memory Book must have an independent copy.</small>
                 <small data-i18n="Rollback deletes affected memories and summaries permanently. Side Prompts retain one restoration layer.">Rollback deletes affected memories and summaries permanently. Side Prompts retain one restoration layer.</small>
                 <label class="checkbox_label"><input type="checkbox" data-stmb-rollback="autoRollbackUpdateLastProcessed" ${moduleSettings.autoRollbackUpdateLastProcessed !== false ? 'checked' : ''}><span data-i18n="Update last processed message">Update last processed message</span></label>
                 <label class="checkbox_label"><input type="checkbox" data-stmb-rollback="autoRollbackDeleteLastMemory" ${moduleSettings.autoRollbackDeleteLastMemory !== false ? 'checked' : ''}><span data-i18n="Delete affected memories and summaries">Delete affected memories and summaries</span></label>
@@ -6138,6 +6233,11 @@ async function showMainEntryPopup(view = 'main', options = {}) {
                 },
             },
             {
+                text: translate('Pending Actions'),
+                classes: ['menu_button'],
+                action: showStmbPendingActions,
+            },
+            {
                 text: translate('Topical Clip'),
                 classes: ['menu_button'],
                 action: async () => {
@@ -6220,8 +6320,10 @@ async function showMainEntryPopup(view = 'main', options = {}) {
 
         if (target.dataset.stmbRollback) {
             const key = target.dataset.stmbRollback;
-            if (!['autoRollbackEnabled', 'autoRollbackUpdateLastProcessed', 'autoRollbackDeleteLastMemory', 'autoRollbackRestorePreviousSidePrompts'].includes(key)) return;
+            if (!['autoRollbackEnabled', 'autoRollbackApplyToBranches', 'autoRollbackUpdateLastProcessed', 'autoRollbackDeleteLastMemory', 'autoRollbackRestorePreviousSidePrompts'].includes(key)) return;
             moduleSettings[key] = target.checked;
+            const branchToggle = popup.dlg.querySelector('[data-stmb-rollback="autoRollbackApplyToBranches"]');
+            if (branchToggle) branchToggle.disabled = moduleSettings.autoRollbackEnabled !== true;
             persistSettings();
             await syncStmbRollbackPolicy();
             return;
@@ -7074,6 +7176,7 @@ export function getStmbChatCopyLockContext() {
 export function hasStmbChatCopyBindings(metadata = chat_metadata, lockContext = getStmbChatCopyLockContext()) {
     const state = metadata?.[STMB_METADATA_KEY];
     if (!state || typeof state !== 'object' || Array.isArray(state)) return false;
+    if (state.autoRollbackPolicy?.enabled && state.autoRollbackPolicy.applyToBranches && state.autoRollbackPolicy.books?.length) return true;
     const hasValue = value => {
         if (typeof value === 'string') return Boolean(value.trim());
         if (Array.isArray(value)) return value.some(hasValue);
@@ -9778,6 +9881,7 @@ async function commitSummaryCandidates(summaryCandidates, {
     throwIfStmbAborted(signal);
     const request = {
         batchId: createAikobotsUuid(),
+        batchCreatedAt: Date.now(),
         lorebookName,
         storage: getLorebookStorageForRequest(lorebookName),
         summaryCandidates,
@@ -9789,6 +9893,7 @@ async function commitSummaryCandidates(summaryCandidates, {
         summaryEntrySettings: summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
         sourceFingerprints,
         sourceIds: sourceIds ? Array.from(sourceIds).map(String) : null,
+        recovery: checkpoint?.recovery || buildConsolidationRecoveryContext(buildStmbSceneContext(), createAikobotsUuid()),
     };
     let result;
     try {
@@ -9825,6 +9930,7 @@ async function runPostConsolidationCommitFlow({
     lorebookName,
     sceneContext = null,
 } = {}) {
+    if (sceneContext && !isSceneContextCurrent(sceneContext)) return;
     if (Number(created || 0) <= 0) {
         return;
     }
@@ -10561,7 +10667,9 @@ function buildSummaryRepairHandler(contextBase = {}) {
             if (summaryCandidates.length === 0) {
                 throw new Error(`Model did not return a usable ${getSummaryTierLabel(context.normalizedTargetTier).toLowerCase()} summary`);
             }
+            const checkpoint = { completedEntries: [], completedCandidates: [], recovery: buildConsolidationRecoveryContext(context.sceneContext || buildStmbSceneContext(), createAikobotsUuid()) };
             await commitSummaryCandidates(summaryCandidates, {
+                checkpoint,
                 normalizedTargetTier: context.normalizedTargetTier,
                 lorebookName: context.lorebookName,
                 titleFormat: context.titleFormat,
@@ -10580,6 +10688,7 @@ function buildSummaryRepairHandler(contextBase = {}) {
                 lorebookName: context.lorebookName,
                 sceneContext: context.sceneContext || null,
             });
+            await completeConsolidationCheckpoints(checkpoint);
             return true;
         } finally {
             repairTask.cleanup();
@@ -10599,12 +10708,14 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
         preview: Boolean(getModuleSettings().showConsolidationPreviews && context),
         completedEntries: [], completedCandidates: [], rejectedIds: [], pending: null,
     };
+    checkpoint.recovery ||= buildConsolidationRecoveryContext(payload.sceneContext || context?.job?.sceneContext || buildStmbSceneContext(), createAikobotsUuid());
     const persistCheckpoint = () => context?.patch({ payload: { ...context.job.payload, consolidationCommit: checkpoint } });
     persistCheckpoint();
     /** Resumes post-save effects without sending another generation or commit. */
     const finishSaved = async () => {
         await applyPostSummarySaveLorebookEffects(lorebookName);
         await runPostConsolidationCommitFlow({ created: checkpoint.completedEntries.length, normalizedTargetTier, lorebookName, sceneContext: payload.sceneContext || null });
+        await completeConsolidationCheckpoints(checkpoint);
         return { lorebookName, targetTier: normalizedTargetTier, summaryCandidates: checkpoint.completedCandidates, entries: checkpoint.completedEntries, leftovers: checkpoint.preview ? checkpoint.rejectedIds : (checkpoint.leftovers || []) };
     };
     if (checkpoint.pending) {
@@ -10739,6 +10850,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
                 lorebookName,
                 sceneContext: payload.sceneContext || null,
             });
+            await completeConsolidationCheckpoints(checkpoint);
             return {
                 lorebookName,
                 targetTier: normalizedTargetTier,
@@ -10771,6 +10883,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
             lorebookName,
             sceneContext: payload.sceneContext || null,
         });
+        await completeConsolidationCheckpoints(checkpoint);
 
         return {
             lorebookName,
@@ -12092,6 +12205,7 @@ export function initStmb() {
     ensureStmbJobExecutorsRegistered();
     initStmbJobsUi();
     refreshFloatingJumpButtons();
+    void notifyPendingConsolidations();
     setTimeout(() => {
         validateSceneMarkers();
         renderAllSceneButtons();

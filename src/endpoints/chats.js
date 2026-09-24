@@ -92,6 +92,7 @@ import {
 } from '../lorebook-repository.js';
 import {
     StmbChatCopyError,
+    prepareStmbRollbackCopyMetadata,
     allocateStmbLorebookCopyName,
     clearStmbChatMetadataBindings,
     collectStmbChatLorebookNames,
@@ -100,6 +101,8 @@ import {
     getStmbLorebookCopyRoot,
     rewriteStmbChatMetadataForCopy,
 } from '../stmb-chat-copy.js';
+import { planStmbChatCopyBook } from '../stmb-rollback.js';
+import { readStmbSidePrompts } from '../stmb-side-prompts-repository.js';
 
 const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean');
 const maxTotalChatBackups = Number(getConfigValue('backups.chat.maxTotalBackups', -1, 'number'));
@@ -5696,12 +5699,22 @@ async function copyPrefixWithMemoryBooks({
             if (!sourceHeader || messages.length !== prefixEndId + 1) {
                 throw new ChatMutationError(400, 'invalid_message_id');
             }
+            const selectedSourceMessage = messages[prefixEndId];
+            const previousSwipeUuid = selectedSourceMessage?.swipe_info?.[selectedSourceMessage.swipe_id]?.[AIKOBOTS_SWIPE_UUID_KEY];
+            const rollbackBoundary = request.body.selected_swipe_uuid && request.body.selected_swipe_uuid !== previousSwipeUuid
+                ? prefixEndId - 1 : prefixEndId;
             applyRequestedSwipeToPrefix(messages, prefixEndId, request.body);
+
+            const policy = sourceHeader.chat_metadata?.STMemoryBooks?.autoRollbackPolicy;
+            const rollbackCopy = copyMemoryBooks && policy?.enabled === true && policy.applyToBranches === true;
+            const copyMetadata = rollbackCopy
+                ? prepareStmbRollbackCopyMetadata(sourceHeader.chat_metadata, readStmbSidePrompts(request.user).document?.prompts, copyLockOptions)
+                : sourceHeader.chat_metadata;
 
             const sources = [];
             const aliasesByResolvedName = new Map();
             if (copyMemoryBooks) {
-                const requestedNames = collectStmbChatLorebookNames(sourceHeader.chat_metadata, copyLockOptions);
+                const requestedNames = collectStmbChatLorebookNames(copyMetadata, copyLockOptions);
                 for (const requestedName of requestedNames) {
                     let loaded;
                     try {
@@ -5753,6 +5766,30 @@ async function copyPrefixWithMemoryBooks({
                 }
             }
             regenerateChatIdentities(targetMessages, { generateUuid: uuidv4 });
+            let highestCopiedMemory = -1;
+            if (rollbackCopy) {
+                const sourceSqlitePath = replaceChatStorageExtension(sourcePath, '.sqlite');
+                if (!fs.existsSync(sourceSqlitePath)) throw new StmbChatCopyError('stmb_copy_rollback_unsafe', 'Memory Book rollback requires verified message identities. Nothing was created.');
+                const db = await loadDb(sourceSqlitePath);
+                try {
+                    const uuidMap = new Map(messages.map((message, index) => [message[AIKOBOTS_MESSAGE_UUID_KEY], targetMessages[index][AIKOBOTS_MESSAGE_UUID_KEY]]));
+                    const resolved = new Map();
+                    const resolveMessage = uuid => {
+                        if (!resolved.has(uuid)) resolved.set(uuid, getLogicalMessageRowByUuid(db, uuid));
+                        return resolved.get(uuid);
+                    };
+                    for (const source of copiedSources) {
+                        const planned = planStmbChatCopyBook(source.data, {
+                            sourceChatId: String(isGroup ? request.body.source_id : request.body.source_file),
+                            targetChatId, boundary: rollbackBoundary, settings: policy, resolveMessage, uuidMap,
+                        });
+                        source.data = planned.data;
+                        highestCopiedMemory = Math.max(highestCopiedMemory, planned.highest);
+                    }
+                } catch {
+                    throw new StmbChatCopyError('stmb_copy_rollback_unsafe', 'Memory Book rollback could not be verified. Nothing was created. Disable branch rollback or create a chat-only copy.');
+                } finally { db.close(); }
+            }
             const hasDerivedEntries = copiedSources.some(source => source.hasDerivedEntries);
             const createdNames = [];
             try {
@@ -5770,8 +5807,14 @@ async function copyPrefixWithMemoryBooks({
                 }
 
                 const copiedMetadata = copyMemoryBooks
-                    ? rewriteStmbChatMetadataForCopy(sourceHeader.chat_metadata, nameMap, prefixEndId, copyLockOptions)
+                    ? rewriteStmbChatMetadataForCopy(copyMetadata, nameMap, prefixEndId, copyLockOptions)
                     : clearStmbChatMetadataBindings(sourceHeader.chat_metadata);
+                if (rollbackCopy && policy.updateProgress !== false) {
+                    const state = copiedMetadata.STMemoryBooks;
+                    if (highestCopiedMemory < 0) delete state.highestMemoryProcessed;
+                    else state.highestMemoryProcessed = highestCopiedMemory;
+                    delete state.highestMemoryProcessedManuallySet;
+                }
                 const marker = {
                     version: 1,
                     operation_id: operationId,

@@ -23,9 +23,27 @@ function isPlainObject(value) {
 }
 
 function addBookName(names, value) {
-    if (typeof value === 'string' && value.trim()) {
+    if (typeof value === 'string' && value.trim() && value.trim() !== '__memory__') {
         names.add(value.trim());
     }
+}
+
+/** Captures active Side Prompt targets and rejects bindings that would keep writing to parent books. */
+export function prepareStmbRollbackCopyMetadata(chatMetadata, prompts, { soloMemoryBookLocked = false, lockedCharacterBindingKeys = [] } = {}) {
+    const metadata = structuredClone(chatMetadata || {});
+    const state = metadata[STMB_METADATA_KEY] ||= {};
+    if ((soloMemoryBookLocked && state.narratorMode?.enabled !== true)
+        || lockedCharacterBindingKeys.length > 0) {
+        throw new StmbChatCopyError('stmb_copy_rollback_unsafe', 'Memory Book rollback could not be verified. Nothing was created. Disable branch rollback or create a chat-only copy.');
+    }
+    state.sidePromptLorebookOverrides ||= {};
+    for (const [key, template] of Object.entries(prompts || {})) {
+        if (template?.enabled === false || template?.specialKind === 'clipReview') continue;
+        if (Object.hasOwn(state.sidePromptLorebookOverrides, key)) continue;
+        const target = template?.settings?.lorebook?.targetLorebookName;
+        if (typeof target === 'string' && target.trim()) state.sidePromptLorebookOverrides[key] = target.trim();
+    }
+    return metadata;
 }
 
 function addBookNameValues(names, value) {
@@ -137,6 +155,10 @@ export function rewriteStmbChatMetadataForCopy(chatMetadata, nameMap, cutoffInde
         }
     }
 
+    if (state.autoRollbackPolicy?.applyToBranches === true && state.autoRollbackPolicy.enabled === true) {
+        state.autoRollbackPolicy.books = [...new Set(nameMap.values())];
+    }
+
     if (Number.isInteger(state.highestMemoryProcessed)) {
         state.highestMemoryProcessed = Math.min(state.highestMemoryProcessed, cutoffIndex);
     }
@@ -162,6 +184,8 @@ export function clearStmbChatMetadataBindings(chatMetadata) {
     delete state.manualCharacterLorebooks;
     delete state.sidePromptLorebookOverrides;
     delete state.narratorMode;
+    // A chat-only child must never recover mutations against the parent's policy targets.
+    delete state.autoRollbackPolicy;
     return metadata;
 }
 

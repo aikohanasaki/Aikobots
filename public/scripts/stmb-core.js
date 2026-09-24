@@ -85,7 +85,8 @@ export function resolveStmbAIReferenceManualLocale(locale) {
 
 /** Returns the STMB copy kind only while Memory Book copying is enabled. */
 export function resolveStmbChatCopyKind(kind, moduleSettings) {
-    return moduleSettings?.copyMemoryBooksWithChatCopies === false ? '' : String(kind || '');
+    const rollbackCopies = moduleSettings?.autoRollbackEnabled === true && moduleSettings?.autoRollbackApplyToBranches === true;
+    return moduleSettings?.copyMemoryBooksWithChatCopies === false && !rollbackCopies ? '' : String(kind || '');
 }
 
 export function normalizeStmbMemoryBoundaryMode(mode) {
@@ -613,6 +614,7 @@ export function createDefaultStmbSettings() {
             characterAwareMemories: true,
             useSeparateGroupSidePrompts: true,
             autoRollbackEnabled: false,
+            autoRollbackApplyToBranches: false,
             autoRollbackUpdateLastProcessed: true,
             autoRollbackDeleteLastMemory: true,
             autoRollbackRestorePreviousSidePrompts: true,
@@ -958,6 +960,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.characterAwareMemories = moduleSettings.characterAwareMemories !== false;
     moduleSettings.useSeparateGroupSidePrompts = moduleSettings.useSeparateGroupSidePrompts !== false;
     moduleSettings.autoRollbackEnabled = moduleSettings.autoRollbackEnabled === true;
+    moduleSettings.autoRollbackApplyToBranches = moduleSettings.autoRollbackApplyToBranches === true;
     moduleSettings.autoRollbackUpdateLastProcessed = moduleSettings.autoRollbackUpdateLastProcessed !== false;
     moduleSettings.autoRollbackDeleteLastMemory = moduleSettings.autoRollbackDeleteLastMemory !== false;
     moduleSettings.autoRollbackRestorePreviousSidePrompts = moduleSettings.autoRollbackRestorePreviousSidePrompts !== false;

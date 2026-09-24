@@ -992,8 +992,17 @@ function createFloatingClipButton() {
             const selectedText = getFloatingSelectionState()?.selectedText || floatingClipSelection;
             hideFloatingClipButton();
             if (!selectedText) return;
-            if (extract) await openChatMessageExtractor({ query: selectedText });
-            else await openClipModalFromSelection({ selectedText, source: 'floating' });
+            try {
+                if (extract) {
+                    const query = selectedText.split('\n').map(line => line.trim()).find(Boolean)?.slice(0, 1000) || '';
+                    await openChatMessageExtractor({ query });
+                } else {
+                    await openClipModalFromSelection({ selectedText, source: 'floating' });
+                }
+            } catch (error) {
+                console.error(`${MODULE_NAME}: Floating action failed:`, error);
+                toastr.error(error?.message || tr('Could not read messages. Search again to retry.', 'ChatExtract_Failed'), 'STMB');
+            }
         });
         button.append(action);
     }
@@ -1921,6 +1930,14 @@ async function saveTopicalClipDraft(context, draft, options = {}) {
     const freshLorebook = await loadWorldInfo(lorebookName);
     if (!freshLorebook?.entries) throw new Error(tr('Failed to load lorebook'));
 
+    if (context.messageSelection) {
+        try {
+            await captureExtractedMessages(context.messageSelection);
+        } catch {
+            throw Object.assign(new Error(tr('Selected messages are unavailable or changed. Extract them again before generating.', 'ChatExtract_CaptureFailed')), { code: 'STMB_CLIP_SOURCE_CHANGED' });
+        }
+    }
+
     if (mode === 'update' && !options.forceCreateNew) {
         const target = findEntryByStableId(freshLorebook, targetUid);
         if (!target) throw new Error(tr('Choose an entry to update.'));
@@ -2559,9 +2576,11 @@ export async function showTopicalClipPopup(options = {}) {
 
         let sourceMessages = null;
         let messageSource = null;
+        const messageSelection = includeMessages && messageMode.value === 'selection'
+            ? structuredClone(selectedMessages) : null;
         if (includeMessages && messageMode.value === 'selection') {
             try {
-                const capture = await captureExtractedMessages(selectedMessages);
+                const capture = await captureExtractedMessages(messageSelection);
                 sourceMessages = capture.compiledScene;
                 messageSource = capture.messageSource;
             } catch {
@@ -2664,6 +2683,7 @@ export async function showTopicalClipPopup(options = {}) {
                         ? snapshotTopicalSourceEntries(allEligibleSources)
                         : (getTopicalClipMetadata(target)?.last_source_snapshot || []),
                 messageSource,
+                messageSelection,
                 profileOverrides,
             };
             if (draftTextarea) draftTextarea.value = normalizedDraft;
@@ -2678,6 +2698,10 @@ export async function showTopicalClipPopup(options = {}) {
                 } catch (error) {
                     console.error(`${MODULE_NAME}: Failed to auto-save Topical Clip:`, error);
                     toastr.error(error?.message || tr('Failed to save Topical Clip.'), 'STMB');
+                    if (error?.code === 'STMB_CLIP_SOURCE_CHANGED') {
+                        await new Popup(DOMPurify.sanitize(`<h3>${escapeHtml(tr('Topical Clip'))}</h3><p>${escapeHtml(error.message)}</p><label>${escapeHtml(tr('Draft'))}<textarea class="text_pole" rows="12" readonly>${escapeHtml(normalizedDraft)}</textarea></label>`),
+                            POPUP_TYPE.TEXT, '', { wide: true, large: true, okButton: tr('Close') }).show();
+                    }
                     return false;
                 }
             }
