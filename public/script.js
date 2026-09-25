@@ -14962,6 +14962,7 @@ export async function getSettings() {
         }
 
         accountStorage.init(settings?.accountStorage);
+        toastHistoryStore.initializePersistence(accountStorage);
         await setUserControls(data.enable_accounts);
 
         // Allow subscribers to mutate settings

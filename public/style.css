@@ -4453,6 +4453,7 @@ button.toast-close-button {
 }
 
 .toast-history-trigger[hidden],
+.toast-history-trigger > [hidden],
 .toast-history-indicator[hidden] {
     display: none;
 }
@@ -4524,7 +4525,7 @@ button.toast-close-button {
 
 .toast-history-entry {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr);
     gap: 10px;
     align-items: start;
     padding: 12px;
@@ -4564,19 +4565,52 @@ button.toast-close-button {
     white-space: pre-wrap;
 }
 
-.toast-history-suppressed-label {
-    display: none;
+.toast-exception-status {
     margin-top: 5px;
     color: var(--SmartThemeEmColor);
     font-size: 0.8em;
 }
 
-.toast-history-entry-suppressed {
-    opacity: 0.55;
+.toast-exception-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
 }
 
-.toast-history-entry-suppressed .toast-history-suppressed-label {
-    display: block;
+.toast-exception-actions label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.toast-exception-actions [aria-pressed="true"] {
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor) 25%, var(--SmartThemeBlurTintColor));
+    color: var(--SmartThemeBodyColor);
+    outline: 1px solid var(--SmartThemeQuoteColor);
+}
+
+.toast-exception-matcher {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.toast-exception-matcher label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.toast-exception-matcher :is(select, textarea) {
+    width: 100%;
+    min-width: 0;
+}
+
+.toast-exception-matcher button {
+    align-self: start;
 }
 
 .toast-history-suppression-toggle,
@@ -4605,6 +4639,7 @@ button.toast-close-button {
 
 .toast-history-suppression-copy {
     min-width: 0;
+    flex: 1;
 }
 
 .toast-history-suppression-copy > strong {

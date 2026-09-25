@@ -751,6 +751,8 @@ Performance conclusions must be based on measurements rather than assumptions ab
 
 ## Client Contract
 
+Pinned toast exceptions use the existing account-settings save path, not chat storage. `accountStorage.toastExceptions` is a JSON string with `{ version: 1, rules: [...] }`; each rule stores only `level`, `title`, `message`, `mode` (`exact`, `contains`, or `any`), `suppress`, and `skipHistory`. Runtime IDs, notification history, originating payloads, and unpinned rules are not persisted. Unpinning or deleting a pinned rule updates that same account preference. Rules load after account storage initializes; malformed rules are ignored without logging their contents. This adds no chat migration, identity change, or locking mechanism.
+
 The browser must:
 
 - create stable message and swipe UUIDs before persistence where required;
