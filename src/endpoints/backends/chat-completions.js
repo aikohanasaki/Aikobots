@@ -146,8 +146,6 @@ const GENERATION_JOB_DEFAULTS = Object.freeze({
     secondaryPriorityAgeSeconds: 60,
 });
 
-// blocked due to site policy, unblocking august 2026
-const BLOCKED_CUSTOM_ENDPOINT_HOSTNAME = 'voidai.app';
 const REQUEST_SOCKET_ABORT_CLEANUPS = Symbol('requestSocketAbortCleanups');
 
 function removeEmitterListener(emitter, eventName, listener) {
@@ -203,28 +201,6 @@ function bindAbortControllerToRequestSocket(request, controller) {
     }
 
     request[REQUEST_SOCKET_ABORT_CLEANUPS].push(cleanup);
-}
-
-/**
- * @param {string} hostname
- * @returns {boolean}
- */
-function isVoidaiAppHostname(hostname) {
-    const normalized = String(hostname || '').toLowerCase();
-    return normalized === BLOCKED_CUSTOM_ENDPOINT_HOSTNAME || normalized.endsWith(`.${BLOCKED_CUSTOM_ENDPOINT_HOSTNAME}`);
-}
-
-/**
- * @param {string} urlString
- * @returns {boolean}
- */
-function isVoidaiAppUrl(urlString) {
-    if (!urlString) return false;
-    try {
-        return isVoidaiAppHostname(new URL(urlString).hostname);
-    } catch {
-        return false;
-    }
 }
 
 /**
@@ -3468,16 +3444,6 @@ router.post('/status', async function (request, statusResponse) {
     request.requestId = request.requestId || uuidv4();
     statusResponse.setHeader('X-Request-Id', request.requestId);
 
-    if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
-        console.warn('Blocked reverse proxy endpoint (voidai.app).');
-        return statusResponse.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
-    }
-
-    if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM && isVoidaiAppUrl(request.body.custom_url)) {
-        console.warn('Blocked custom endpoint (voidai.app).');
-        return statusResponse.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
-    }
-
     let apiUrl = '';
     let apiKey = '';
     let headers = {};
@@ -3921,16 +3887,6 @@ export async function handleChatCompletionsGenerate(request, response) {
         await assertActiveSessionOperation(request);
         request.requestId = request.requestId || uuidv4();
         response.setHeader('X-Request-Id', request.requestId);
-
-        if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
-            console.warn('Blocked reverse proxy endpoint (voidai.app).');
-            return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
-        }
-
-        if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM && isVoidaiAppUrl(request.body.custom_url)) {
-            console.warn('Blocked custom endpoint (voidai.app).');
-            return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
-        }
 
         if (request.body.json_schema?.value) {
             request.body.json_schema.value = flattenSchema(request.body.json_schema.value, request.body.chat_completion_source);

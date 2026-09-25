@@ -1081,53 +1081,19 @@ export let openai_settings;
 /** @type {import('./PromptManager.js').PromptManager} */
 export let promptManager = null;
 
-// blocked due to site policy, unblocking august 2026
-const BLOCKED_CUSTOM_ENDPOINT_HOSTNAME = 'voidai.app';
-
-/**
- * @param {string} hostname
- * @returns {boolean}
- */
-function isVoidaiAppHostname(hostname) {
-    const normalized = String(hostname || '').toLowerCase();
-    return normalized === BLOCKED_CUSTOM_ENDPOINT_HOSTNAME || normalized.endsWith(`.${BLOCKED_CUSTOM_ENDPOINT_HOSTNAME}`);
-}
-
-/**
- * @param {string} urlString
- * @returns {boolean}
- */
-function isVoidaiAppUrl(urlString) {
-    if (!urlString) return false;
-    try {
-        return isVoidaiAppHostname(new URL(urlString).hostname);
-    } catch {
-        return false;
-    }
-}
-
 async function validateReverseProxy() {
     if (!oai_settings.reverse_proxy) {
         return;
     }
 
-    /** @type {URL} */
-    let parsed;
     try {
-        parsed = new URL(oai_settings.reverse_proxy);
+        new URL(oai_settings.reverse_proxy);
     }
     catch (err) {
         toastr.error(t`Entered reverse proxy address is not a valid URL`);
         setOnlineStatus('no_connection');
         resultCheckStatus();
         throw err;
-    }
-
-    if (isVoidaiAppHostname(parsed.hostname)) {
-        toastr.error(t`The domain voidai.app is blocked as a custom API endpoint until August 2026.`);
-        setOnlineStatus('no_connection');
-        resultCheckStatus();
-        throw new Error('Blocked endpoint (voidai.app).');
     }
 
     const rememberKey = `Proxy_SkipConfirm_${getStringHash(oai_settings.reverse_proxy)}`;
@@ -2752,11 +2718,6 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
 
     if (canMultiSwipe && promptContext && typeof promptContext === 'object') {
         delete promptContext.toolBudgetData;
-    }
-
-    if (isCustom && isVoidaiAppUrl(oai_settings.custom_url)) {
-        toastr.error(t`The domain voidai.app is blocked as a custom API endpoint.`);
-        throw new Error('Blocked custom endpoint (voidai.app).');
     }
 
     const logitBiasSources = [chat_completion_sources.OPENAI, chat_completion_sources.AZURE_OPENAI, chat_completion_sources.OPENROUTER, chat_completion_sources.ELECTRONHUB, chat_completion_sources.CUSTOM];
@@ -4607,12 +4568,6 @@ async function runStatusOpen(statusCheckId, statusCheckController) {
         return resultCheckStatus();
     }
 
-    if (oai_settings.chat_completion_source === chat_completion_sources.CUSTOM && isVoidaiAppUrl(oai_settings.custom_url)) {
-        console.debug('Blocked endpoint URL of Custom OpenAI API:', oai_settings.custom_url);
-        setOnlineStatus(t`Blocked endpoint URL (voidai.app).`);
-        return resultCheckStatus();
-    }
-
     if (oai_settings.chat_completion_source === chat_completion_sources.CUSTOM && !isValidUrl(oai_settings.custom_url)) {
         console.debug('Invalid endpoint URL of Custom OpenAI API:', oai_settings.custom_url);
         setOnlineStatus(t`Invalid endpoint URL. Requests may fail.`);
@@ -6262,15 +6217,6 @@ async function onNewPresetClick() {
 
 function onReverseProxyInput() {
     const value = String($(this).val());
-    if (isVoidaiAppUrl(value)) {
-        toastr.error(t`The domain voidai.app is blocked as a custom API endpoint.`);
-        $(this).val('');
-        oai_settings.reverse_proxy = '';
-        $('.reverse_proxy_warning').toggle(false);
-        saveSettingsDebounced();
-        return;
-    }
-
     oai_settings.reverse_proxy = value;
     if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE) invalidateClaudeCatalogSupport();
     $('.reverse_proxy_warning').toggle(oai_settings.reverse_proxy != '');
@@ -7298,14 +7244,6 @@ export function initOpenAI() {
 
     $('#custom_api_url_text').on('input', function () {
         const value = String($(this).val());
-        if (isVoidaiAppUrl(value)) {
-            toastr.error(t`The domain voidai.app is blocked as a custom API endpoint.`);
-            $(this).val('');
-            oai_settings.custom_url = '';
-            saveSettingsDebounced();
-            return;
-        }
-
         oai_settings.custom_url = value;
         saveSettingsDebounced();
     });
