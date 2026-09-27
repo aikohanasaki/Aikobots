@@ -556,7 +556,7 @@ function RA_checkOnlineStatus() {
         }
     }
 }
-//Auto-connect to API (when set to kobold, API URL exists, and auto_connect is true)
+// Auto-connect to the configured chat completion API.
 
 function RA_autoconnect() {
     // secrets.js or script.js not loaded
@@ -996,7 +996,6 @@ export async function initMovingUI() {
         dragElement($('#WorldInfo'));
         dragElement($('#floatingPrompt'));
         dragElement($('#logprobsViewer'));
-        dragElement($('#cfgConfig'));
     }
 }
 
@@ -1605,7 +1604,6 @@ export function initRossMods() {
                 .not('#left-nav-panel')
                 .not('#right-nav-panel')
                 .not('#floatingPrompt')
-                .not('#cfgConfig')
                 .not('#logprobsViewer')
                 .not('#movingDivs > div')
                 .is(':visible')) {
@@ -1614,7 +1612,6 @@ export function initRossMods() {
                     .not('#left-nav-panel')
                     .not('#right-nav-panel')
                     .not('#floatingPrompt')
-                    .not('#cfgConfig')
                     .not('#logprobsViewer')
                     .not('#movingDivs > div');
                 $(visibleDrawerContent).parent().find('.drawer-icon').trigger('click');
@@ -1628,11 +1625,6 @@ export function initRossMods() {
 
             if ($('#WorldInfo').is(':visible')) {
                 $('#WIDrawerIcon').trigger('click');
-                return;
-            }
-
-            if ($('#cfgConfig').is(':visible')) {
-                $('#CFGClose').trigger('click');
                 return;
             }
 

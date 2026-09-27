@@ -19,8 +19,6 @@ export const tokenizers = {
     API_CURRENT: 6,
     MISTRAL: 7,
     YI: 8,
-    API_TEXTGENERATIONWEBUI: 9,
-    API_KOBOLD: 10,
     CLAUDE: 11,
     LLAMA3: 12,
     GEMMA: 13,
@@ -46,17 +44,7 @@ export const ENCODE_TOKENIZERS = [
     tokenizers.COMMAND_A,
     tokenizers.NEMO,
     tokenizers.DEEPSEEK,
-    // uncomment when NovelAI releases Kayra and Clio weights, lol
-    //tokenizers.NERD,
-    //tokenizers.NERD2,
 ];
-
-/**
- * Retained for compatibility with older tokenization flows.
- * The legacy text-completion remote tokenizer paths are no longer populated.
- * @type {string[]}
- */
-export const TEXTGEN_TOKENIZERS = [];
 
 const TOKENIZER_URLS = {
     [tokenizers.GPT2]: {

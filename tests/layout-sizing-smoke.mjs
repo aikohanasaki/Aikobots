@@ -41,7 +41,7 @@ async function geometry(page) {
         return {
             shell: rect('sheld'), top: rect('top-bar'), composer: rect('form_sheld'), chat: rect('chat'),
             left: rect('left-nav-panel'), right: rect('right-nav-panel'),
-            floating: rect('floatingPrompt'), cfg: rect('cfgConfig'),
+            floating: rect('floatingPrompt'),
             font: parseFloat(getComputedStyle(document.body).fontSize),
             slider: document.getElementById('chat_width_slider').disabled,
             counter: document.getElementById('chat_width_slider_counter').disabled,
@@ -115,8 +115,8 @@ export async function testLayoutSizing(page) {
                 const leftWidth = id === 'workspaceRight' ? current.shell.width : id === 'wide' ? Math.max(viewportWidth * 0.3, remainder) : remainder;
                 const rightWidth = id === 'workspaceRight' ? viewportWidth - current.shell.width - gap * 2 - 2 : leftWidth;
                 const floatingWidth = id === 'workspaceRight' ? rightWidth : remainder;
-                const expectedWidths = { left: leftWidth, right: rightWidth, floating: floatingWidth, cfg: floatingWidth };
-                for (const key of ['left', 'right', 'floating', 'cfg']) {
+                const expectedWidths = { left: leftWidth, right: rightWidth, floating: floatingWidth };
+                for (const key of ['left', 'right', 'floating']) {
                     assert.ok(current[key].cssWidth >= 449 && current[key].cssWidth <= viewportWidth, `${id}: ${key} width ${current[key].cssWidth}`);
                     assert.ok(Math.abs(current[key].cssWidth - Math.max(450, expectedWidths[key])) < 1, `${id}: ${key} retained an inherited width`);
                 }
@@ -220,7 +220,7 @@ export async function testLayoutSizing(page) {
             await selectLayout(page, id);
             const measured = await geometry(page);
             assert.ok(Math.abs(measured.shell.width - width) < 1, `${id}: mobile shell width changed`);
-            for (const key of ['left', 'right', 'floating', 'cfg']) {
+            for (const key of ['left', 'right', 'floating']) {
                 assert.ok(Math.abs(measured[key].cssWidth - width) < 1, `${id}: mobile ${key} width changed`);
             }
         }

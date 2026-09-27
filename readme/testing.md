@@ -37,6 +37,8 @@ The default Chromium smoke uses `BROWSER_PATH`, then `CHROME_PATH`, then an inst
 
 ## Selenium (explicit external testing only)
 
+The chat-only regression checks run with `node --test tests/chat-only-generation.node.test.js` and `npm run test:jest -- tests/chat-only-backends.test.js`. They exercise the production prompt-assembly boundary across generation modes, preserve input chat identities/swipes, reject legacy generation, and mock NovelAI subscription responses. These checks do not call paid model APIs or prove end-to-end provider behavior.
+
 Selenium is outside `npm test` because it needs a running application, a dedicated connection profile, and can spend external model API credits. Do not run it without authorization.
 
 Configure all four values before running the doctor:

@@ -281,7 +281,6 @@ export const power_user = {
     pin_examples: false,
     strip_examples: false,
     trim_sentences: false,
-    always_force_name2: false,
     user_prompt_bias: '',
     show_user_prompt_bias: true,
     auto_continue: {
@@ -2538,7 +2537,6 @@ export async function loadPowerUserSettings(settings, data) {
     $('#confirm_message_delete').prop('checked', power_user.confirm_message_delete !== undefined ? !!power_user.confirm_message_delete : true);
     $('#spoiler_free_mode').prop('checked', power_user.spoiler_free_mode);
     $('#collapse-newlines-checkbox').prop('checked', power_user.collapse_newlines);
-    $('#always-force-name2-checkbox').prop('checked', power_user.always_force_name2);
     $('#trim_sentences_checkbox').prop('checked', power_user.trim_sentences);
     $('#disable_group_trimming').prop('checked', power_user.disable_group_trimming);
     $('#markdown_escape_strings').val(power_user.markdown_escape_strings);
@@ -3282,7 +3280,6 @@ async function resetMovablePanels(type) {
         'summaryExtensionPopout',
         'gallery',
         'logprobsViewer',
-        'cfgConfig',
     ];
 
     /**
@@ -3917,11 +3914,6 @@ jQuery(() => {
     $('#single_line').on('input', function () {
         const value = !!$(this).prop('checked');
         power_user.single_line = value;
-        saveSettingsDebounced();
-    });
-
-    $('#always-force-name2-checkbox').on('change', function () {
-        power_user.always_force_name2 = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
 

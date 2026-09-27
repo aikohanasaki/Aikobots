@@ -297,8 +297,7 @@ body:not(.movingUI) .drawer-content.maximized {
     width: 100%;
 }
 
-#floatingPrompt,
-#cfgConfig {
+#floatingPrompt {
     overflow-y: auto;
     max-width: 90dvw;
     max-height: 90dvh;
@@ -368,7 +367,6 @@ body:not(.movingUI) .drawer-content.maximized {
     #right-nav-panel,
     #left-nav-panel,
     #floatingPrompt,
-    #cfgConfig,
     #logprobsViewer,
     #movingDivs > div {
         height: calc(100vh - 45px);
@@ -391,7 +389,6 @@ body:not(.movingUI) .drawer-content.maximized {
     }
 
     #floatingPrompt,
-    #cfgConfig,
     #logprobsViewer,
     #movingDivs > div {
         height: min-content;

@@ -157,7 +157,7 @@ The top bar, chat shell, generic drawers, and navigation panels are separately p
 | `#chat` | Flexible vertical scroll region; `min-height: 0` | Do not give the whole conversation an expanding fixed content height |
 | `.drawer-content` | Normally absolute and closed by default | Width/position are layout inputs; display and open state are app-owned |
 | `.fillLeft`, `.fillRight` | Fixed against their respective viewport edges; open panels are flex columns | Their inner content scrolls; opening one may overlap chat |
-| `#floatingPrompt`, `#cfgConfig` | Fixed, hidden until opened; z-index 4000; capped at 90dvw/90dvh on desktop | Width variables do not override those caps or open the panel |
+| `#floatingPrompt` | Fixed, hidden until opened; z-index 4000; capped at 90dvw/90dvh on desktop | Width variables do not override those caps or open the panel |
 | `#movingDivs > div` | Movable surfaces at z-index 4000 | Saved inline geometry can supersede your dimensions |
 
 Do not raise the chat above the navigation controls to solve an overlap. Do not add `transform`, `filter`, opacity, or containment to large ancestors just to decorate them: these can change stacking or positioning behavior. Ordinary popup dialogs live outside the chat shell and have their own constrained scrolling surfaces.
@@ -214,7 +214,6 @@ Built-in files live in [public/css/layouts](../public/css/layouts). Their names 
 | `.fillLeft` | Left-side full-height panel |
 | `.fillRight` | Right-side full-height panel |
 | `#floatingPrompt` | Floating prompt panel |
-| `#cfgConfig` | CFG configuration panel |
 
 `#sheld` is a positioned flex column containing `#chat` and `#form_sheld`. Preserve the chat's `flex: 1 1 auto`, `min-height: 0`, and vertical scrolling. `#send_textarea` is the editable composer input. Open `.fillLeft`/`.fillRight` panels rely on their inner `.scrollableInner` for scrolling.
 
@@ -585,8 +584,7 @@ body.layout-custom .mes_block {
 }
 
 body.layout-custom .fillRight,
-body.layout-custom #floatingPrompt,
-body.layout-custom #cfgConfig {
+body.layout-custom #floatingPrompt {
     left: auto;
     right: var(--my-layout-gap);
 }
@@ -605,8 +603,7 @@ body.layout-custom #cfgConfig {
     }
 
     body.layout-custom .fillRight,
-    body.layout-custom #floatingPrompt,
-    body.layout-custom #cfgConfig {
+    body.layout-custom #floatingPrompt {
         left: 0;
         right: auto;
     }
@@ -1114,3 +1111,7 @@ Run `npm run test:frontend:smoke -- --layouts` for the focused layout browser ma
 The smart-theme rules in `public/style.css` give `.stmb-help-drawer-copy` a flexible 24-character basis and allow long words to wrap. The download link can shrink and wrap within the drawer's width. The existing flex wrapping, theme colors, and mobile rules remain authoritative; there are no browser-specific sizing overrides.
 
 The floating `.stmb_floating_clip_button` contains native **Clip** and **Extract** buttons and retains its existing SmartTheme colors and viewport positioning. The shared Find/Extract picker uses `.chat-extract-result` to place a selection checkbox beside an expandable `.chat-find-result`; the details can shrink and long message text wraps using existing Find styling. Preserve these controls' keyboard access, hidden states, and wrapping in custom layouts. **Extract…** inside Topical Clip opens the same picker above the editor without replacing its fields.
+
+### Text-completion panel removal
+
+The text-generation CFG panel (`#cfgConfig`) and its menu item have been removed. Shared floating-panel rules now target only Author's Note (`#floatingPrompt`); desktop, mobile, and workspace-right layouts retain their existing geometry. Image-generation CFG controls are unchanged.

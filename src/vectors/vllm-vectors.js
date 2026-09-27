@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import { setAdditionalHeadersByType } from '../additional-headers.js';
-import { TEXTGEN_TYPES } from '../constants.js';
+import { HEADER_API_TYPES } from '../constants.js';
 
 /**
  * Gets the vector for the given text from VLLM
@@ -15,7 +15,7 @@ export async function getVllmBatchVector(texts, apiUrl, model, directories) {
     url.pathname = '/v1/embeddings';
 
     const headers = {};
-    setAdditionalHeadersByType(headers, TEXTGEN_TYPES.VLLM, apiUrl, directories);
+    setAdditionalHeadersByType(headers, HEADER_API_TYPES.VLLM, apiUrl, directories);
 
     const response = await fetch(url, {
         method: 'POST',

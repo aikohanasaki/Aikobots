@@ -3325,8 +3325,7 @@ input[type="file"] {
     display: contents;
 }
 
-#floatingPrompt,
-#cfgConfig {
+#floatingPrompt {
     border-radius: 10px;
     border: 1px solid var(--SmartThemeBorderColor);
     box-shadow: 0 0 10px var(--black70a);
@@ -5388,7 +5387,7 @@ body[data-generating="true"] #chat .last_mes .mes_reasoning_actions {
             --aiko-layout-right-panel-width: min(var(--aiko-builtin-panel-space), max(450px, var(--aiko-builtin-right-width)));
         }
 
-        & :is(#floatingPrompt, #cfgConfig) {
+        & #floatingPrompt {
             --aiko-layout-floating-panel-width: min(var(--aiko-builtin-panel-space), max(450px, var(--aiko-builtin-floating-width)));
         }
     }

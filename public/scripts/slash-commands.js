@@ -4484,7 +4484,6 @@ export async function promptQuietForLoudResponse(who, text) {
         // We don't need to modify the text
     }
 
-    //text = `${text}\n${(power_user.always_force_name2 && who != 'raw') ? characters[character_id].name + ":" : ""}`
 
     let reply = await generateQuietPrompt({ quietPrompt: text, quietToLoud: true });
     text = await getRegexedString(reply, regex_placement.SLASH_COMMAND);

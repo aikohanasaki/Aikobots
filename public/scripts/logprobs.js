@@ -11,7 +11,6 @@ import {
     substituteParamsExtended,
 } from '../script.js';
 import { debounce, delay, getStringHash } from './utils.js';
-import { decodeTextTokens, getTokenizerBestMatch } from './tokenizers.js';
 import { power_user } from './power-user.js';
 import { callGenericPopup, POPUP_TYPE } from './popup.js';
 import { t, translate } from './i18n.js';
@@ -498,8 +497,8 @@ function withVirtualWhitespace(text, span) {
  * or the logprobs data will be saved to the wrong message.
  *
  * Callers:
- * - Generate:onSuccess via saveLogprobsForActiveMessage, for non-streaming text completion
- * - StreamingProcessor:onFinishStreaming, for streaming text completion
+ * - Generate:onSuccess via saveLogprobsForActiveMessage, for non-streaming generation
+ * - StreamingProcessor:onFinishStreaming, for streaming generation
  * - sendOpenAIRequest, for non-streaming chat completion
  *
  * @param {TokenLogprobs[]} logprobs - array of logprobs data for each token
@@ -509,11 +508,6 @@ export function saveLogprobsForActiveMessage(logprobs, continueFrom) {
     if (!logprobs) {
         // non-streaming APIs could return null data
         return;
-    }
-
-    // NovelAI only returns token IDs in logprobs data; convert to text tokens in-place
-    if (getGeneratingApi() === 'novel') {
-        convertTokenIdLogprobsToText(logprobs);
     }
 
     const msgId = chat.length - 1;
@@ -564,40 +558,6 @@ function getActiveMessageLogprobData() {
     return state.messageLogprobs.get(hash) || null;
 }
 
-
-/**
- * convertLogprobTokenIdsToText replaces token IDs in logprobs data with text tokens,
- * for APIs that return token IDs instead of text tokens, to wit: NovelAI.
- *
- * @param {TokenLogprobs[]} input - logprobs data with numeric token IDs
- */
-function convertTokenIdLogprobsToText(input) {
-    const api = getGeneratingApi();
-    if (api !== 'novel') {
-        // should have been checked by the caller
-        throw new Error('convertTokenIdLogprobsToText should only be called for NovelAI');
-    }
-
-    const tokenizerId = getTokenizerBestMatch(api);
-
-    /** @type {any[]} Flatten unique token IDs across all logprobs */
-    const tokenIds = Array.from(new Set(input.flatMap(logprobs =>
-        logprobs.topLogprobs.map(([token]) => token).concat(logprobs.token),
-    )));
-
-    // Submit token IDs to tokenizer to get token text, then build ID->text map
-    // noinspection JSCheckFunctionSignatures - mutates input in-place
-    const { chunks } = decodeTextTokens(tokenizerId, tokenIds);
-    const tokenIdText = new Map(tokenIds.map((id, i) => [id, chunks[i]]));
-
-    // Fixup logprobs data with token text
-    input.forEach(logprobs => {
-        logprobs.token = tokenIdText.get(logprobs.token);
-        logprobs.topLogprobs = logprobs.topLogprobs.map(([token, logprob]) =>
-            [tokenIdText.get(token), logprob],
-        );
-    });
-}
 
 export function initLogprobs() {
     REROLL_BUTTON.hide();

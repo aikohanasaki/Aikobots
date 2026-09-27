@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import { setAdditionalHeadersByType } from '../additional-headers.js';
-import { TEXTGEN_TYPES } from '../constants.js';
+import { HEADER_API_TYPES } from '../constants.js';
 
 /**
  * Gets the vector for the given text from LlamaCpp
@@ -14,7 +14,7 @@ export async function getLlamaCppBatchVector(texts, apiUrl, directories) {
     url.pathname = '/v1/embeddings';
 
     const headers = {};
-    setAdditionalHeadersByType(headers, TEXTGEN_TYPES.LLAMACPP, apiUrl, directories);
+    setAdditionalHeadersByType(headers, HEADER_API_TYPES.LLAMACPP, apiUrl, directories);
 
     const response = await fetch(url, {
         method: 'POST',

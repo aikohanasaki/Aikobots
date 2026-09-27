@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import { setAdditionalHeadersByType } from '../additional-headers.js';
-import { TEXTGEN_TYPES } from '../constants.js';
+import { HEADER_API_TYPES } from '../constants.js';
 
 /**
  * Gets the vector for the given text from Ollama
@@ -34,7 +34,7 @@ export async function getOllamaVector(text, apiUrl, model, keep, directories) {
     url.pathname = '/api/embeddings';
 
     const headers = {};
-    setAdditionalHeadersByType(headers, TEXTGEN_TYPES.OLLAMA, apiUrl, directories);
+    setAdditionalHeadersByType(headers, HEADER_API_TYPES.OLLAMA, apiUrl, directories);
 
     const response = await fetch(url, {
         method: 'POST',

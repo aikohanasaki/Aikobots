@@ -932,31 +932,6 @@ export function mergeMessages(messages, names, { strict = false, placeholders = 
 }
 
 /**
- * Convert a prompt from the ChatML objects to the format used by Text Completion API.
- * @param {object[]} messages Array of messages
- * @returns {string} Prompt for Text Completion API
- */
-export function convertTextCompletionPrompt(messages) {
-    if (typeof messages === 'string') {
-        return messages;
-    }
-
-    const messageStrings = [];
-    messages.forEach(m => {
-        if (m.role === 'system' && m.name === undefined) {
-            messageStrings.push('System: ' + m.content);
-        }
-        else if (m.role === 'system' && m.name !== undefined) {
-            messageStrings.push(m.name + ': ' + m.content);
-        }
-        else {
-            messageStrings.push(m.role + ': ' + m.content);
-        }
-    });
-    return messageStrings.join('\n') + '\nassistant:';
-}
-
-/**
  * Append cache_control object to a Claude messages at depth. Directly modifies the messages array.
  * @param {any[]} messages Messages to modify
  * @param {number} cachingAtDepth Depth at which caching is supposed to occur

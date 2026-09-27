@@ -33,7 +33,6 @@
         "pin_examples": false,
         "strip_examples": false,
         "trim_sentences": false,
-        "always_force_name2": true,
         "user_prompt_bias": "",
         "show_user_prompt_bias": true,
         "auto_continue": {

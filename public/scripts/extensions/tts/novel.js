@@ -43,7 +43,7 @@ class NovelTtsProvider {
                 The default Voice IDs are only examples. Add custom voices and Novel will create a new random voice for it.
                 Feel free to try different options!
             </div>
-            <i data-i18n="Hint: Save an API key in the NovelAI API settings to use it here.">Hint: Save an API key in the NovelAI API settings to use it here.</i>
+            <button type="button" class="menu_button manage-api-keys" data-key="api_key_novel" data-i18n="Manage API keys">Manage API keys</button>
         </div>
         <label for="tts-novel-custom-voices-add" data-i18n="Custom Voices">Custom Voices</label>
         <div class="tts_custom_voices">

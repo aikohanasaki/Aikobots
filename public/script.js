@@ -162,7 +162,6 @@ import {
     renderPaginationDropdown,
     paginationDropdownChangeHandler,
     importFromExternalUrl,
-    shiftDownByOne,
     canUseNegativeLookbehind,
     trimSpaces,
     clamp,
@@ -224,7 +223,6 @@ import { registerPromptManagerMigration } from './scripts/PromptManager.js';
 import { getRegexScripts, getRegexedString, regex_placement } from './scripts/extensions/regex/engine.js';
 import { initLogprobs, saveLogprobsForActiveMessage } from './scripts/logprobs.js';
 import { FILTER_STATES, FILTER_TYPES, FilterHelper, isFilterState } from './scripts/filters.js';
-import { getCfgPrompt, getGuidanceScale, initCfg } from './scripts/cfg-scale.js';
 import { initLocales, t, translate } from './scripts/i18n.js';
 import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, getTokenizerModel, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
 import {
@@ -3754,8 +3752,6 @@ export let main_api;
 /** @type {AbortController} */
 let abortController;
 
-export const CHAT_COMPLETIONS_ONLY = true;
-
 //css
 var css_send_form_display = $('<div id=send_form></div>').css('display');
 const TOP_CHAT_PANELS_STATE_KEY = 'topBarPanelsState';
@@ -4492,10 +4488,6 @@ async function initActiveTabSession() {
 }
 
 function enforceChatCompletionsOnlyMode({ save = false } = {}) {
-    if (!CHAT_COMPLETIONS_ONLY) {
-        return false;
-    }
-
     let changed = false;
 
     if (main_api !== 'openai') {
@@ -4642,7 +4634,6 @@ async function firstLoadInit() {
     initWorldInfoLocks();
     initRossMods();
     initStats();
-    initCfg();
     initLogprobs();
     initInputMarkdown();
     initServerHistory();
@@ -8967,7 +8958,6 @@ export async function generateQuietPrompt({ quietPrompt = '', quietToLoud = fals
             quiet_prompt: quietPrompt ?? '',
             quietToLoud: quietToLoud ?? false,
             skipWIAN: skipWIAN ?? false,
-            force_name2: true,
             quietImage: quietImage ?? null,
             quietName: quietName ?? null,
             force_chid: forceChId ?? null,
@@ -9207,20 +9197,6 @@ async function getAllExtensionPrompts() {
         .filter(Boolean);
 
     return substituteParams(values.join('\n'));
-}
-
-/**
- * Gets the maximum depth of extension prompts.
- * @returns {number} Maximum depth of extension prompts
- */
-export function getExtensionPromptMaxDepth() {
-    return MAX_INJECTION_DEPTH;
-    /*
-    const prompts = Object.values(extension_prompts);
-    const maxDepth = Math.max(...prompts.map(x => x.depth ?? 0));
-    // Clamp to 1 <= depth <= MAX_INJECTION_DEPTH
-    return Math.max(Math.min(maxDepth, MAX_INJECTION_DEPTH), 1);
-    */
 }
 
 /**
@@ -9486,13 +9462,12 @@ class StreamingProcessor {
     /**
      * Creates a new streaming processor.
      * @param {string} type Generation type
-     * @param {boolean} forceName2 If true, force the use of name2
      * @param {Date} timeStarted Date when generation was started
      * @param {string} continueMessage Previous message if the type is 'continue'
      * @param {PromptReasoning} promptReasoning Prompt reasoning instance
      * @param {object?} swipeTarget Captured swipe generation target
      */
-    constructor(type, forceName2, timeStarted, continueMessage, promptReasoning, swipeTarget = null) {
+    constructor(type, timeStarted, continueMessage, promptReasoning, swipeTarget = null) {
         this.result = '';
         this.messageId = -1;
         /** @type {HTMLElement} */
@@ -9506,7 +9481,6 @@ class StreamingProcessor {
         /** @type {HTMLTextAreaElement} */
         this.sendTextarea = document.querySelector('#send_textarea');
         this.type = type;
-        this.force_name2 = forceName2;
         this.isStopped = false;
         this.isFinished = false;
         this.detachedRecoveryPending = false;
@@ -9971,13 +9945,13 @@ class StreamingProcessor {
 }
 
 /**
- * Constructs a prompt to be used for either Text Completion or Chat Completion. Input is format-agnostic.
+ * Constructs chat-completion messages from text or message input.
  * @param {string | object[]} prompt Input prompt. Can be a string or an array of chat-style messages, i.e. [{role: '', content: ''}, ...]
  * @param {string} api API to use.
  * @param {boolean} quietToLoud true to generate a message in system mode, false to generate a message in character mode
  * @param {string} [systemPrompt] System prompt to use.
  * @param {string} [prefill] Prefill for the prompt.
- * @returns {string | object[]} Prompt ready for use in generation as an array of chat-style messages.
+ * @returns {object[]} Prompt ready for use in generation as an array of chat-style messages.
  */
 export function createRawPrompt(prompt, api, quietToLoud, systemPrompt, prefill) {
     if (api !== 'openai') {
@@ -10007,7 +9981,7 @@ export function createRawPrompt(prompt, api, quietToLoud, systemPrompt, prefill)
     }
 
     // with Chat Completion, the prefill is an additional assistant message at the end.
-    if (api === 'openai' && prefill) {
+    if (prefill) {
         prompt.push({ role: 'assistant', content: prefill });
     }
 
@@ -10055,17 +10029,7 @@ export async function generateRaw({ prompt = '', api = null, quietToLoud = false
         if (responseLengthCustomized) {
             responseLengthSession = TempResponseLength.save(api, responseLength);
         }
-        /** @type {object|any[]} */
-        let generateData = {};
-
         // Allow extensions to modify the prompt before generation
-        // 1. for text completion
-        if (typeof prompt === 'string') {
-            const eventData = { prompt: prompt, dryRun: false };
-            await eventSource.emit(event_types.GENERATE_AFTER_COMBINE_PROMPTS, eventData);
-            prompt = eventData.prompt;
-        }
-        // 2. for chat completion
         if (Array.isArray(prompt)) {
             const eventData = { chat: prompt, dryRun: false };
             await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, eventData);
@@ -10075,29 +10039,10 @@ export async function generateRaw({ prompt = '', api = null, quietToLoud = false
         // Check if the generation was aborted during the event
         eventAbortController.signal.throwIfAborted();
 
-        switch (api) {
-            case 'openai': {
-                generateData = prompt;
-                if (responseLengthSession) {
-                    eventHook = TempResponseLength.setupEventHook(responseLengthSession);
-                }
-            } break;
-            default:
-                throw new Error(`Unsupported API: ${api}`);
+        if (responseLengthSession) {
+            eventHook = TempResponseLength.setupEventHook(responseLengthSession);
         }
-
-        let data = {};
-
-        if (api === 'openai') {
-            data = await sendOpenAIRequest('quiet', generateData, abortController.signal, { jsonSchema });
-        }
-
-        // should only happen for text completions
-        // other frontend paths do not return data if calling the backend fails,
-        // they throw things instead
-        if (data.error) {
-            throw new Error(data.response);
-        }
+        const data = await sendOpenAIRequest('quiet', prompt, abortController.signal, { jsonSchema });
 
         if (jsonSchema) {
             return extractJsonFromData(data, { mainApi: api });
@@ -10136,19 +10081,18 @@ class TempResponseLength {
     static #baseResponseLength = new Map();
 
     static #getSettingKey(api) {
-        return api === 'openai' ? 'openai' : 'default';
-    }
-
-    static #getCurrentResponseLength(settingKey) {
-        return settingKey === 'openai' ? oai_settings.openai_max_tokens : amount_gen;
-    }
-
-    static #setCurrentResponseLength(settingKey, responseLength) {
-        if (settingKey === 'openai') {
-            oai_settings.openai_max_tokens = responseLength;
-        } else {
-            amount_gen = responseLength;
+        if (api !== 'openai') {
+            throw new Error(`Unsupported API: ${api}`);
         }
+        return 'openai';
+    }
+
+    static #getCurrentResponseLength() {
+        return oai_settings.openai_max_tokens;
+    }
+
+    static #setCurrentResponseLength(responseLength) {
+        oai_settings.openai_max_tokens = responseLength;
     }
 
     static #getActiveSessions(settingKey) {
@@ -10178,7 +10122,7 @@ class TempResponseLength {
         const settingKey = this.#getSettingKey(api);
         const sessions = this.#getActiveSessions(settingKey);
         if (sessions.length === 0) {
-            this.#baseResponseLength.set(settingKey, this.#getCurrentResponseLength(settingKey));
+            this.#baseResponseLength.set(settingKey, this.#getCurrentResponseLength());
         }
 
         const session = {
@@ -10189,7 +10133,7 @@ class TempResponseLength {
         };
 
         sessions.push(session);
-        this.#setCurrentResponseLength(settingKey, responseLength);
+        this.#setCurrentResponseLength(responseLength);
 
         console.log('[TempResponseLength] Saved response length session:', session.id, 'base:', this.#baseResponseLength.get(settingKey), 'current:', responseLength);
         return session;
@@ -10222,7 +10166,7 @@ class TempResponseLength {
             : this.#baseResponseLength.get(session.settingKey);
 
         if (typeof nextResponseLength === 'number') {
-            this.#setCurrentResponseLength(session.settingKey, nextResponseLength);
+            this.#setCurrentResponseLength(nextResponseLength);
         }
 
         if (sessions.length === 0) {
@@ -10241,7 +10185,7 @@ class TempResponseLength {
 
             const baseResponseLength = this.#baseResponseLength.get(settingKey);
             if (typeof baseResponseLength === 'number') {
-                this.#setCurrentResponseLength(settingKey, baseResponseLength);
+                this.#setCurrentResponseLength(baseResponseLength);
             }
         }
 
@@ -10261,14 +10205,7 @@ class TempResponseLength {
             }
         };
 
-        switch (session?.api) {
-            case 'openai':
-                eventSource.once(event_types.CHAT_COMPLETION_SETTINGS_READY, eventHook);
-                break;
-            default:
-                eventSource.once(event_types.GENERATE_AFTER_DATA, eventHook);
-                break;
-        }
+        eventSource.once(event_types.CHAT_COMPLETION_SETTINGS_READY, eventHook);
 
         return eventHook;
     }
@@ -10279,14 +10216,7 @@ class TempResponseLength {
      * @param {function(): void} eventHook Previously set up event hook
      */
     static removeEventHook(session, eventHook) {
-        switch (session?.api) {
-            case 'openai':
-                eventSource.removeListener(event_types.CHAT_COMPLETION_SETTINGS_READY, eventHook);
-                break;
-            default:
-                eventSource.removeListener(event_types.GENERATE_AFTER_DATA, eventHook);
-                break;
-        }
+        eventSource.removeListener(event_types.CHAT_COMPLETION_SETTINGS_READY, eventHook);
     }
 }
 
@@ -10565,7 +10495,6 @@ function discardSwitchedTemporaryGenerationAttempts() {
  *
  * @typedef {object} GenerateOptions
  * @property {boolean} [automatic_trigger] If the generation was triggered automatically (e.g. group auto mode).
- * @property {boolean} [force_name2] If a char name should be forced to add to the prompt's last line (Text Completion, non-Instruct only).
  * @property {string} [quiet_prompt] A system instruction to use for the quiet prompt.
  * @property {boolean} [quietToLoud] Whether the system instruction should be sent in background (quiet) or a foreground (loud) mode.
  * @property {boolean} [skipWIAN] Deprecated. Ignored by chat-completions generation.
@@ -10589,7 +10518,7 @@ function discardSwitchedTemporaryGenerationAttempts() {
  * @param {boolean} dryRun Whether to actually generate a message or just assemble the prompt
  * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
  */
-async function generateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, swipeTarget = null, generationRecovery = null, consumeComposer = false, composerSendAttempt = null } = {}, dryRun = false, temporaryGenerationAttempt = null) {
+async function generateInternal(type, { automatic_trigger, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, swipeTarget = null, generationRecovery = null, consumeComposer = false, composerSendAttempt = null } = {}, dryRun = false, temporaryGenerationAttempt = null) {
     enforceChatCompletionsOnlyMode();
     console.log('Generate entered');
 
@@ -10613,7 +10542,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     // OpenAI prompt preview/dry-run is disabled so WI and prompt assembly stay server-side.
-    if (main_api === 'openai' && dryRun) {
+    if (dryRun) {
         return Promise.resolve();
     }
 
@@ -10651,7 +10580,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     await unshallowCharacter(this_chid);
 
     // Occurs every time, even if the generation is aborted due to slash commands execution
-    await eventSource.emit(event_types.GENERATION_STARTED, type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage }, dryRun);
+    await eventSource.emit(event_types.GENERATION_STARTED, type, { automatic_trigger, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage }, dryRun);
 
     // Don't recreate abort controller if signal is passed
     if (!(abortController && signal)) {
@@ -10671,7 +10600,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     // Occurs only if the generation is not aborted due to slash commands execution
-    await eventSource.emit(event_types.GENERATION_AFTER_COMMANDS, type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage }, dryRun);
+    await eventSource.emit(event_types.GENERATION_AFTER_COMMANDS, type, { automatic_trigger, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage }, dryRun);
 
     const dirtyingForegroundGeneration = isDirtyingForegroundGeneration(type, generationRecovery, dryRun);
     if (dirtyingForegroundGeneration) {
@@ -10804,7 +10733,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         deactivateSendButtons();
     }
 
-    let { messageBias, promptBias, isUserPromptBias } = getBiasStrings(textareaText, type);
+    let { messageBias, promptBias } = getBiasStrings(textareaText, type);
     let preparedOpenAIRequest = null;
     let serverPreflightCompleted = false;
     const canPrepareServerGeneration = !dryRun
@@ -10878,7 +10807,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
             commitComposerSendAttempt(composerSendAttempt);
         }
     }
-    else if (textareaText == '' && !automatic_trigger && !dryRun && type === undefined && main_api == 'openai' && oai_settings.send_if_empty.trim().length > 0) {
+    else if (textareaText == '' && !automatic_trigger && !dryRun && type === undefined && oai_settings.send_if_empty.trim().length > 0) {
         // Use send_if_empty if set and the user message is empty. Only when sending messages normally
         const sentMessage = await sendMessageAsUser(oai_settings.send_if_empty.trim(), messageBias);
         if (!sentMessage) {
@@ -11004,7 +10933,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     // Determine token limit
-    let this_max_context = getMaxContextSize();
+    const this_max_context = getMaxContextSize();
 
     if (!dryRun && !(serverPreparationSource && serverPreflightCompleted)) {
         console.debug('Running extension interceptors');
@@ -11022,38 +10951,10 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         console.debug('Skipping extension interceptors for dry run');
     }
 
-    // Fetches the combined prompt for both negative and positive prompts
-    const cfgGuidanceScale = getGuidanceScale();
-    const useCfgPrompt = cfgGuidanceScale && cfgGuidanceScale.value !== 1;
-
-    // Adjust max context based on CFG prompt to prevent overfitting
-    if (useCfgPrompt && !serverPreparationSource) {
-        const negativePrompt = getCfgPrompt(cfgGuidanceScale, true, true)?.value || '';
-        const positivePrompt = getCfgPrompt(cfgGuidanceScale, false, true)?.value || '';
-        if (negativePrompt || positivePrompt) {
-            const previousMaxContext = this_max_context;
-            const [negativePromptTokenCount, positivePromptTokenCount] = await Promise.all([getTokenCountAsync(negativePrompt), getTokenCountAsync(positivePrompt)]);
-            const decrement = Math.max(negativePromptTokenCount, positivePromptTokenCount);
-            this_max_context -= decrement;
-            console.log(`Max context reduced by ${decrement} tokens of CFG prompt (${previousMaxContext} -> ${this_max_context})`);
-        }
-    }
-
     console.log(`Core/all messages: ${coreChat.length}/${chat.length}`);
-
-    if ((promptBias && !isUserPromptBias) || power_user.always_force_name2) {
-        force_name2 = true;
-    }
-
-    if (isImpersonate) {
-        force_name2 = false;
-    }
 
     if (skipWIAN === true) {
         console.warn('[Generate] skipWIAN is deprecated and ignored. World Info is assembled server-side.');
-    }
-    if (main_api !== 'openai') {
-        console.warn(`[Generate] World Info generation is deprecated for "${main_api}" and will only be assembled for chat-completions.`);
     }
 
     let mesExamplesArray = serverPreparationSource ? [] : parseMesExamples(mesExamples);
@@ -11062,7 +10963,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
     setFloatingPrompt();
 
     const chatForWI = coreChat.map(x => world_info_include_names ? `${x.name}: ${x.mes}` : x.mes).reverse();
-    const preliminaryOaiMessages = main_api === 'openai' && !serverPreparationSource ? setOpenAIMessages(coreChat) : [];
+    const preliminaryOaiMessages = !serverPreparationSource ? setOpenAIMessages(coreChat) : [];
     /** @type {import('./scripts/world-info.js').WIGlobalScanData} */
     const globalScanData = {
         personaDescription: persona,
@@ -11073,558 +10974,118 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         creatorNotes: creatorNotes,
         trigger: GENERATION_TYPE_TRIGGERS.includes(type) ? type : 'normal',
     };
-    let worldInfoString = '';
-    let worldInfoBefore = '';
-    let worldInfoAfter = '';
-
-    // At this point, the raw message examples can be created
-    // Add persona description to prompt
     addPersonaDescriptionExtensionPrompt();
-
-    // Legacy text-completion prompt assembly is disabled in chat-completions-only mode.
-    if (main_api !== 'openai') {
-        system = '';
-    }
-
-    // Collect before / after story string injections
-    const beforeScenarioAnchor = await getExtensionPrompt(extension_prompt_types.BEFORE_PROMPT);
-    const afterScenarioAnchor = await getExtensionPrompt(extension_prompt_types.IN_PROMPT);
-
-    let combinedStoryString = '';
     setExtensionPrompt(inject_ids.STORY_STRING, '', extension_prompt_types.IN_CHAT, 0);
-
-    // Story string rendered, safe to remove
     if (power_user.strip_examples) {
         mesExamplesArray = [];
     }
+    const oaiMessages = preliminaryOaiMessages;
+    const oaiMessageExamples = setOpenAIMessageExamples(mesExamplesArray);
 
-    // Inject all Depth prompts. Chat Completion does it separately
-    let injectedIndices = [];
-    let systemInjectedIndices = [];
-    if (main_api !== 'openai') {
-        const injectionData = await doChatInject(coreChat, isContinue);
-        injectedIndices = injectionData.indices;
-        systemInjectedIndices = injectionData.systemIndices;
-    }
-
-    let chat2 = [];
+    // Server-prepared continuations use their captured base; other calls use the
+    // last processed message, including attachments and reasoning formatting.
     let continue_mag = serverPreparedContinueBase;
-    let userMessageIndices = [];
-    for (let i = coreChat.length - 1, j = 0; i >= 0; i--, j++) {
-        if (main_api == 'openai') {
-            chat2[i] = coreChat[j].mes;
-            if (i === 0 && isContinue) {
-                chat2[i] = chat2[i].slice(0, chat2[i].lastIndexOf(coreChat[j].mes) + coreChat[j].mes.length);
-                continue_mag = coreChat[j].mes;
-            }
-            continue;
-        }
-
-        chat2[i] = formatMessageHistoryItem(coreChat[j]);
-
-        // Do not suffix the message for continuation
-        if (i === 0 && isContinue) {
-            // Pick something that's very unlikely to be in a message
-            const FORMAT_TOKEN = '\u0000\ufffc\u0000\ufffd';
-
-            chat2[i] = chat2[i].includes(FORMAT_TOKEN)
-                ? chat2[i].slice(0, chat2[i].lastIndexOf(FORMAT_TOKEN))
-                : chat2[i].slice(0, chat2[i].lastIndexOf(coreChat[j].mes) + coreChat[j].mes.length);
-            continue_mag = coreChat[j].mes;
-        }
-
-        if (coreChat[j].is_user) {
-            userMessageIndices.push(i);
-        }
-    }
-
-    let oaiMessages = [];
-    let oaiMessageExamples = [];
-
-    if (main_api === 'openai') {
-        oaiMessages = preliminaryOaiMessages;
-        oaiMessageExamples = setOpenAIMessageExamples(mesExamplesArray);
-    }
-
-    // hack for regeneration of the first message
-    if (chat2.length == 0) {
-        chat2.push('');
-    }
-
-    let examplesString = '';
-    let chatString = addChatsPreamble(addChatsSeparator(''));
     let cyclePrompt = serverPreparedContinueBase;
-    const addUserAlignment = false;
-    const userAlignmentMessage = '';
-
-    async function getMessagesTokenCount() {
-        const encodeString = [
-            combinedStoryString,
-            examplesString,
-            userAlignmentMessage,
-            chatString,
-            modifyLastPromptLine(''),
-            cyclePrompt,
-        ].join('').replace(/\r/gm, '');
-        return getTokenCountAsync(encodeString, power_user.token_padding);
-    }
-
-    // Force pinned examples into the context
-    let pinExmString;
-    if (power_user.pin_examples) {
-        pinExmString = examplesString = mesExamplesArray.join('');
-    }
-
-    // Only add the chat in context if past the greeting message
-    if (isContinue && (chat2.length > 1 || main_api === 'openai')) {
-        cyclePrompt = chat2.shift();
-        // Adjust indices to account for the shift
-        injectedIndices = injectedIndices.map(shiftDownByOne).filter(x => x >= 0);
-        systemInjectedIndices = systemInjectedIndices.map(shiftDownByOne).filter(x => x >= 0);
-        userMessageIndices = userMessageIndices.map(shiftDownByOne).filter(x => x >= 0);
-    }
-
-    // Collect enough messages to fill the context
-    let arrMes = new Array(chat2.length);
-    let tokenCount = serverPreparationSource ? 0 : await getMessagesTokenCount();
-    let lastAddedIndex = 0;
-
-    // Pre-allocate all injections first.
-    // If it doesn't fit - user shot himself in the foot
-    for (const index of injectedIndices) {
-        // not needed for OAI prompting
-        if (main_api == 'openai') {
-            break;
-        }
-
-        const item = chat2[index];
-
-        if (typeof item !== 'string') {
-            continue;
-        }
-
-        tokenCount += await getTokenCountAsync(item.replace(/\r/gm, ''));
-        if (tokenCount < this_max_context) {
-            chatString = chatString + item;
-            arrMes[index] = item;
-            lastAddedIndex = Math.max(lastAddedIndex, index);
-        } else {
-            break;
-        }
-    }
-
-    for (let i = 0; i < chat2.length; i++) {
-        // not needed for OAI prompting
-        if (main_api == 'openai') {
-            break;
-        }
-
-        // Skip already injected messages
-        if (arrMes[i] !== undefined) {
-            continue;
-        }
-
-        const item = chat2[i];
-
-        if (typeof item !== 'string') {
-            continue;
-        }
-
-        tokenCount += await getTokenCountAsync(item.replace(/\r/gm, ''));
-        if (tokenCount < this_max_context) {
-            chatString = chatString + item;
-            arrMes[i] = item;
-            lastAddedIndex = Math.max(lastAddedIndex, i);
-        } else {
-            break;
-        }
-    }
-
-    // Add user alignment message if last message is not a user message
-    const stoppedAtUser = userMessageIndices.includes(lastAddedIndex);
-    if (addUserAlignment && !stoppedAtUser) {
-        tokenCount += await getTokenCountAsync(userAlignmentMessage.replace(/\r/gm, ''));
-        chatString = userAlignmentMessage + chatString;
-        arrMes.push(userAlignmentMessage);
-        injectedIndices.push(arrMes.length - 1);
-    }
-
-    // Unsparse the array. Adjust injected indices
-    const newArrMes = [];
-    const newInjectedIndices = [];
-    const newSystemInjectedIndices = [];
-    for (let i = 0; i < arrMes.length; i++) {
-        if (arrMes[i] !== undefined) {
-            newArrMes.push(arrMes[i]);
-            if (injectedIndices.includes(i)) {
-                newInjectedIndices.push(newArrMes.length - 1);
-            }
-            if (systemInjectedIndices.includes(i)) {
-                newSystemInjectedIndices.push(newArrMes.length - 1);
-            }
-        }
-    }
-
-    arrMes = newArrMes;
-    injectedIndices = newInjectedIndices;
-    systemInjectedIndices = newSystemInjectedIndices;
-
-    if (main_api !== 'openai') {
-        setInContextMessages(arrMes.length - injectedIndices.length, type);
-    }
-
-    // Estimate how many unpinned example messages fit in the context
-    tokenCount = serverPreparationSource ? 0 : await getMessagesTokenCount();
-    let count_exm_add = 0;
-    if (!power_user.pin_examples) {
-        for (let example of mesExamplesArray) {
-            tokenCount += await getTokenCountAsync(example.replace(/\r/gm, ''));
-            examplesString += example;
-            if (tokenCount < this_max_context) {
-                count_exm_add++;
-            } else {
-                break;
-            }
-        }
-    }
-
-    let mesSend = [];
-    console.debug('calling runGenerate');
-
     if (isContinue) {
-        // Coping mechanism for OAI spacing
-        if (main_api === 'openai' && !cyclePrompt.endsWith(' ')) {
+        cyclePrompt = coreChat.at(-1)?.mes ?? '';
+        if (coreChat.length) {
+            continue_mag = cyclePrompt;
+        }
+        if (!cyclePrompt.endsWith(' ')) {
             cyclePrompt += oai_settings.continue_postfix;
             continue_mag += oai_settings.continue_postfix;
         }
     }
-
     const originalType = type;
-
     if (!dryRun) {
         is_send_press = true;
     }
 
-    let generatedPromptCache = cyclePrompt || '';
-    if (generatedPromptCache.length == 0 || type === 'continue') {
-        console.debug('generating prompt');
-        chatString = '';
-        arrMes = arrMes.reverse();
-        arrMes.forEach(function (item, i, arr) {
-            // OAI doesn't need all of this
-            if (main_api === 'openai') {
-                return;
-            }
-
-            // Cohee: This removes a newline from the end of the last message in the context.
-            if (i === arrMes.length - 1 && type !== 'continue') {
-                item = item.replace(/\n?$/, '');
-            }
-
-            mesSend[mesSend.length] = { message: item, extensionPrompts: [] };
-        });
-    }
-
-    let mesExmString = '';
-
-    function setPromptString() {
-        if (main_api == 'openai') {
-            return;
-        }
-
-        console.debug('--setting Prompt string');
-        mesExmString = pinExmString ?? mesExamplesArray.slice(0, count_exm_add).join('');
-
-        if (mesSend.length) {
-            mesSend[mesSend.length - 1].message = modifyLastPromptLine(mesSend[mesSend.length - 1].message);
-        }
-    }
-
-    function modifyLastPromptLine(lastMesString) {
-        //#########QUIET PROMPT STUFF PT2##############
-
-        // Add quiet generation prompt at depth 0
-        if (quiet_prompt && quiet_prompt.length) {
-
-            lastMesString += `\n${quiet_prompt}`;
-
-            // Bail out early?
-            if (!quietToLoud) {
-                return lastMesString;
-            }
-        }
-
-        // Get impersonation line
-        if (isImpersonate && !isContinue) {
-            const name = name1;
-            if (!lastMesString.endsWith('\n')) {
-                lastMesString += '\n';
-            }
-            lastMesString += name + ':';
-        }
-
-        // Add character's name
-        // Force name append on continue (if not continuing on user message or first message)
-        const isContinuingOnFirstMessage = chat.length === 1 && isContinue;
-        if (force_name2 && !isContinuingOnFirstMessage) {
-            if (!lastMesString.endsWith('\n')) {
-                lastMesString += '\n';
-            }
-            if (!isContinue || !(chat[chat.length - 1]?.is_user)) {
-                lastMesString += `${name2}:`;
-            }
-        }
-
-        return lastMesString;
-    }
-
-    async function checkPromptSize() {
-        console.debug('---checking Prompt size');
-        setPromptString();
-        const jointMessages = mesSend.map((e) => `${e.extensionPrompts.join('')}${e.message}`).join('');
-        const prompt = [
-            combinedStoryString,
-            mesExmString,
-            addChatsPreamble(addChatsSeparator(jointMessages)),
-            '\n',
-            modifyLastPromptLine(''),
-            generatedPromptCache,
-        ].join('').replace(/\r/gm, '');
-        let thisPromptContextSize = await getTokenCountAsync(prompt, power_user.token_padding);
-
-        if (thisPromptContextSize > this_max_context) {        //if the prepared prompt is larger than the max context size...
-            if (count_exm_add > 0) {                            // ..and we have example mesages..
-                count_exm_add--;                            // remove the example messages...
-                await checkPromptSize();                            // and try agin...
-            } else if (mesSend.length > 0) {                    // if the chat history is longer than 0
-                mesSend.shift();                            // remove the first (oldest) chat entry..
-                await checkPromptSize();                            // and check size again..
-            } else {
-                //end
-                console.debug(`---mesSend.length = ${mesSend.length}`);
-            }
-        }
-    }
-
-    if (generatedPromptCache.length > 0 && main_api !== 'openai') {
-        console.debug('---Generated Prompt Cache length: ' + generatedPromptCache.length);
-        await checkPromptSize();
-    } else {
-        console.debug('---calling setPromptString ' + generatedPromptCache.length);
-        setPromptString();
-    }
-
-    // For prompt bit itemization
-    let mesSendString = '';
-
-    async function getCombinedPrompt(isNegative) {
-        // Only return if the guidance scale doesn't exist or the value is 1
-        // Also don't return if constructing the neutral prompt
-        if (isNegative && !useCfgPrompt) {
-            return;
-        }
-
-        // OAI has its own prompt manager. No need to do anything here
-        if (main_api === 'openai') {
-            return '';
-        }
-
-        // Deep clone
-        let finalMesSend = structuredClone(mesSend);
-
-        if (useCfgPrompt) {
-            const cfgPrompt = getCfgPrompt(cfgGuidanceScale, isNegative);
-            if (cfgPrompt.value) {
-                if (cfgPrompt.depth === 0) {
-                    finalMesSend[finalMesSend.length - 1].message +=
-                        /\s/.test(finalMesSend[finalMesSend.length - 1].message.slice(-1))
-                            ? cfgPrompt.value
-                            : ` ${cfgPrompt.value}`;
-                } else {
-                    // TODO: Make all extension prompts use an array/splice method
-                    const lengthDiff = mesSend.length - cfgPrompt.depth;
-                    const cfgDepth = lengthDiff >= 0 ? lengthDiff : 0;
-                    const cfgMessage = finalMesSend[cfgDepth];
-                    if (cfgMessage) {
-                        if (!Array.isArray(finalMesSend[cfgDepth].extensionPrompts)) {
-                            finalMesSend[cfgDepth].extensionPrompts = [];
-                        }
-                        finalMesSend[cfgDepth].extensionPrompts.push(`${cfgPrompt.value}\n`);
-                    }
+    const tagKey = getTagKeyForEntity(this_chid);
+    const activeCharacter = globalThis.promptManager?.activeCharacter ?? characters[this_chid];
+    const promptSnapshotTarget = getPromptSnapshotTarget(type, swipeTarget);
+    const promptContext = await buildServerAssemblyPayload({
+        model: serverPreparationSource ? preparedOpenAIRequest?.generateData?.model : undefined,
+        coreChat: getCoreChatPayloadForAssembly(coreChat, serverPreparationSource),
+        name2: name2,
+        charDescription: description,
+        charPersonality: personality,
+        persona: persona,
+        scenario: scenario,
+        mesExamples: mesExamples,
+        charDepthPrompt: charDepthPrompt,
+        creatorNotes: creatorNotes,
+        bias: promptBias,
+        type: type,
+        quietPrompt: quiet_prompt,
+        quietImage: quietImage,
+        cyclePrompt: cyclePrompt,
+        systemPromptOverride: system,
+        jailbreakPromptOverride: jailbreak,
+        messages: oaiMessages,
+        messageExamples: oaiMessageExamples,
+        toolBudgetData: serverPreparationSource && preparedOpenAIRequest
+            ? (Array.isArray(preparedOpenAIRequest.generateData?.tools)
+                ? {
+                    tools: structuredClone(preparedOpenAIRequest.generateData.tools),
+                    tool_choice: structuredClone(preparedOpenAIRequest.generateData?.tool_choice),
                 }
-            }
-        }
-
-        // Add prompt bias after everything else
-        // Always run with continue
-        if (!isImpersonate) {
-            if (promptBias.trim().length !== 0) {
-                finalMesSend[finalMesSend.length - 1].message +=
-                    /\s/.test(finalMesSend[finalMesSend.length - 1].message.slice(-1))
-                        ? promptBias.trimStart()
-                        : ` ${promptBias.trimStart()}`;
-            }
-        }
-
-        // Flattens the multiple prompt objects to a string.
-        const combine = () => {
-            // Right now, everything is suffixed with a newline
-            mesSendString = finalMesSend.map((e) => `${e.extensionPrompts.join('')}${e.message}`).join('');
-
-            // add a custom dingus (if defined)
-            mesSendString = addChatsSeparator(mesSendString);
-
-            // add chat preamble
-            mesSendString = addChatsPreamble(mesSendString);
-
-            let combinedPrompt = [
-                combinedStoryString,
-                mesExmString,
-                mesSendString,
-                generatedPromptCache,
-            ].join('').replace(/\r/gm, '');
-
-            if (power_user.collapse_newlines) {
-                combinedPrompt = collapseNewlines(combinedPrompt);
-            }
-
-            return combinedPrompt;
-        };
-
-        finalMesSend.forEach((item, i) => {
-            item.injected = injectedIndices.includes(finalMesSend.length - i - 1);
-        });
-
-        let data = {
-            api: main_api,
-            combinedPrompt: null,
-            description,
-            personality,
-            persona,
-            scenario,
-            char: name2,
-            user: name1,
-            worldInfoBefore,
-            worldInfoAfter,
-            beforeScenarioAnchor,
-            afterScenarioAnchor,
-            storyString: combinedStoryString,
-            mesExmString,
-            mesSendString,
-            finalMesSend,
-            generatedPromptCache,
-            main: system,
-            jailbreak,
-        };
-
-        // Before returning the combined prompt, give available context related information to all subscribers.
-        await eventSource.emit(event_types.GENERATE_BEFORE_COMBINE_PROMPTS, data);
-
-        // If one or multiple subscribers return a value, forfeit the responsibillity of flattening the context.
-        return !data.combinedPrompt ? combine() : data.combinedPrompt;
+                : null)
+            : undefined,
+        worldInfoRequest: {
+            chat: serverPreparationSource ? [] : chatForWI,
+            includeNames: world_info_include_names,
+            maxContext: this_max_context,
+            isDryRun: dryRun,
+            globalScanData,
+            regexScripts: getWorldInfoRegexScripts(),
+            selectedWorldInfo: selected_world_info,
+            chatWorld: chat_metadata[METADATA_KEY] || '',
+            personaWorld: power_user.persona_description_lorebook || '',
+            characterWorld: characters[this_chid]?.data?.extensions?.world || '',
+            characterExtraBooks: getCharacterExtraBooks(getCharaFilename(this_chid)),
+            selectedGroup: Boolean(selected_group),
+            activeSpeaker: {
+                name: activeCharacter?.name || name2 || '',
+                avatar: activeCharacter?.avatar || characters[this_chid]?.avatar || '',
+                filename: String(activeCharacter?.avatar || characters[this_chid]?.avatar || '').replace(/\.[^/.]+$/, '') || getCharaFilename(),
+            },
+            currentCharacterFilename: getCharaFilename(),
+            currentCharacterTags: Array.isArray(tag_map?.[tagKey]) ? tag_map[tagKey] : [],
+            forcedActivations: getForcedActivationEntriesSnapshot().map(entry => ({
+                world: entry?.world,
+                uid: entry?.uid,
+            })),
+            timedWorldInfo: structuredClone(chat_metadata.timedWorldInfo || {}),
+            settings: {
+                world_info_depth,
+                world_info_min_activations,
+                world_info_min_activations_depth_max,
+                world_info_budget,
+                world_info_recursive,
+                world_info_case_sensitive,
+                world_info_match_whole_words,
+                world_info_budget_cap,
+                world_info_use_group_scoring,
+                world_info_max_recursion_steps,
+            },
+            worldInfoPosition: world_info_position,
+            wiAnchorPosition: wi_anchor_position,
+            tokenizerModel: getTokenizerModel(),
+        },
+    });
+    if (serverPreparationSource) {
+        promptContext.generationSource = serverPreparationSource;
+        promptContext.promptRegexScripts = structuredClone(getRegexScripts({ allowedOnly: true }));
     }
-
-    let finalPrompt = await getCombinedPrompt(false);
-
-    const eventData = { prompt: finalPrompt, dryRun: dryRun };
-    await eventSource.emit(event_types.GENERATE_AFTER_COMBINE_PROMPTS, eventData);
-    finalPrompt = eventData.prompt;
-
-    let thisPromptBits = [];
-
-    let generate_data;
-    switch (main_api) {
-        case 'openai': {
-            const tagKey = getTagKeyForEntity(this_chid);
-            const activeCharacter = globalThis.promptManager?.activeCharacter ?? characters[this_chid];
-            const promptSnapshotTarget = getPromptSnapshotTarget(type, swipeTarget);
-            const promptContext = await buildServerAssemblyPayload({
-                model: serverPreparationSource ? preparedOpenAIRequest?.generateData?.model : undefined,
-                coreChat: getCoreChatPayloadForAssembly(coreChat, serverPreparationSource),
-                name2: name2,
-                charDescription: description,
-                charPersonality: personality,
-                persona: persona,
-                scenario: scenario,
-                mesExamples: mesExamples,
-                charDepthPrompt: charDepthPrompt,
-                creatorNotes: creatorNotes,
-                bias: promptBias,
-                type: type,
-                quietPrompt: quiet_prompt,
-                quietImage: quietImage,
-                cyclePrompt: cyclePrompt,
-                systemPromptOverride: system,
-                jailbreakPromptOverride: jailbreak,
-                messages: oaiMessages,
-                messageExamples: oaiMessageExamples,
-                toolBudgetData: serverPreparationSource && preparedOpenAIRequest
-                    ? (Array.isArray(preparedOpenAIRequest.generateData?.tools)
-                        ? {
-                            tools: structuredClone(preparedOpenAIRequest.generateData.tools),
-                            tool_choice: structuredClone(preparedOpenAIRequest.generateData?.tool_choice),
-                        }
-                        : null)
-                    : undefined,
-                worldInfoRequest: {
-                    chat: serverPreparationSource ? [] : chatForWI,
-                    includeNames: world_info_include_names,
-                    maxContext: this_max_context,
-                    isDryRun: dryRun,
-                    globalScanData,
-                    regexScripts: getWorldInfoRegexScripts(),
-                    selectedWorldInfo: selected_world_info,
-                    chatWorld: chat_metadata[METADATA_KEY] || '',
-                    personaWorld: power_user.persona_description_lorebook || '',
-                    characterWorld: characters[this_chid]?.data?.extensions?.world || '',
-                    characterExtraBooks: getCharacterExtraBooks(getCharaFilename(this_chid)),
-                    selectedGroup: Boolean(selected_group),
-                    activeSpeaker: {
-                        name: activeCharacter?.name || name2 || '',
-                        avatar: activeCharacter?.avatar || characters[this_chid]?.avatar || '',
-                        filename: String(activeCharacter?.avatar || characters[this_chid]?.avatar || '').replace(/\.[^/.]+$/, '') || getCharaFilename(),
-                    },
-                    currentCharacterFilename: getCharaFilename(),
-                    currentCharacterTags: Array.isArray(tag_map?.[tagKey]) ? tag_map[tagKey] : [],
-                    forcedActivations: getForcedActivationEntriesSnapshot().map(entry => ({
-                        world: entry?.world,
-                        uid: entry?.uid,
-                    })),
-                    timedWorldInfo: structuredClone(chat_metadata.timedWorldInfo || {}),
-                    settings: {
-                        world_info_depth,
-                        world_info_min_activations,
-                        world_info_min_activations_depth_max,
-                        world_info_budget,
-                        world_info_recursive,
-                        world_info_case_sensitive,
-                        world_info_match_whole_words,
-                        world_info_budget_cap,
-                        world_info_use_group_scoring,
-                        world_info_max_recursion_steps,
-                    },
-                    worldInfoPosition: world_info_position,
-                    wiAnchorPosition: wi_anchor_position,
-                    tokenizerModel: getTokenizerModel(),
-                },
-            });
-            if (serverPreparationSource) {
-                promptContext.generationSource = serverPreparationSource;
-                promptContext.promptRegexScripts = structuredClone(getRegexScripts({ allowedOnly: true }));
-            }
-            if (!['quiet', 'impersonate'].includes(type)) {
-                promptContext.promptInspection = {
-                    chatScope: getPromptSnapshotChatScope(),
-                    mesId: promptSnapshotTarget.mesId,
-                    swipeId: promptSnapshotTarget.swipeId,
-                };
-            }
-            generate_data = { promptContext };
-            break;
-        }
-        default:
-            throw new Error(`Unsupported API: ${main_api}`);
+    if (!['quiet', 'impersonate'].includes(type)) {
+        promptContext.promptInspection = {
+            chatScope: getPromptSnapshotChatScope(),
+            mesId: promptSnapshotTarget.mesId,
+            swipeId: promptSnapshotTarget.swipeId,
+        };
     }
+    const generate_data = { promptContext };
 
     await eventSource.emit(event_types.GENERATE_AFTER_DATA, generate_data, dryRun);
 
@@ -11652,34 +11113,32 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
         showStopButton();
 
         //set array object for prompt token itemization of this message
-        let currentArrayEntry = Number(thisPromptBits.length - 1);
-        const isServerAssembledOpenAI = main_api === 'openai' && !generate_data.prompt && !generate_data.input;
+        const isServerAssembledOpenAI = !generate_data.prompt && !generate_data.input;
         const canPersistPromptInspectorContent = isAdmin() && !serverPreparationSource;
         const canPersistPromptInspectorText = canPersistPromptInspectorContent || !isServerAssembledOpenAI;
         const promptSnapshotTarget = getPromptSnapshotTarget(type, swipeTarget);
         let additionalPromptStuff = {
-            ...thisPromptBits[currentArrayEntry],
             rawPrompt: canPersistPromptInspectorText ? (generate_data.prompt || generate_data.input) : '',
             mesId: getNextMessageId(type),
             swipeId: promptSnapshotTarget.swipeId,
             promptSnapshotKey: null,
             allAnchors: canPersistPromptInspectorContent ? await getAllExtensionPrompts() : '',
-            chatInjects: canPersistPromptInspectorContent ? (injectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '') : '',
-            chatSystemInjects: canPersistPromptInspectorContent ? (systemInjectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '') : '',
+            chatInjects: '',
+            chatSystemInjects: '',
             summarizeString: canPersistPromptInspectorContent ? (extension_prompts['1_memory']?.value || '') : '',
             authorsNoteString: canPersistPromptInspectorContent ? (extension_prompts['2_floating_prompt']?.value || '') : '',
             smartContextString: canPersistPromptInspectorContent ? (extension_prompts['chromadb']?.value || '') : '',
             chatVectorsString: canPersistPromptInspectorContent ? (extension_prompts['3_vectors']?.value || '') : '',
             dataBankVectorsString: canPersistPromptInspectorContent ? (extension_prompts['4_vectors_data_bank']?.value || '') : '',
-            worldInfoString: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : worldInfoString,
-            storyString: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : combinedStoryString,
-            beforeScenarioAnchor: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : beforeScenarioAnchor,
-            afterScenarioAnchor: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : afterScenarioAnchor,
-            examplesString: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : examplesString,
-            mesSendString: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : mesSendString,
-            generatedPromptCache: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : generatedPromptCache,
+            worldInfoString: '',
+            storyString: '',
+            beforeScenarioAnchor: '',
+            afterScenarioAnchor: '',
+            examplesString: '',
+            mesSendString: '',
+            generatedPromptCache: '',
             promptBias: canPersistPromptInspectorContent ? promptBias : '',
-            finalPrompt: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : finalPrompt,
+            finalPrompt: '',
             charDescription: canPersistPromptInspectorContent ? description : '',
             charPersonality: canPersistPromptInspectorContent ? personality : '',
             scenarioText: canPersistPromptInspectorContent ? scenario : '',
@@ -11691,8 +11150,8 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
             userPersona: canPersistPromptInspectorContent && power_user.persona_description_position == persona_description_positions.IN_PROMPT ? (persona || '') : '',
             tokenizer: getFriendlyTokenizerName(main_api).tokenizerName || '',
             presetName: getPresetManager()?.getSelectedPresetName() || '',
-            messagesCount: main_api !== 'openai' ? Math.max(0, mesSend.length - systemInjectedIndices.length) : null,
-            examplesCount: main_api !== 'openai' ? (pinExmString ? mesExamplesArray.length : count_exm_add) : null,
+            messagesCount: null,
+            examplesCount: null,
         };
 
         stagePromptInspectorRecord(additionalPromptStuff);
@@ -11700,7 +11159,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
         if (isStreamingEnabled() && type !== 'quiet') {
             continue_mag = promptReasoning.removePrefix(continue_mag);
-            streamingProcessor = new StreamingProcessor(type, force_name2, generation_started, continue_mag, promptReasoning, swipeTarget);
+            streamingProcessor = new StreamingProcessor(type, generation_started, continue_mag, promptReasoning, swipeTarget);
             streamingProcessor.temporaryGenerationAttempt = temporaryGenerationAttempt;
             if (isContinue) {
                 // Save reply does add cycle text to the prompt, so it's not needed here
@@ -11766,7 +11225,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                     streamingProcessor = null;
                     depth = depth + 1;
                     await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, { claudeToolTurnBlocks });
-                    return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
+                    return Generate('normal', { automatic_trigger, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
                 }
             }
 
@@ -11918,8 +11377,6 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 temporaryGenerationAttempt.producedContent = true;
             }
 
-            // This relies on `saveReply` having been called to add the message to the chat, so it must be last.
-            parseAndSaveLogprobs(data, continue_mag);
         }
 
         if (canPerformToolCalls) {
@@ -11939,7 +11396,7 @@ async function generateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
                 depth = depth + 1;
                 await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, { claudeToolTurnBlocks: extractClaudeToolTurnBlocks(data?.content) });
-                return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
+                return Generate('normal', { automatic_trigger, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
             }
         }
 
@@ -12287,68 +11744,6 @@ export function stopGeneration() {
 }
 
 /**
- * Injects extension prompts into chat messages.
- * @param {object[]} messages Array of chat messages
- * @param {boolean} isContinue Whether the generation is a continuation. If true, the extension prompts of depth 0 are injected at position 1.
- * @returns {Promise<number[]>} Array of indices where the extension prompts were injected
- */
-async function doChatInject(messages, isContinue) {
-    const injectedMessages = [];
-    const systemInjectedMessages = [];
-    let totalInsertedMessages = 0;
-    messages.reverse();
-
-    const maxDepth = getExtensionPromptMaxDepth();
-    for (let i = 0; i <= maxDepth; i++) {
-        // Order of priority (most important go lower)
-        const roles = [extension_prompt_roles.SYSTEM, extension_prompt_roles.USER, extension_prompt_roles.ASSISTANT];
-        const names = {
-            [extension_prompt_roles.SYSTEM]: '',
-            [extension_prompt_roles.USER]: name1,
-            [extension_prompt_roles.ASSISTANT]: name2,
-        };
-        const roleMessages = [];
-        const separator = '\n';
-        const wrap = false;
-
-        for (const role of roles) {
-            const extensionPrompt = String(await getExtensionPrompt(extension_prompt_types.IN_CHAT, i, separator, role, wrap)).trimStart();
-            const isNarrator = role === extension_prompt_roles.SYSTEM;
-            const isUser = role === extension_prompt_roles.USER;
-            const name = names[role];
-
-            if (extensionPrompt) {
-                roleMessages.push({
-                    name: name,
-                    is_user: isUser,
-                    mes: extensionPrompt,
-                    extra: {
-                        type: isNarrator ? system_message_types.NARRATOR : null,
-                    },
-                });
-            }
-        }
-
-        if (roleMessages.length) {
-            const depth = isContinue && i === 0 ? 1 : i;
-            const injectIdx = Math.min(depth + totalInsertedMessages, messages.length);
-            messages.splice(injectIdx, 0, ...roleMessages);
-            totalInsertedMessages += roleMessages.length;
-            injectedMessages.push(...roleMessages);
-            systemInjectedMessages.push(...roleMessages.filter(x => x.extra?.type === system_message_types.NARRATOR));
-        }
-    }
-
-    const injectedIndices = injectedMessages.map(msg => messages.indexOf(msg));
-    const systemInjectedIndices = systemInjectedMessages.map(msg => messages.indexOf(msg));
-    messages.reverse();
-    return {
-        indices: injectedIndices,
-        systemIndices: systemInjectedIndices,
-    };
-}
-
-/**
  * Unblocks the UI after a generation is complete.
  * @param {string} [type] Generation type (optional)
  */
@@ -12405,7 +11800,7 @@ export function shouldAutoContinue(messageChunk, isImpersonate) {
         return false;
     }
 
-    if (main_api === 'openai' && !power_user.auto_continue.allow_chat_completions) {
+    if (!power_user.auto_continue.allow_chat_completions) {
         console.log('Auto-continue for OpenAI is disabled by user.');
         return false;
     }
@@ -12468,7 +11863,7 @@ function transferGenerationToAutoContinue(messageChunk, isImpersonate) {
 
 export function getBiasStrings(textareaText, type) {
     if (type == 'impersonate' || type == 'continue') {
-        return { messageBias: '', promptBias: '', isUserPromptBias: false };
+        return { messageBias: '', promptBias: '' };
     }
 
     let promptBias = '';
@@ -12491,34 +11886,12 @@ export function getBiasStrings(textareaText, type) {
     }
 
     promptBias = messageBias || promptBias || power_user.user_prompt_bias || '';
-    const isUserPromptBias = promptBias === power_user.user_prompt_bias;
 
     // Substitute params for everything
     messageBias = substituteParams(messageBias);
     promptBias = substituteParams(promptBias);
 
-    return { messageBias, promptBias, isUserPromptBias };
-}
-
-/**
- * @param {Object} chatItem Message history item.
- */
-function formatMessageHistoryItem(chatItem) {
-    const isNarratorType = chatItem?.extra?.type === system_message_types.NARRATOR;
-    const characterName = chatItem?.name ? chatItem.name : name2;
-    const itemName = chatItem.is_user ? chatItem['name'] : characterName;
-    const shouldPrependName = !isNarratorType;
-
-    // If this symbol flag is set, completely ignore the message.
-    // This can be used to hide messages without affecting the number of messages in the chat.
-    if (isPromptExcludedChatMessage(chatItem)) {
-        return '';
-    }
-
-    // Don't include a name if it's empty
-    let textResult = chatItem?.name && shouldPrependName ? `${itemName}: ${chatItem.mes}\n` : `${chatItem.mes}\n`;
-
-    return textResult;
+    return { messageBias, promptBias };
 }
 
 /**
@@ -12658,14 +12031,6 @@ export function getMaxContextSize(overrideResponseLength = null) {
     }
 
     return oai_settings.openai_max_context - (overrideResponseLength || oai_settings.openai_max_tokens);
-}
-
-function addChatsPreamble(mesSendString) {
-    return mesSendString;
-}
-
-function addChatsSeparator(mesSendString) {
-    return mesSendString;
 }
 
 export async function duplicateCharacter() {
@@ -12842,18 +12207,6 @@ function extractImagesFromData(data, { mainApi = null, chatCompletionSource = nu
     }
 
     return [];
-}
-
-/**
- * parseAndSaveLogprobs receives the full data response for a non-streaming
- * generation, parses logprobs for all tokens in the message, and saves them
- * to the currently active message.
- * @param {object} data - response data containing all tokens/logprobs
- * @param {string} continueFrom - for 'continue' generations, the prompt
- *  */
-function parseAndSaveLogprobs(data, continueFrom) {
-    // Chat-completion providers handle logprobs during request processing.
-    return;
 }
 
 /**
@@ -15018,7 +14371,7 @@ export async function getSettings() {
             didNormalizeMainApi = true;
         }
 
-        if (CHAT_COMPLETIONS_ONLY && settings.main_api !== 'openai') {
+        if (settings.main_api !== 'openai') {
             settings.main_api = 'openai';
             didNormalizeMainApi = true;
         }

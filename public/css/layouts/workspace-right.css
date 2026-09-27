@@ -32,8 +32,7 @@ body[data-aiko-layout="workspaceRight"] .fillRight {
     right: var(--aiko-layout-workspace-gap);
 }
 
-body[data-aiko-layout="workspaceRight"] #floatingPrompt,
-body[data-aiko-layout="workspaceRight"] #cfgConfig {
+body[data-aiko-layout="workspaceRight"] #floatingPrompt {
     left: auto;
     right: var(--aiko-layout-workspace-gap);
 }
@@ -63,8 +62,7 @@ body[data-aiko-layout="workspaceRight"] #cfgConfig {
 
     body[data-aiko-layout="workspaceRight"] .fillLeft,
     body[data-aiko-layout="workspaceRight"] .fillRight,
-    body[data-aiko-layout="workspaceRight"] #floatingPrompt,
-    body[data-aiko-layout="workspaceRight"] #cfgConfig {
+    body[data-aiko-layout="workspaceRight"] #floatingPrompt {
         left: 0;
         right: auto;
     }

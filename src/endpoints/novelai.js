@@ -27,6 +27,32 @@ function calculateSkipCfgAboveSigma(width, height, modelName) {
 
 export const router = express.Router();
 
+/** Returns the image subscription fields used by the Anlas viewer. */
+export async function getImageSubscription(request, response, fetchSubscription = fetch) {
+    try {
+        const key = readSecret(request.user.directories, SECRET_KEYS.NOVEL);
+        if (!key) {
+            return response.sendStatus(400);
+        }
+        const result = await fetchSubscription(`${IMAGE_NOVELAI}/user/subscription`, {
+            headers: { Authorization: `Bearer ${key}` },
+            signal: AbortSignal.timeout(30_000),
+        });
+        if (!result.ok) {
+            return response.sendStatus(result.status === 401 ? 401 : 502);
+        }
+        const data = await result.json();
+        return response.send({
+            balance: data?.trainingStepsLeft?.fixedTrainingStepsLeft ?? 0,
+            unlimitedImageGeneration: data?.perks?.unlimitedImageGeneration ?? false,
+        });
+    } catch {
+        return response.sendStatus(502);
+    }
+}
+
+router.post('/status', (request, response) => getImageSubscription(request, response));
+
 router.post('/generate-image', async (request, response) => {
     if (!request.body) {
         return response.sendStatus(400);

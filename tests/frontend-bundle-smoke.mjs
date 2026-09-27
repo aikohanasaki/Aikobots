@@ -540,6 +540,22 @@ async function testWorldInfoPresetSelectionUi(page) {
     );
 }
 
+/** Checks that surviving image integrations can open their shared key manager. */
+async function testChatOnlyControls(page) {
+    assert.equal(await page.locator('#cfgConfig, #option_toggle_CFG').count(), 0);
+    if (!extensionsEnabled) return;
+    for (const key of ['api_key_novel', 'api_key_huggingface']) {
+        const button = page.locator(`button.manage-api-keys[data-key="${key}"]`).first();
+        await button.waitFor({ state: 'attached' });
+        await button.evaluate(element => element.click());
+        const manager = page.locator('dialog .secretKeyManager');
+        await manager.waitFor({ state: 'visible' });
+        assert.equal(await manager.locator('code').textContent(), key);
+        await page.keyboard.press('Escape');
+        await manager.waitFor({ state: 'detached' });
+    }
+}
+
 const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'aikobots-frontend-smoke-'));
 const configPath = path.join(temporaryRoot, 'config.yaml');
 const dataRoot = path.join(temporaryRoot, 'data');
@@ -666,6 +682,7 @@ try {
         await testLayoutSizing(page);
         assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected layout diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
         await testChatExtractor(page);
+        await testChatOnlyControls(page);
         assert.deepEqual(pageErrors, [], 'Chat extraction produced browser errors.');
     }
     assert.equal(await page.evaluate(async () => (await (await globalThis.fetch('/version')).json()).pkgVersion), '5.1.0', 'Runtime version is not v5.');

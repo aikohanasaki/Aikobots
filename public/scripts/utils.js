@@ -22,7 +22,6 @@ import { getStringHash } from './string-hash.js';
 export { getStringHash };
 
 export const shiftUpByOne = (e, i, a) => a[i] = e + 1;
-export const shiftDownByOne = (e, i, a) => a[i] = e - 1;
 
 /**
  * Pagination status string template.

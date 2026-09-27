@@ -2,6 +2,14 @@
 
 Aikobots is a multi-user fork of SillyTavern built around chat completion APIs. It does not include support for legacy text generation APIs. Aikobots originated as a parallel fork of SillyTavern beginning around version 1.11.0. While earlier development still tracked portions of the upstream project, Aikobots v2 fully diverged after SillyTavern 1.14.0 and no longer develops in parallel with SillyTavern.
 
+## Chat-completion extension compatibility
+
+Generation uses chat messages and server prompt assembly. `main_api` remains `openai`; `generateRaw` still accepts plain text and converts it to chat messages. Explicit text-completion API selections are unsupported, and legacy text-completion requests to the chat endpoint return HTTP 410.
+
+Text-only modules `nai-settings.js` and `cfg-scale.js`, events `GENERATE_BEFORE_COMBINE_PROMPTS` / `GENERATE_AFTER_COMBINE_PROMPTS`, and exports `CHAT_COMPLETIONS_ONLY`, `TEXTGEN_TOKENIZERS`, `getExtensionPromptMaxDepth`, `shiftDownByOne`, and `convertTextCompletionPrompt` are removed. `force_name2` is no longer a generation option; `getBiasStrings` no longer returns the unused `isUserPromptBias` flag. The unused tokenizer enum members `API_TEXTGENERATIONWEBUI` / `API_KOBOLD` are removed without renumbering other IDs. Server header authentication uses `HEADER_API_TYPES` instead of `TEXTGEN_TYPES`; unused text-provider parameter allowlists are removed. Extensions should use the existing chat-completion and generation lifecycle hooks.
+
+NovelAI images/TTS, captioning, embeddings, chat imports, and saved legacy data remain supported. Image and TTS settings open the existing API-key manager directly. `POST /api/novelai/status` returns only `{ balance, unlimitedImageGeneration }`; credential or upstream failures return non-success status codes. Text-generation CFG settings are ignored without deleting saved metadata; image-generation CFG is unaffected.
+
 ## Our Vision
 
 1. Support roleplay communities by making it easier for bot creators to share their work and collaborate in a multi-user environment.

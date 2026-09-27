@@ -341,7 +341,6 @@
     #right-nav-panel,
     #left-nav-panel,
     #floatingPrompt,
-    #cfgConfig,
     #logprobsViewer,
     #movingDivs>div {
         /* 100vh are fallback units for browsers that don't support dvh */
@@ -376,7 +375,6 @@
     */
 
     #floatingPrompt,
-    #cfgConfig,
     #logprobsViewer,
     #movingDivs>div {
         height: min-content;

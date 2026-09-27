@@ -1,7 +1,6 @@
 import { Fuse, lodash } from '../lib.js';
 
 import {
-    CHAT_COMPLETIONS_ONLY,
     characters,
     eventSource,
     event_types,
@@ -27,7 +26,7 @@ import { download, ensurePlainObject, equalsIgnoreCaseAndAccents, getSanitizedFi
 
 const presetManagers = {};
 // Text-generation preset managers were removed with the textgen cleanup; only OpenAI presets and reasoning templates remain here.
-const CHAT_COMPLETIONS_ONLY_PRESET_MANAGERS = new Set(['openai', 'reasoning']);
+const SUPPORTED_PRESET_MANAGERS = new Set(['openai', 'reasoning']);
 
 /**
  * Automatically select a preset for current API based on character or group name.
@@ -90,7 +89,7 @@ function registerPresetManagers() {
     $('select[data-preset-manager-for]').each((_, e) => {
         const forData = $(e).data('preset-manager-for');
         for (const apiId of forData.split(',')) {
-            if (CHAT_COMPLETIONS_ONLY && !CHAT_COMPLETIONS_ONLY_PRESET_MANAGERS.has(apiId)) {
+            if (!SUPPORTED_PRESET_MANAGERS.has(apiId)) {
                 console.debug(`Skipping preset manager for API: ${apiId} (chat-completions-only mode)`);
                 continue;
             }

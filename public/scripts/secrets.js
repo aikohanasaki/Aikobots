@@ -179,7 +179,7 @@ const INPUT_MAP = {
 const getLabel = () => moment().format('L LT');
 
 /**
- * Resolves the secret key based on the selected API, chat completion source, and text completion type.
+ * Resolves the secret key based on the selected chat completion source.
  * @returns {string|null} The secret key corresponding to the selected API, or null if no key is found.
  */
 export function resolveSecretKey() {

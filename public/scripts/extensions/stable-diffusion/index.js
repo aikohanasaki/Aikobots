@@ -43,7 +43,6 @@ import {
 } from '../../utils.js';
 import { getMessageTimeStamp, humanizedDateTime } from '../../RossAscends-mods.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
-import { getNovelAnlas, getNovelUnlimitedImageGeneration, loadNovelSubscriptionData } from '../../nai-settings.js';
 import { getMultimodalCaption } from '../shared.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
@@ -1034,17 +1033,19 @@ async function onOpenAiDurationSelect() {
 }
 
 async function onViewAnlasClick() {
-    const result = await loadNovelSubscriptionData();
-
-    if (!result) {
+    try {
+        const result = await fetch('/api/novelai/status', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+        });
+        if (!result.ok) {
+            throw new Error('Subscription request failed');
+        }
+        const { balance, unlimitedImageGeneration } = await result.json();
+        toastr.info(t`Free image generation: ${unlimitedImageGeneration ? 'Yes' : 'No'}`, `Anlas: ${balance}`);
+    } catch {
         toastr.warning(translate('Are you subscribed?'), translate('Could not load NovelAI subscription data'));
-        return;
     }
-
-    const anlas = getNovelAnlas();
-    const unlimitedGeneration = getNovelUnlimitedImageGeneration();
-
-    toastr.info(t`Free image generation: ${unlimitedGeneration ? 'Yes' : 'No'}`, `Anlas: ${anlas}`);
 }
 
 function onNovelAnlasGuardInput() {

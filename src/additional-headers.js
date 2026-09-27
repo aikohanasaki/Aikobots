@@ -1,20 +1,6 @@
-import { TEXTGEN_TYPES, OPENROUTER_HEADERS, FEATHERLESS_HEADERS } from './constants.js';
+import { HEADER_API_TYPES, OPENROUTER_HEADERS, FEATHERLESS_HEADERS } from './constants.js';
 import { SECRET_KEYS, readSecret } from './endpoints/secrets.js';
 import { getConfigValue } from './util.js';
-
-/**
- * Gets the headers for the Mancer API.
- * @param {import('./users.js').UserDirectoryList} directories User directories
- * @returns {object} Headers for the request
- */
-function getMancerHeaders(directories) {
-    const apiKey = readSecret(directories, SECRET_KEYS.MANCER);
-
-    return apiKey ? ({
-        'X-API-KEY': apiKey,
-        'Authorization': `Bearer ${apiKey}`,
-    }) : {};
-}
 
 /**
  * Gets the headers for the TogetherAI API.
@@ -23,32 +9,6 @@ function getMancerHeaders(directories) {
  */
 function getTogetherAIHeaders(directories) {
     const apiKey = readSecret(directories, SECRET_KEYS.TOGETHERAI);
-
-    return apiKey ? ({
-        'Authorization': `Bearer ${apiKey}`,
-    }) : {};
-}
-
-/**
- * Gets the headers for the InfermaticAI API.
- * @param {import('./users.js').UserDirectoryList} directories User directories
- * @returns {object} Headers for the request
- */
-function getInfermaticAIHeaders(directories) {
-    const apiKey = readSecret(directories, SECRET_KEYS.INFERMATICAI);
-
-    return apiKey ? ({
-        'Authorization': `Bearer ${apiKey}`,
-    }) : {};
-}
-
-/**
- * Gets the headers for the DreamGen API.
- * @param {import('./users.js').UserDirectoryList} directories User directories
- * @returns {object} Headers for the request
- */
-function getDreamGenHeaders(directories) {
-    const apiKey = readSecret(directories, SECRET_KEYS.DREAMGEN);
 
     return apiKey ? ({
         'Authorization': `Bearer ${apiKey}`,
@@ -76,34 +36,6 @@ function getVllmHeaders(directories) {
     const apiKey = readSecret(directories, SECRET_KEYS.VLLM);
 
     return apiKey ? ({
-        'Authorization': `Bearer ${apiKey}`,
-    }) : {};
-}
-
-/**
- * Gets the headers for the Aphrodite API.
- * @param {import('./users.js').UserDirectoryList} directories User directories
- * @returns {object} Headers for the request
- */
-function getAphroditeHeaders(directories) {
-    const apiKey = readSecret(directories, SECRET_KEYS.APHRODITE);
-
-    return apiKey ? ({
-        'X-API-KEY': apiKey,
-        'Authorization': `Bearer ${apiKey}`,
-    }) : {};
-}
-
-/**
- * Gets the headers for the Tabby API.
- * @param {import('./users.js').UserDirectoryList} directories User directories
- * @returns {object} Headers for the request
- */
-function getTabbyHeaders(directories) {
-    const apiKey = readSecret(directories, SECRET_KEYS.TABBY);
-
-    return apiKey ? ({
-        'x-api-key': apiKey,
         'Authorization': `Bearer ${apiKey}`,
     }) : {};
 }
@@ -172,19 +104,6 @@ function getHuggingFaceHeaders(directories) {
     }) : {};
 }
 
-/**
- * Gets the headers for the Generic text completion API.
- * @param {import('./users.js').UserDirectoryList} directories
- * @returns {object} Headers for the request
- */
-function getGenericHeaders(directories) {
-    const apiKey = readSecret(directories, SECRET_KEYS.GENERIC);
-
-    return apiKey ? ({
-        'Authorization': `Bearer ${apiKey}`,
-    }) : {};
-}
-
 export function getOverrideHeaders(urlHost) {
     const requestOverrides = getConfigValue('requestOverrides', []);
     const overrideHeaders = requestOverrides?.find((e) => e.hosts?.includes(urlHost))?.headers;
@@ -214,20 +133,14 @@ export function setAdditionalHeaders(request, args, server) {
  */
 export function setAdditionalHeadersByType(requestHeaders, type, server, directories) {
     const headerGetters = {
-        [TEXTGEN_TYPES.MANCER]: getMancerHeaders,
-        [TEXTGEN_TYPES.VLLM]: getVllmHeaders,
-        [TEXTGEN_TYPES.APHRODITE]: getAphroditeHeaders,
-        [TEXTGEN_TYPES.TABBY]: getTabbyHeaders,
-        [TEXTGEN_TYPES.TOGETHERAI]: getTogetherAIHeaders,
-        [TEXTGEN_TYPES.OOBA]: getOobaHeaders,
-        [TEXTGEN_TYPES.INFERMATICAI]: getInfermaticAIHeaders,
-        [TEXTGEN_TYPES.DREAMGEN]: getDreamGenHeaders,
-        [TEXTGEN_TYPES.OPENROUTER]: getOpenRouterHeaders,
-        [TEXTGEN_TYPES.KOBOLDCPP]: getKoboldCppHeaders,
-        [TEXTGEN_TYPES.LLAMACPP]: getLlamaCppHeaders,
-        [TEXTGEN_TYPES.FEATHERLESS]: getFeatherlessHeaders,
-        [TEXTGEN_TYPES.HUGGINGFACE]: getHuggingFaceHeaders,
-        [TEXTGEN_TYPES.GENERIC]: getGenericHeaders,
+        [HEADER_API_TYPES.VLLM]: getVllmHeaders,
+        [HEADER_API_TYPES.TOGETHERAI]: getTogetherAIHeaders,
+        [HEADER_API_TYPES.OOBA]: getOobaHeaders,
+        [HEADER_API_TYPES.OPENROUTER]: getOpenRouterHeaders,
+        [HEADER_API_TYPES.KOBOLDCPP]: getKoboldCppHeaders,
+        [HEADER_API_TYPES.LLAMACPP]: getLlamaCppHeaders,
+        [HEADER_API_TYPES.FEATHERLESS]: getFeatherlessHeaders,
+        [HEADER_API_TYPES.HUGGINGFACE]: getHuggingFaceHeaders,
     };
 
     const getHeaders = headerGetters[type];
