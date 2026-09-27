@@ -43,7 +43,8 @@ export async function getImageSubscription(request, response, fetchSubscription 
         }
         const data = await result.json();
         return response.send({
-            balance: data?.trainingStepsLeft?.fixedTrainingStepsLeft ?? 0,
+            balance: (data?.trainingStepsLeft?.fixedTrainingStepsLeft ?? 0)
+                + (data?.trainingStepsLeft?.purchasedTrainingSteps ?? 0),
             unlimitedImageGeneration: data?.perks?.unlimitedImageGeneration ?? false,
         });
     } catch {

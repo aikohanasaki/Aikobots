@@ -51,9 +51,15 @@ describe('NovelAI image subscription', () => {
         return { user: { directories } };
     }
 
-    it('uses the user secret and returns only the image UI fields', async () => {
+    it.each([
+        [{ fixedTrainingStepsLeft: 42, purchasedTrainingSteps: 100 }, 142],
+        [{ fixedTrainingStepsLeft: 0, purchasedTrainingSteps: 100 }, 100],
+        [{ fixedTrainingStepsLeft: 42 }, 42],
+        [{ purchasedTrainingSteps: 100 }, 100],
+        [undefined, 0],
+    ])('uses the user secret and returns only the image UI fields for %j', async (trainingStepsLeft, balance) => {
         const fetchSubscription = jest.fn(async () => ({ ok: true, json: async () => ({
-            trainingStepsLeft: { fixedTrainingStepsLeft: 42 },
+            trainingStepsLeft,
             perks: { unlimitedImageGeneration: true },
             unrelatedAccountField: 'omit',
         }) }));
@@ -62,7 +68,7 @@ describe('NovelAI image subscription', () => {
         expect(fetchSubscription).toHaveBeenCalledWith('https://image.novelai.net/user/subscription', expect.objectContaining({
             headers: { Authorization: 'Bearer synthetic-test-key' },
         }));
-        expect(res.body).toEqual({ balance: 42, unlimitedImageGeneration: true });
+        expect(res.body).toEqual({ balance, unlimitedImageGeneration: true });
     });
 
     it('does not dispatch without credentials', async () => {

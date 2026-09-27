@@ -10987,8 +10987,8 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
     let continue_mag = serverPreparedContinueBase;
     let cyclePrompt = serverPreparedContinueBase;
     if (isContinue) {
-        cyclePrompt = coreChat.at(-1)?.mes ?? '';
         if (coreChat.length) {
+            cyclePrompt = coreChat.at(-1)?.mes ?? '';
             continue_mag = cyclePrompt;
         }
         if (!cyclePrompt.endsWith(' ')) {

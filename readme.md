@@ -44,4 +44,4 @@ Additional Aikobots Credits
 
 See the [CSS layout style guide](/readme/layout.md) for layout structure, theme variables, and instructions for generating custom Aikobots CSS.
 
-Other documentation available: [Testing](readme\testing.md), and [SQLite](readme\sqlite.md).
+Other documentation available: [Testing](readme/testing.md), and [SQLite](readme/sqlite.md).

@@ -79,8 +79,7 @@ for (const type of ['normal', 'continue', 'swipe', 'regenerate', 'quiet', 'imper
                 if (prepared) assert.equal(payload.toolBudgetData.tool_choice, 'auto');
                 if (type === 'continue') {
                     assert.equal(result.continue_mag, 'A reply\n');
-                    // Prepared continuation content is supplied by the server.
-                    assert.equal(payload.cyclePrompt, prepared ? '\n' : 'A reply\n');
+                    assert.equal(payload.cyclePrompt, 'A reply\n');
                 }
                 assert.equal(Boolean(payload.promptInspection), !['quiet', 'impersonate'].includes(type));
                 if (type === 'swipe') assert.equal(payload.promptInspection.swipeId, 1);
@@ -89,6 +88,24 @@ for (const type of ['normal', 'continue', 'swipe', 'regenerate', 'quiet', 'imper
         }
     });
 }
+
+test('continuations preserve an existing trailing space without adding the postfix', async () => {
+    for (const prepared of [false, true]) {
+        for (const stream of [false, true]) {
+            const context = contextFor('continue', prepared, stream);
+            const base = 'A reply ';
+            context.chat.at(-1).mes = base;
+            if (prepared) {
+                context.serverPreparedContinueBase = base;
+            } else {
+                context.coreChat.at(-1).mes = base;
+            }
+            const result = await vm.runInNewContext(`${maxContext}\n(async () => { ${assembly}\nreturn { generate_data, continue_mag }; })()`, context);
+            assert.equal(result.continue_mag, base);
+            assert.equal(result.generate_data.promptContext.cyclePrompt, base);
+        }
+    }
+});
 
 test('raw text becomes chat messages and unsupported API selections fail before dispatch', async () => {
     const start = source.indexOf('export function createRawPrompt(');
