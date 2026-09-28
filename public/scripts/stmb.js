@@ -2278,10 +2278,11 @@ async function showStmbPendingActions() {
     const rows = records.map(record => `<section class="info_block marginBot5" data-recovery-id="${escapeHtml(record.id)}">
         <strong>${escapeHtml(record.lorebookName || translate('Unavailable Memory Book'))}</strong>
         <p>${escapeHtml(record.state === 'unavailable' ? translate('Check your Memory Book access before recovery.')
-        : record.state === 'needsReview' ? translate('Consolidation recovery requires review. Reload the lorebook and review saved summaries before starting again.')
-            : translate('An accepted consolidation save needs recovery.'))}</p>
-        ${record.state === 'unavailable' ? '' : `<button type="button" class="menu_button" data-recovery-action="review">${escapeHtml(translate('Review details'))}</button>
-        ${record.state === 'needsReview' ? '' : `<button type="button" class="menu_button" data-recovery-action="resume">${escapeHtml(translate('Resume'))}</button>`}
+        : record.state === 'sourceChanged' ? translate('Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.')
+            : record.state === 'needsReview' ? translate('Consolidation recovery requires review. Reload the lorebook and review saved summaries before starting again.')
+                : translate('An accepted consolidation save needs recovery.'))}</p>
+        ${record.state === 'unavailable' ? '' : `<button type="button" class="menu_button" data-recovery-action="review">${escapeHtml(record.state === 'sourceChanged' ? translate('Review and save') : translate('Review details'))}</button>
+        ${['needsReview', 'sourceChanged'].includes(record.state) ? '' : `<button type="button" class="menu_button" data-recovery-action="resume">${escapeHtml(translate('Resume'))}</button>`}
         <button type="button" class="menu_button" data-recovery-action="dismiss">${escapeHtml(translate('Dismiss after review'))}</button>`}
     </section>`).join('');
     const popup = new Popup(DOMPurify.sanitize(`<h3>${escapeHtml(translate('Pending Actions'))}</h3>
@@ -2299,7 +2300,7 @@ async function showStmbPendingActions() {
         const row = button.closest('[data-recovery-id]');
         const record = records.find(item => item.id === row?.dataset.recoveryId);
         if (!record) return;
-        if (action === 'review') {
+        if (action === 'review' && record.state !== 'sourceChanged') {
             const details = record.summaries.map(item => `<h4>${escapeHtml(item.title)}</h4><pre class="whitespacenormal">${escapeHtml(item.summary)}</pre>`).join('');
             await new Popup(DOMPurify.sanitize(details), POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true, okButton: translate('Close') }).show();
             return;
@@ -2316,7 +2317,26 @@ async function showStmbPendingActions() {
                 if (choice !== POPUP_RESULT.AFFIRMATIVE) return;
                 await resolveStmbConsolidationRecovery('dismiss', record.id);
             } else {
-                const saved = await resolveStmbConsolidationRecovery('resume', record.id);
+                let reviewToken = null;
+                if (action === 'review') {
+                    const review = await resolveStmbConsolidationRecovery('review', record.id);
+                    const details = review.record.summaries.map(item => `<h4>${escapeHtml(item.title)}</h4><pre class="whitespacenormal">${escapeHtml(item.summary)}</pre>`).join('');
+                    const sources = review.sources.map(item => `<h4>${escapeHtml(item.title || item.uid)}</h4><pre class="whitespacenormal">${escapeHtml(item.missing ? translate('Source entry no longer exists.') : item.content)}</pre>`).join('');
+                    const warning = !review.canSave ? translate('A source entry was deleted. Review the generated summaries, then dismiss this save and start a new consolidation.')
+                        : review.disableOriginals ? translate('Saving accepts these summaries despite changed sources and disables their assigned source entries. Review the current sources below before saving.')
+                            : translate('Saving accepts these summaries despite changed sources. Source entries will remain unchanged. Review the current sources below before saving.');
+                    const choice = await new Popup(DOMPurify.sanitize(`<h3>${escapeHtml(translate('Review and save'))}</h3><p>${escapeHtml(warning)}</p>${details}<h3>${escapeHtml(translate('Current source entries'))}</h3>${sources}`), POPUP_TYPE.TEXT, '', {
+                        wide: true, large: true, allowVerticalScrolling: true,
+                        okButton: review.canSave ? translate('Save reviewed summaries') : false, cancelButton: translate('Cancel'),
+                    }).show();
+                    if (!review.canSave || choice !== POPUP_RESULT.AFFIRMATIVE) return;
+                    reviewToken = review.reviewToken;
+                    if (hasActiveStmbTasks() || hasActiveStmbJobs()) {
+                        toastr.info(translate('Wait for active Memory Books jobs to finish before recovery.'), 'STMB');
+                        return;
+                    }
+                }
+                const saved = await resolveStmbConsolidationRecovery(reviewToken ? 'accept' : 'resume', record.id, reviewToken);
                 record.state = saved.record.state;
                 worldInfoCache.delete(record.lorebookName);
                 await applyPostSummarySaveLorebookEffects(record.lorebookName);

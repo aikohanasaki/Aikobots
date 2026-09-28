@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
-import { commitStmbConsolidation, cleanupStmbConsolidationReceipts, listStmbConsolidationRecoveries, readStmbConsolidationRecovery, writeStmbConsolidationRecovery } from '../src/stmb-consolidation-commit.js';
+import { commitStmbConsolidation, cleanupStmbConsolidationReceipts, listStmbConsolidationRecoveries, readStmbConsolidationRecovery, writeStmbConsolidationRecovery, reviewStmbConsolidationSources } from '../src/stmb-consolidation-commit.js';
 import { saveConsolidationBatch, getConsolidationConsumedIds, buildConsolidationRecoveryContext } from '../public/scripts/stmb-consolidation-commit.js';
 import { buildStmbRetryPayload } from '../public/scripts/stmb-job-retry-policy.js';
 import {
@@ -57,6 +57,7 @@ test('commit route checks access on replay and acknowledges before testing stale
     };
     let authorized = true;
     let saves = 0;
+    let failNextSave = false;
     let locked = false;
     vm.runInNewContext(endpoint.slice(start, end), {
         router: { post: (route, callback) => { handlers.set(route, callback); } },
@@ -64,7 +65,10 @@ test('commit route checks access on replay and acknowledges before testing stale
         withLorebookManagementTransaction: async callback => {
             locked = true;
             try {
-                return await callback({ save: async (_user, _name, data) => { persisted = structuredClone(data); saves++; } });
+                return await callback({ save: async (_user, _name, data) => {
+                    if (failNextSave) { failNextSave = false; throw new Error('Interrupted save'); }
+                    persisted = structuredClone(data); saves++;
+                } });
             } finally { locked = false; }
         },
         getLorebookForManagement: async () => {
@@ -73,7 +77,7 @@ test('commit route checks access on replay and acknowledges before testing stale
             return { data: structuredClone(persisted), metadata: { name: 'Book', storage: 'user' } };
         },
         ensureEntriesObject() {}, commitStmbConsolidation, migrateLorebookSummarySchema,
-        listStmbConsolidationRecoveries, readStmbConsolidationRecovery, writeStmbConsolidationRecovery,
+        listStmbConsolidationRecoveries, readStmbConsolidationRecovery, writeStmbConsolidationRecovery, reviewStmbConsolidationSources,
         assertLorebookCheckoutForManagement() {},
         createStmbRequestError: (status, type, message) => Object.assign(new Error(message), { status, type }),
         isActiveSessionError: () => false,
@@ -115,6 +119,102 @@ test('commit route checks access on replay and acknowledges before testing stale
     assert.equal((await recover('list')).body.records.length, 0);
     assert.equal((await recover('resume')).statusCode, 409);
     assert.equal((await recover('resume', '../outside')).statusCode, 409);
+
+    const changedBatch = { ...body, batchId: 'changed-source' };
+    persisted.entries[0].content = 'Edited ordinary memory';
+    assert.equal((await invoke('/commit-summaries', changedBatch)).body.error, 'StmbConsolidationSourceChanged');
+    assert.equal(saves, 1);
+    const retained = (await recover('list')).body.records[0];
+    assert.equal(retained.state, 'sourceChanged');
+    assert.equal(retained.summaries[0].summary, body.summaryCandidates[0].summary);
+    assert.equal((await recover('resume', changedBatch.batchId)).statusCode, 409);
+    const review = (await recover('review', changedBatch.batchId)).body;
+    assert.equal(review.sources[0].content, 'Edited ordinary memory');
+    assert.equal(review.canSave, true);
+    const accept = token => invoke('/consolidation-recovery', { action: 'accept', id: changedBatch.batchId, reviewToken: token });
+    assert.equal((await accept(null)).statusCode, 400);
+    authorized = false;
+    assert.equal((await recover('review', changedBatch.batchId)).statusCode, 403);
+    assert.equal((await accept(review.reviewToken)).statusCode, 403);
+    authorized = true;
+    persisted.entries[0].content = 'Edited again while reviewing';
+    assert.equal((await accept(review.reviewToken)).statusCode, 409);
+    assert.equal(readStmbConsolidationRecovery('test-user', changedBatch.batchId).state, 'sourceChanged');
+    const freshReview = (await recover('review', changedBatch.batchId)).body;
+    failNextSave = true;
+    assert.equal((await accept(freshReview.reviewToken)).statusCode, 500);
+    assert.equal(readStmbConsolidationRecovery('test-user', changedBatch.batchId).state, 'prepared');
+    const accepted = await recover('resume', changedBatch.batchId);
+    assert.equal(accepted.statusCode, 200);
+    assert.equal(saves, 2);
+    assert.equal(persisted.entries[0].content, 'Edited again while reviewing');
+    assert.equal(persisted.entries[0].disable, true);
+    assert.equal((await accept(freshReview.reviewToken)).statusCode, 409);
+    assert.equal((await recover('resume', changedBatch.batchId)).body.replayed, true);
+    assert.equal((await invoke('/commit-summaries', changedBatch)).statusCode, 409);
+    assert.equal(saves, 2);
+
+    const deletedBatch = { ...body, batchId: 'deleted-source' };
+    delete persisted.entries[0];
+    assert.equal((await invoke('/commit-summaries', deletedBatch)).statusCode, 409);
+    const missing = (await recover('review', deletedBatch.batchId)).body;
+    assert.equal(missing.canSave, false);
+    assert.equal(missing.sources[0].missing, true);
+    assert.equal((await invoke('/consolidation-recovery', { action: 'accept', id: deletedBatch.batchId, reviewToken: missing.reviewToken })).statusCode, 409);
+    assert.equal((await recover('dismiss', deletedBatch.batchId)).statusCode, 200);
+    assert.equal((await invoke('/commit-summaries', deletedBatch)).statusCode, 409);
+    assert.equal(saves, 2);
+});
+
+test('Pending Actions reviews retained summaries and current sources before sending approval', async () => {
+    const start = source.indexOf('async function showStmbPendingActions()');
+    const end = source.indexOf('/** Announces unfinished accepted saves', start);
+    for (const [canSave, decision] of [[true, 1], [true, 0], [false, 1]]) {
+        const calls = [];
+        const popups = [];
+        let click;
+        let removed = false;
+        const record = { id: 'conflicted', lorebookName: 'Book', state: 'sourceChanged', summaries: [{ title: 'Draft', summary: 'Retained summary' }] };
+        const row = { dataset: { recoveryId: record.id }, querySelectorAll: () => [button], remove: () => { removed = true; } };
+        const button = { dataset: { recoveryAction: 'review' }, closest: () => row };
+        class Popup {
+            constructor(html, _type, _value, options) {
+                popups.push({ html, options });
+                this.dlg = { addEventListener: (_name, handler) => { click = handler; } };
+            }
+            async show() { return decision; }
+        }
+        const show = vm.runInNewContext(source.slice(start, end) + '; showStmbPendingActions', {
+            Popup, DOMPurify: { sanitize: value => value }, escapeHtml: value => String(value), translate: value => value,
+            POPUP_TYPE: { TEXT: 1 }, POPUP_RESULT: { AFFIRMATIVE: 1 },
+            hasActiveStmbTasks: () => false, hasActiveStmbJobs: () => false,
+            worldInfoCache: new Map(), applyPostSummarySaveLorebookEffects: async () => {},
+            toastr: { error: () => assert.fail('Unexpected recovery error') },
+            resolveStmbConsolidationRecovery: async (action = 'list', id, token) => {
+                calls.push([action, id, token]);
+                if (action === 'list') return { records: [record] };
+                if (action === 'review') return { record, canSave, reviewToken: 'snapshot', disableOriginals: true,
+                    sources: [{ uid: '0', title: 'Source', content: 'Current source text', missing: !canSave }] };
+                if (action === 'accept') return { record: { state: 'saved' }, createdEntries: [{ uid: 1 }] };
+                return { ok: true };
+            },
+        });
+        await show();
+        assert.match(popups[0].html, /Review and save/);
+        assert.doesNotMatch(popups[0].html, /data-recovery-action="resume"/);
+        await click({ target: { closest: () => button } });
+        assert.match(popups[1].html, /Retained summary/);
+        assert.match(popups[1].html, canSave ? /Current source text/ : /Source entry no longer exists/);
+        assert.equal(popups[1].options.okButton, canSave ? 'Save reviewed summaries' : false);
+        if (canSave && decision === 1) {
+            assert.deepEqual(calls.map(call => call[0]), ['list', 'review', 'accept', 'complete']);
+            assert.equal(calls[2][2], 'snapshot');
+            assert.equal(removed, true);
+        } else {
+            assert.deepEqual(calls.map(call => call[0]), ['list', 'review']);
+            assert.equal(removed, false);
+        }
+    }
 });
 
 test('accepted preview batches survive reload independently and dismissal cannot recreate a pending save', async t => {
@@ -159,6 +259,11 @@ test('protected targets never create payload recovery records', async t => {
     t.after(() => { fs.rmSync(globalThis.DATA_ROOT, { recursive: true, force: true }); globalThis.DATA_ROOT = previousRoot; });
     await commitStmbConsolidation({ userHandle: 'user', metadata: { storage: 'secure' }, data: { entries: {} },
         input: { batchId: 'empty', batchCreatedAt: Date.now() }, build: () => ({ createdEntries: [] }), save: async () => {} });
+    await assert.rejects(commitStmbConsolidation({ userHandle: 'user', metadata: { storage: 'secure' }, data: { entries: {} },
+        input: { batchId: 'conflict', batchCreatedAt: Date.now() },
+        build: () => { throw Object.assign(new Error('Source changed'), { type: 'StmbSourceChanged', status: 409 }); },
+        save: async () => { assert.fail('Must not save'); },
+    }), { type: 'StmbSourceChanged' });
     assert.equal(listStmbConsolidationRecoveries('user').length, 0);
     assert.equal(fs.existsSync(path.join(globalThis.DATA_ROOT, '_stmb', 'consolidation-recovery')), false);
 });
@@ -168,7 +273,7 @@ test('only listing consolidation recovery bypasses the active-session mutation g
     const start = source.indexOf('const READ_ONLY_POST_ROUTES');
     const end = source.indexOf('function isForcePushChatSaveRoute', start);
     const isReadOnly = vm.runInNewContext(source.slice(start, end) + '; isReadOnlyRoute');
-    for (const action of ['list', 'resume', 'complete', 'dismiss', '', null]) {
+    for (const action of ['list', 'review', 'accept', 'resume', 'complete', 'dismiss', '', null]) {
         assert.equal(isReadOnly({ method: 'POST', path: '/api/stmb/consolidation-recovery', body: { action } }), action === 'list');
     }
 });
@@ -217,7 +322,7 @@ test('durable consolidation receipts recover lost responses and reject real conf
     await assert.rejects(run({ request: { ...input, disableOriginals: false } }), { type: 'StmbConsolidationCommitConflict' });
     persisted.entries[1].content = 'Edited summary';
     await assert.rejects(run(), { type: 'StmbConsolidationCommitConflict' });
-    await assert.rejects(run({ request: { ...input, batchId: 'new-batch' } }), { type: 'StmbSourceChanged' });
+    await assert.rejects(run({ request: { ...input, batchId: 'new-batch' } }), { type: 'StmbConsolidationSourceChanged' });
     assert.equal(saves, 1);
     const receipts = fs.readdirSync(path.join(root, '_stmb', 'consolidation-commits'));
     assert.equal(receipts.length, 1);

@@ -1,4 +1,13 @@
 {
+    "Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.": "Die Quellen der Konsolidierung wurden geändert. Öffne „Ausstehende Aktionen“ in Memory Books, um die erzeugten Zusammenfassungen zu prüfen und zu speichern.",
+    "Consolidation sources changed. Review the current lorebook before starting a new consolidation.": "Die Quellen der Konsolidierung wurden geändert. Prüfe das aktuelle Lorebook, bevor du eine neue Konsolidierung startest.",
+    "Review and save": "Prüfen und speichern",
+    "Source entry no longer exists.": "Der Quelleintrag existiert nicht mehr.",
+    "A source entry was deleted. Review the generated summaries, then dismiss this save and start a new consolidation.": "Ein Quelleintrag wurde gelöscht. Prüfe die erzeugten Zusammenfassungen, verwirf dann diesen Speichervorgang und starte eine neue Konsolidierung.",
+    "Saving accepts these summaries despite changed sources and disables their assigned source entries. Review the current sources below before saving.": "Beim Speichern werden diese Zusammenfassungen trotz geänderter Quellen akzeptiert und ihre zugeordneten Quelleinträge deaktiviert. Prüfe vor dem Speichern die aktuellen Quellen unten.",
+    "Saving accepts these summaries despite changed sources. Source entries will remain unchanged. Review the current sources below before saving.": "Beim Speichern werden diese Zusammenfassungen trotz geänderter Quellen akzeptiert. Quelleinträge bleiben unverändert. Prüfe vor dem Speichern die aktuellen Quellen unten.",
+    "Current source entries": "Aktuelle Quelleinträge",
+    "Save reviewed summaries": "Geprüfte Zusammenfassungen speichern",
     "Draft": "Entwurf",
     "Memory Book rollback could not be verified. Nothing was created. Disable branch rollback or create a chat-only copy.": "Das Zurücksetzen des Memory Books konnte nicht sicher geprüft werden. Es wurde nichts erstellt. Deaktiviere das Zurücksetzen von Abzweigungen oder erstelle nur eine Chat-Kopie.",
     "Apply auto-rollback to branches/checkpoints": "Automatisches Zurücksetzen auf Abzweigungen und Kontrollpunkte anwenden",

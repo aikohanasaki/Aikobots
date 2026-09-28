@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
+import { fingerprintLorebookEntry, migrateLorebookSummarySchema } from '../public/scripts/stmb-summary.js';
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
@@ -50,6 +51,36 @@ export function listStmbConsolidationRecoveries(userHandle) {
         .filter(record => record && !['completed', 'dismissed'].includes(record.state));
 }
 
+/** Reviews an unsaved ordinary-book batch under the caller's authorized lorebook lock. */
+export function reviewStmbConsolidationSources(userHandle, record, data, token = null) {
+    if (record.state !== 'sourceChanged') throw conflict();
+    const beforeHash = hash(data);
+    migrateLorebookSummarySchema(data);
+    const ids = [...new Set([
+        ...(record.input.sourceIds || Object.keys(record.input.sourceFingerprints || {})),
+        ...record.input.summaryCandidates.flatMap(candidate => candidate.memberIds || []),
+    ].map(String))];
+    const entries = new Map(Object.values(data.entries || {}).map(entry => [String(entry.uid), entry]));
+    const sources = ids.map(uid => entries.get(uid));
+    const reviewToken = hash([record.requestHash, data]);
+    const canSave = sources.every(Boolean);
+    if (token === null) return {
+        reviewToken, canSave, disableOriginals: Boolean(record.input.disableOriginals),
+        sources: sources.map((entry, index) => ({ uid: ids[index], title: entry?.comment || '', content: entry?.content || '', missing: !entry })),
+    };
+    if (!canSave || token !== reviewToken) throw conflict();
+    // Only sourceChanged records have never reached receipt creation. Reusing their ID
+    // prevents duplicate saves; the new request hash rejects old browser retries.
+    record.input = { ...record.input, batchCreatedAt: Date.now(), sourceIds: ids,
+        sourceFingerprints: Object.fromEntries(sources.map(entry => [String(entry.uid), fingerprintLorebookEntry(entry)])) };
+    record.requestHash = hash(['user', record.lorebookName, record.input]);
+    record.beforeHash = beforeHash;
+    record.state = 'prepared';
+    record.updatedAt = Date.now();
+    writeStmbConsolidationRecovery(userHandle, record);
+    return record;
+}
+
 /**
  * Commits or reconciles one batch. The caller must hold the shared lorebook mutation lock
  * and load the book with current management authorization before calling this function.
@@ -61,7 +92,7 @@ export async function commitStmbConsolidation({ userHandle, metadata, data, inpu
     const requestHash = hash([metadata.storage, metadata.name, input]);
     const beforeHash = hash(data);
     let recovery = metadata.storage === 'user' ? readStmbConsolidationRecovery(userHandle, input.batchId) : null;
-    if (recovery && (recovery.requestHash !== requestHash || ['dismissed', 'needsReview'].includes(recovery.state))) throw conflict();
+    if (recovery && (recovery.requestHash !== requestHash || ['dismissed', 'needsReview', 'sourceChanged'].includes(recovery.state))) throw conflict();
     const checkpoint = state => {
         if (metadata.storage !== 'user') return;
         recovery ||= { version: 1, id: input.batchId, lorebookName: metadata.name, input: structuredClone(input), requestHash, beforeHash, createdAt: now };
@@ -110,7 +141,18 @@ export async function commitStmbConsolidation({ userHandle, metadata, data, inpu
             throw conflict();
         }
     }
-    const result = build();
+    let result;
+    try {
+        result = build();
+    } catch (error) {
+        if (!receipt && error?.type === 'StmbSourceChanged' && metadata.storage === 'user') {
+            checkpoint('sourceChanged');
+            throw Object.assign(new Error('Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.'), {
+                status: 409, type: 'StmbConsolidationSourceChanged',
+            });
+        }
+        throw error;
+    }
     if (result.createdEntries.length === 0) {
         await save();
         return result;

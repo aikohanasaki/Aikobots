@@ -1,5 +1,5 @@
 import express from 'express';
-import { commitStmbConsolidation, listStmbConsolidationRecoveries, readStmbConsolidationRecovery, writeStmbConsolidationRecovery } from '../stmb-consolidation-commit.js';
+import { commitStmbConsolidation, listStmbConsolidationRecoveries, readStmbConsolidationRecovery, writeStmbConsolidationRecovery, reviewStmbConsolidationSources } from '../stmb-consolidation-commit.js';
 import { fingerprintStmbSource } from '../../public/scripts/stmb-source.js';
 import { withStmbMemoryTransaction, resolveStmbOperations } from '../stmb-operation-service.js';
 import { stampStmbSidePromptRollback, updateStmbSidePromptArchiveState } from '../stmb-rollback.js';
@@ -1664,14 +1664,16 @@ function consolidationRecoveryView(record) {
 
 router.post('/consolidation-recovery', async (request, response) => {
     try {
-        const { action, id } = request.body || {};
-        if (!['list', 'resume', 'complete', 'dismiss'].includes(action)) throw createStmbRequestError(400, 'StmbBadRequest', 'Invalid consolidation recovery action.');
+        const { action, id, reviewToken } = request.body || {};
+        if (!['list', 'review', 'accept', 'resume', 'complete', 'dismiss'].includes(action)) throw createStmbRequestError(400, 'StmbBadRequest', 'Invalid consolidation recovery action.');
+        if (action === 'accept' && (typeof reviewToken !== 'string' || !/^[a-f0-9]{64}$/.test(reviewToken))) throw createStmbRequestError(400, 'StmbBadRequest', 'Invalid consolidation review.');
         const result = await withLorebookManagementTransaction(async transaction => {
             const handle = request.user.profile.handle;
             const authorize = async record => {
                 const loaded = await getLorebookForManagement(request.user, record.lorebookName, false, 'user');
                 if (loaded.metadata.storage !== 'user') throw createStmbRequestError(409, 'StmbConsolidationCommitConflict', 'Consolidation recovery requires review. Reload the lorebook and review saved summaries before starting again.');
                 assertLorebookCheckoutForManagement(request.user, loaded.metadata);
+                return loaded;
             };
             if (action === 'list') {
                 const records = [];
@@ -1683,15 +1685,18 @@ router.post('/consolidation-recovery', async (request, response) => {
             }
             const record = readStmbConsolidationRecovery(handle, id);
             if (!record) throw createStmbRequestError(404, 'StmbRecoveryMissing', 'This consolidation recovery record is unavailable.');
-            await authorize(record);
+            const loaded = await authorize(record);
             await request.activeSessionOperation?.assertAllowed();
-            if (action === 'resume') {
-                if (['completed', 'dismissed', 'needsReview'].includes(record.state)) throw createStmbRequestError(409, 'StmbConsolidationCommitConflict', 'Consolidation recovery requires review. Reload the lorebook and review saved summaries before starting again.');
+            if (action === 'review') return { ok: true, record: consolidationRecoveryView(record),
+                ...reviewStmbConsolidationSources(handle, record, loaded.data) };
+            if (action === 'accept') reviewStmbConsolidationSources(handle, record, loaded.data, reviewToken);
+            if (action === 'resume' || action === 'accept') {
+                if (['completed', 'dismissed', 'needsReview', 'sourceChanged'].includes(record.state)) throw createStmbRequestError(409, 'StmbConsolidationCommitConflict', 'Consolidation recovery requires review. Reload the lorebook and review saved summaries before starting again.');
                 try {
                     const saved = await commitSummaryBatch(request, transaction, record.input, true);
                     return { ...saved, record: consolidationRecoveryView(readStmbConsolidationRecovery(handle, id)) };
                 } catch (error) {
-                    if (error?.status === 409) {
+                    if (error?.status === 409 && error?.type !== 'StmbConsolidationSourceChanged') {
                         record.state = 'needsReview';
                         record.updatedAt = Date.now();
                         writeStmbConsolidationRecovery(handle, record);

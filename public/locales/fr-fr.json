@@ -1,4 +1,13 @@
 {
+    "Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.": "Les sources de la consolidation ont changé. Ouvrez « Actions en attente » dans Memory Books pour vérifier et enregistrer les résumés générés.",
+    "Consolidation sources changed. Review the current lorebook before starting a new consolidation.": "Les sources de la consolidation ont changé. Vérifiez le lorebook actuel avant de lancer une nouvelle consolidation.",
+    "Review and save": "Vérifier et enregistrer",
+    "Source entry no longer exists.": "L’entrée source n’existe plus.",
+    "A source entry was deleted. Review the generated summaries, then dismiss this save and start a new consolidation.": "Une entrée source a été supprimée. Vérifiez les résumés générés, puis abandonnez cet enregistrement et lancez une nouvelle consolidation.",
+    "Saving accepts these summaries despite changed sources and disables their assigned source entries. Review the current sources below before saving.": "L’enregistrement accepte ces résumés malgré la modification des sources et désactive les entrées sources associées. Vérifiez les sources actuelles ci-dessous avant d’enregistrer.",
+    "Saving accepts these summaries despite changed sources. Source entries will remain unchanged. Review the current sources below before saving.": "L’enregistrement accepte ces résumés malgré la modification des sources. Les entrées sources resteront inchangées. Vérifiez les sources actuelles ci-dessous avant d’enregistrer.",
+    "Current source entries": "Entrées sources actuelles",
+    "Save reviewed summaries": "Enregistrer les résumés vérifiés",
     "Draft": "Brouillon",
     "Memory Book rollback could not be verified. Nothing was created. Disable branch rollback or create a chat-only copy.": "La restauration du Memory Book n’a pas pu être vérifiée. Rien n’a été créé. Désactivez la restauration des branches ou créez une copie du chat uniquement.",
     "Apply auto-rollback to branches/checkpoints": "Appliquer la restauration automatique aux branches et points de contrôle",

@@ -1716,7 +1716,7 @@ export function verifySummarySourceFingerprints(lorebookData, expected, sourceId
         }
         const freshEntry = entries.find(entry => String(entry?.uid) === String(uid));
         if (!freshEntry || fingerprintLorebookEntry(freshEntry) !== fingerprint) {
-            const error = new Error('A consolidation source entry changed before commit. Review the job before overwriting.');
+            const error = new Error('Consolidation sources changed. Review the current lorebook before starting a new consolidation.');
             error.name = 'StmbJobNeedsReview';
             error.status = 409;
             error.type = 'StmbSourceChanged';
