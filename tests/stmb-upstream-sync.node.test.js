@@ -25,6 +25,9 @@ test('new upstream settings normalize with safe defaults and bounds', () => {
     assert.equal(settings.moduleSettings.characterAwareMemories, false);
     assert.equal(settings.moduleSettings.useSeparateGroupSidePrompts, false);
     assert.equal(settings.moduleSettings.sidePromptsMaxConcurrent, 10);
+    assert.equal(settings.moduleSettings.manualMemoryReminders, false);
+    assert.equal(settings.moduleSettings.automaticMemoryReminderInterval, 10);
+    assert.equal(normalizeStmbSettings({ moduleSettings: { manualMemoryReminders: true, manualMemoryReminderInterval: 0 } }).moduleSettings.manualMemoryReminderInterval, 50);
 });
 
 test('failed group participant detection always requires confirmation', () => {

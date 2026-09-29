@@ -1,6 +1,7 @@
 import { saveConsolidationBatch, getConsolidationConsumedIds, buildConsolidationRecoveryContext } from './stmb-consolidation-commit.js';
 import { captureStmbGroupPolicy, applyStmbGroupPolicy, filterStmbMemoryRole, getStmbMemoryRole, hasStmbSharedRoles } from './stmb-group-policy.js';
 import { evaluateStmbAutoSummary } from './stmb-auto-summary-policy.js';
+import { MEMORY_REMINDER_DEFAULTS, normalizeReminderInterval, createMemoryReminderController } from './stmb-memory-reminders.js';
 import { getStmbOperations, resolveStmbOperation, prepareStmbOperation, cancelUnstartedStmbOperation, getStmbRecoveryErrorMessage, resolveStmbConsolidationRecovery } from './stmb-api.js';
 import { CHAT_SAVE_RESULT, saveMetadata } from '../script.js';
 import {
@@ -332,6 +333,7 @@ const DURABLE_SYNC_STATE_KEYS = [
     'highestMemoryProcessed',
     'highestMemoryProcessedManuallySet',
     'autoSummaryNextPromptAt',
+    'memoryReminderState',
     'manualLorebook',
     'manualCharacterLorebooks',
     'narratorMode',
@@ -1179,6 +1181,9 @@ async function pollCurrentChatPlannerState() {
             await syncCurrentChatPlannerState(sceneContext);
         } else {
             stopPlannerStatusPolling();
+        }
+        if (getStmbChatKey(sceneContext) === getStmbChatKey(buildStmbSceneContext())) {
+            getMemoryReminderController().check({ notify: true });
         }
     } catch (error) {
         console.warn('STMB planner poll failed', error);
@@ -2789,6 +2794,24 @@ function buildDefaultSidePromptSetOptionsHtml(sets = [], selectedKey = '') {
     ].join('');
 }
 
+/** Renders the shared reminder preferences in the relevant settings section. */
+function renderMemoryReminderSettings(mode, settings) {
+    const automatic = mode === 'automatic';
+    const enabledKey = `${mode}MemoryReminders`;
+    const intervalKey = `${mode}MemoryReminderInterval`;
+    const label = automatic ? 'Turn on reminders for automatic memories' : 'Turn on reminders to make memories manually';
+    const intervalLabel = automatic ? 'Automatic reminder interval (messages)' : 'Manual reminder interval (messages)';
+    const help = automatic
+        ? 'When auto-create is on, first remind at the message interval plus buffer plus this many messages, then repeat every this many additional messages. Always counts chat messages, even with token-triggered generation.'
+        : 'When auto-create is off, remind after this many unprocessed chat messages, then repeat every this many additional messages.';
+    return `<div class="world_entry_form_control">
+        <label class="checkbox_label"><input type="checkbox" data-memory-reminder="${enabledKey}" ${settings[enabledKey] ? 'checked' : ''}><span data-i18n="STMemoryBooks_Reminder_${automatic ? 'Automatic' : 'Manual'}Enabled">${label}</span></label>
+        <label><span data-i18n="STMemoryBooks_Reminder_${automatic ? 'Automatic' : 'Manual'}Interval">${intervalLabel}</span><input type="number" class="text_pole" data-memory-reminder="${intervalKey}" value="${escapeHtml(String(settings[intervalKey]))}" min="1" step="1"></label>
+        <small class="opacity50p" data-i18n="STMemoryBooks_Reminder_${automatic ? 'Automatic' : 'Manual'}Help">${help}</small>
+        ${automatic ? '' : '<small class="opacity50p" data-i18n="STMemoryBooks_Reminder_CommonHelp">Reminders stay visible until dismissed and work independently of Show notifications.</small>'}
+    </div>`;
+}
+
 function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, sidePromptSets = []) {
     const settings = stmbSettings;
     const moduleSettings = getModuleSettings();
@@ -2842,6 +2865,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
 
             <section class="stmb-settings-subsection" data-stmb-settings-view="general">
             <h3 class="stmb-section-title" data-i18n="General Settings">General Settings</h3>
+            ${renderMemoryReminderSettings('manual', moduleSettings)}
             <div class="world_entry_form_control">
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-always-use-default" ${moduleSettings.alwaysUseDefault ? 'checked' : ''}> <span data-i18n="Always use default profile (no confirmation prompt)">Always use default profile (no confirmation prompt)</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-memory-previews" ${moduleSettings.showMemoryPreviews ? 'checked' : ''}> <span data-i18n="Show memory previews">Show memory previews</span></label>
@@ -2954,6 +2978,8 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
 
             <section class="stmb-settings-subsection" data-stmb-settings-view="automatic">
             <h3 class="stmb-section-title" data-i18n="Automatic Memories">Automatic Memories</h3>
+            ${renderMemoryReminderSettings('automatic', moduleSettings)}
+            ${renderMemoryReminderSettings('manual', moduleSettings)}
             <div class="world_entry_form_control">
                 <label class="checkbox_label"><input type="checkbox" data-stmb-rollback="autoRollbackEnabled" ${moduleSettings.autoRollbackEnabled === true ? 'checked' : ''}><span data-i18n="Auto-rollback after message deletion">Auto-rollback after message deletion</span></label>
                 <label class="checkbox_label"><input type="checkbox" data-stmb-rollback="autoRollbackApplyToBranches" ${moduleSettings.autoRollbackApplyToBranches === true ? 'checked' : ''} ${moduleSettings.autoRollbackEnabled === true ? '' : 'disabled'}><span data-i18n="Apply auto-rollback to branches/checkpoints">Apply auto-rollback to branches/checkpoints</span></label>
@@ -6302,6 +6328,7 @@ async function showMainEntryPopup(view = 'main', options = {}) {
     const persistSettings = () => {
         stmbSettings = normalizeStmbSettings(stmbSettings);
         saveSettingsDebounced();
+        getMemoryReminderController().check();
         updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
     };
     const persistAutoConsolidationTargetTiers = selectElement => {
@@ -6337,6 +6364,21 @@ async function showMainEntryPopup(view = 'main', options = {}) {
         }
 
         const moduleSettings = stmbSettings.moduleSettings;
+        if (target.dataset.memoryReminder) {
+            const key = target.dataset.memoryReminder;
+            if (!Object.hasOwn(MEMORY_REMINDER_DEFAULTS, key)) return;
+            const fallback = MEMORY_REMINDER_DEFAULTS[key];
+            const value = typeof fallback === 'boolean' ? target.checked : normalizeReminderInterval(target.value, fallback);
+            moduleSettings[key] = value;
+            if (typeof fallback !== 'boolean') target.value = String(value);
+            popup.dlg.querySelectorAll(`[data-memory-reminder="${key}"]`).forEach(control => {
+                if (control === target) return;
+                if (typeof fallback === 'boolean') control.checked = value;
+                else control.value = String(value);
+            });
+            persistSettings();
+            return;
+        }
 
         if (target.dataset.stmbRollback) {
             const key = target.dataset.stmbRollback;
@@ -8010,8 +8052,41 @@ function refreshFloatingJumpButtons() {
     refreshChatEndButton();
 }
 
+let memoryReminderController;
+
+/** Binds reminder checks to the current chat without retaining its metadata. */
+function getMemoryReminderController() {
+    return memoryReminderController ??= createMemoryReminderController({
+        current: () => {
+            const sceneContext = buildStmbSceneContext();
+            const chatKey = getStmbChatKey(sceneContext);
+            return {
+                chatKey: sceneContext.chatId ? chatKey : null,
+                markers: getStmbState(sceneContext),
+                count: chat.length,
+                settings: getModuleSettings(),
+                busy: hasActiveStmbTasks() || hasActiveStmbJobs(chatKey) || pendingPassiveChecksByChat.has(chatKey),
+            };
+        },
+        save: () => saveMetadataDebounced(),
+        clear: toast => {
+            toast.stop(true, true);
+            toastr.clear(toast, { force: true });
+            toast.stop(true, true);
+        },
+        show: (mode, count, onHidden) => toastr.info(
+            String(mode === 'automatic'
+                ? translate('Automatic memory summaries are overdue: {{count}} unprocessed messages. Check your automatic memory settings or create a memory.', 'STMemoryBooks_Reminder_AutomaticToast')
+                : translate('You have {{count}} messages since your last memory summary. Consider creating a memory.', 'STMemoryBooks_Reminder_ManualToast')).replace('{{count}}', String(count)),
+            'STMB',
+            { timeOut: 0, extendedTimeOut: 0, closeButton: true, tapToDismiss: false, hideDuration: 0, closeDuration: 0, preventDuplicates: false, onHidden },
+        ),
+    });
+}
+
 /** Refreshes the visible STMB processed-message boundary without changing chat state. */
 function refreshMemoryBoundaryUi() {
+    getMemoryReminderController().check();
     refreshMemoryBoundaryDivider();
     refreshFloatingJumpButtons();
 }
@@ -11035,9 +11110,13 @@ function flushPassiveStmbChecks(savedChat = {}) {
     }
 
     if (shouldCheckAutoSummary) {
-        checkAutoSummaryTrigger({ sceneContext: pending.sceneContext }).catch(error => {
-            console.warn('STMB auto-summary trigger failed after chat save', error);
-        });
+        void checkAutoSummaryTrigger({ sceneContext: pending.sceneContext })
+            .catch(error => console.warn('STMB auto-summary trigger failed after chat save', error))
+            .finally(() => {
+                if (chatKey === getStmbChatKey(buildStmbSceneContext())) getMemoryReminderController().check({ notify: true });
+            });
+    } else if (chatKey === getStmbChatKey(buildStmbSceneContext())) {
+        getMemoryReminderController().check({ notify: true });
     }
 }
 
@@ -12236,6 +12315,7 @@ export function initStmb() {
     });
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
+        getMemoryReminderController().dismiss();
         narratorGenerationSnapshot = null;
         void reviewStmbOperations({ auto: true });
         void syncStmbRollbackPolicy().catch(() => toastr.error(translate('Memory Books rollback settings could not be saved.'), 'STMB'));

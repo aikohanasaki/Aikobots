@@ -78,6 +78,8 @@ These settings must be verified under the production deployment model. They do n
 
 Production uses multiple PM2 workers sharing one local `DATA_ROOT`. The filesystem must support SQLite byte-range locking and shared-memory behavior correctly. Network filesystems must not be assumed safe for WAL without explicit validation.
 
+STMB memory reminders store only per-chat delivery checkpoints in `chat_metadata.STMemoryBooks.memoryReminderState`. The existing revision-checked metadata save path persists them; no message or lorebook content is copied into reminder state. The browser keeps the visible toast locally, while the saved checkpoint prevents a repeat after reload. Reminder counts use logical chat positions, including messages outside the loaded window.
+
 ## Key Files
 
 - `src/sqlite-manager.js`: native connection configuration, schema upgrades, JSONL migration, bounded reads, UUID lookup, transactions, and raw export.

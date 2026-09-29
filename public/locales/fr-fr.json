@@ -6587,4 +6587,13 @@
   ,"Save this exception to your account across reloads and devices.": "Enregistrer cette exception dans votre compte pour la conserver après rechargement et sur vos autres appareils."
   ,"Delete exception": "Supprimer l’exception"
   ,"Effective behavior includes all matching exceptions. Edit broader rules in Manage toast exceptions.": "Le comportement effectif tient compte de toutes les exceptions correspondantes. Modifiez les règles plus larges dans « Gérer les exceptions de notification »."
+  ,"STMemoryBooks_Reminder_AutomaticEnabled": "Activer les rappels pour les mémoires automatiques"
+  ,"STMemoryBooks_Reminder_AutomaticHelp": "Lorsque la création automatique est activée, le premier rappel arrive après l’intervalle de messages plus le tampon plus ce nombre de messages, puis se répète après chaque nouveau groupe de ce nombre de messages. Compte toujours les messages du chat, même si la génération est déclenchée par les tokens."
+  ,"STMemoryBooks_Reminder_AutomaticInterval": "Intervalle des rappels automatiques (messages)"
+  ,"STMemoryBooks_Reminder_AutomaticToast": "Les résumés de mémoire automatiques sont en retard : {{count}} messages non traités. Vérifiez les réglages des mémoires automatiques ou créez une mémoire."
+  ,"STMemoryBooks_Reminder_CommonHelp": "Les rappels restent visibles jusqu’à leur fermeture et fonctionnent indépendamment de l’option Afficher les notifications."
+  ,"STMemoryBooks_Reminder_ManualEnabled": "Activer les rappels pour créer des mémoires manuellement"
+  ,"STMemoryBooks_Reminder_ManualHelp": "Lorsque la création automatique est désactivée, affiche un rappel après ce nombre de messages du chat non traités, puis après chaque nouveau groupe de ce nombre de messages."
+  ,"STMemoryBooks_Reminder_ManualInterval": "Intervalle des rappels manuels (messages)"
+  ,"STMemoryBooks_Reminder_ManualToast": "Il y a {{count}} messages depuis votre dernier résumé de mémoire. Pensez à créer une mémoire."
 }

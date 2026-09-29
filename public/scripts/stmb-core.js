@@ -2,6 +2,7 @@ import { cloneStloSettings } from './stlo-utils.js';
 import { normalizeCharacterMemoryBookLocks } from './stmb-character-memory-book-locks.js';
 import { normalizeMemoryAssistanceMode } from './stmb-clip-review-policy.js';
 import { getNarratorSceneParticipants } from './stmb-narrator-mode.js';
+import { MEMORY_REMINDER_DEFAULTS, normalizeReminderInterval } from './stmb-memory-reminders.js';
 
 export const STMB_PARITY = Object.freeze({
     sourceRepo: 'aikohanasaki/SillyTavern-MemoryBooks',
@@ -605,6 +606,7 @@ export function createDefaultStmbSettings() {
             allowSceneOverlap: false,
             autoHideMode: 'all',
             unhiddenEntriesCount: 2,
+            ...MEMORY_REMINDER_DEFAULTS,
             showConsolidationPreviews: false,
             autoSummaryEnabled: false,
             autoSummaryTriggerMode: 'messages',
@@ -954,6 +956,11 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         ? defaults.moduleSettings.autoSummaryInterval
         : Math.trunc(Number(moduleSettings.autoSummaryInterval));
     moduleSettings.autoSummaryBuffer = Number.isFinite(Number(moduleSettings.autoSummaryBuffer)) ? Math.max(0, Math.trunc(Number(moduleSettings.autoSummaryBuffer))) : defaults.moduleSettings.autoSummaryBuffer;
+    for (const [key, fallback] of Object.entries(MEMORY_REMINDER_DEFAULTS)) {
+        moduleSettings[key] = typeof fallback === 'boolean'
+            ? moduleSettings[key] === true
+            : normalizeReminderInterval(moduleSettings[key], fallback);
+    }
     moduleSettings.autoSummaryTriggerMode = moduleSettings.autoSummaryTriggerMode === 'tokens' ? 'tokens' : 'messages';
     const tokenThreshold = Number(moduleSettings.autoSummaryTokenThreshold);
     moduleSettings.autoSummaryTokenThreshold = Number.isFinite(tokenThreshold) ? Math.max(1, Math.min(1000000, Math.trunc(tokenThreshold))) : defaults.moduleSettings.autoSummaryTokenThreshold;
