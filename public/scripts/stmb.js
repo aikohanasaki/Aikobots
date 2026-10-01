@@ -10720,7 +10720,6 @@ export async function createSummaryForTier(targetTier, options = {}) {
                 tokenTarget: Math.max(1000, Math.trunc(Number(options.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
                 disableOriginals: Boolean(options.disableOriginals),
                 summaryEntrySettings: chosenSummaryEntrySettings,
-                sourceFingerprints: buildSummarySourceFingerprints(workItem.sourceEntries),
                 titleFormat: typeof options.titleFormat === 'string' && options.titleFormat.trim()
                     ? options.titleFormat
                     : getDefaultSummaryTitleFormat(normalizedTargetTier),
@@ -10861,11 +10860,8 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
     const titleFormat = typeof payload.titleFormat === 'string' && payload.titleFormat.trim()
         ? payload.titleFormat
         : getDefaultSummaryTitleFormat(normalizedTargetTier);
-    const sourceFingerprints = payload.sourceFingerprints
-        && typeof payload.sourceFingerprints === 'object'
-        && !Array.isArray(payload.sourceFingerprints)
-        ? payload.sourceFingerprints
-        : buildSummarySourceFingerprints(realSourceEntries);
+    // Compare against the sources used for generation, not their earlier queue-time state.
+    const sourceFingerprints = buildSummarySourceFingerprints(realSourceEntries);
     const sourceLabel = getSummaryTierLabel(getSourceTierForTarget(normalizedTargetTier));
     const targetLabel = getSummaryTierLabel(normalizedTargetTier);
 
