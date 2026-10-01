@@ -4108,13 +4108,13 @@ function getWIElement(name) {
 }
 
 /**
- * Adds missing fields to WI entries that are present in the entry template, but not in the data.
- * Additionally verify that array/object fields are of the expected type.
+ * Prepares display copies with defaults without modifying the entries being saved.
  * @param {any[]} data WI entries
  * @returns {any[]} Data with backfilled fields
  */
 function addMissingWorldInfoFields(data) {
-    data.forEach((entry) => {
+    return data.map((source) => {
+        const entry = { ...source, displayIndex: source.displayIndex ?? source.uid };
         // Add missing fields from the template
         Object.entries(newWorldInfoEntryTemplate).forEach(([key, value]) => {
             if (!Object.hasOwn(entry, key)) {
@@ -4124,13 +4124,11 @@ function addMissingWorldInfoFields(data) {
 
         // Ensure that the key is always an array
         if (!Array.isArray(entry.key)) {
-            console.debug('[WI] Fixing invalid "key" field for entry', entry);
             entry.key = [];
         }
 
         // Ensure that the keysecondary is always an array
         if (!Array.isArray(entry.keysecondary)) {
-            console.debug('[WI] Fixing invalid "keysecondary" field for entry', entry);
             entry.keysecondary = [];
         }
 
@@ -4142,9 +4140,8 @@ function addMissingWorldInfoFields(data) {
                 tags: [],
             };
         }
+        return entry;
     });
-
-    return data;
 }
 
 /**
@@ -4413,7 +4410,6 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
                 return null;
             }
-            entry.displayIndex = entry.displayIndex ?? entry.uid;
             return entry;
         }).filter(entry => entry !== null);
 
@@ -4745,11 +4741,12 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         }
 
         // We need to sort the entries here, as the data source isn't sorted
-        const entries = Object.values(data.entries);
+        const entries = addMissingWorldInfoFields(Object.values(data.entries));
         sortWorldInfoEntries(entries);
 
         let updated = 0, current = start;
-        for (const entry of entries) {
+        for (const displayedEntry of entries) {
+            const entry = data.entries[displayedEntry.uid];
             const newOrder = Math.max(current--, 0);
             if (entry.order === newOrder) continue;
 
@@ -4808,7 +4805,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         handle: '.drag-handle',
         stop: async function (_event, _ui) {
             const firstEntryUid = $('#world_popup_entries_list .world_entry').first().data('uid');
-            const minDisplayIndex = data?.entries[firstEntryUid]?.displayIndex ?? 0;
+            const minDisplayIndex = data?.entries[firstEntryUid]?.displayIndex ?? data?.entries[firstEntryUid]?.uid ?? 0;
             $('#world_popup_entries_list .world_entry').each(function (index) {
                 const uid = $(this).data('uid');
 
@@ -4824,7 +4821,6 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
                 setWIOriginalDataValue(data, uid, 'extensions.display_index', item.displayIndex);
             });
 
-            console.table(Object.keys(data.entries).map(uid => data.entries[uid]).map(x => ({ uid: x.uid, key: x.key.join(','), displayIndex: x.displayIndex })));
 
             await saveWorldInfo(name, data);
         },
@@ -5149,11 +5145,11 @@ function enableKeysInputHelper({ template, entry, entryPropName, originalDataVal
                 setWIOriginalDataValue(data, uid, originalDataValueName, data.entries[uid][entryPropName]);
                 await saveWorldInfo(name, data);
             }
-            $(this).toggleClass('empty', !data.entries[uid][entryPropName].length);
+            $(this).toggleClass('empty', !keys.length);
             // Update the commentInput's placeholder for primary keys
             if (entryPropName === 'key') {
                 const commentInput = $(_event.currentTarget).closest('.world_entry_form').find('textarea[name="comment"]');
-                setCommentPlaceholder(data.entries[uid][entryPropName].join(', '), commentInput);
+                setCommentPlaceholder(keys.join(', '), commentInput);
             }
         });
 
@@ -5215,6 +5211,7 @@ function handleMatchCheckboxHelper({ template, entry, fieldName, data, name }) {
     const checkBoxElem = template.find(`input[type="checkbox"][name="${fieldName}"]`);
     checkBoxElem.data('uid', entry.uid);
     checkBoxElem.on('input', async function (_, { noSave = false } = {}) {
+        if (noSave) return;
         const uid = $(this).data('uid');
         const value = $(this).prop('checked');
         data.entries[uid][fieldName] = value;
@@ -5228,11 +5225,9 @@ function handleMatchCheckboxHelper({ template, entry, fieldName, data, name }) {
  * Helper to update position/order display.
  * @param {object} params - Parameters for updating position/order display.
  * @param {JQuery<HTMLElement>} params.template - The template element containing the display.
- * @param {object} params.data - The data object containing entries.
- * @param {string} params.uid - The unique identifier of the entry to update.
+ * @param {object} params.entry - The current entry display values.
  */
-function updatePosOrdDisplayHelper({ template, data, uid }) {
-    let entry = data.entries[uid];
+function updatePosOrdDisplayHelper({ template, entry }) {
     let posText = entry.position;
     switch (entry.position) {
         case 0: posText = '↑CD'; break;
@@ -5295,7 +5290,7 @@ function fillCharacterAndTagOptionsHelper({ characterFilter, entry }) {
  * @param {string} params.name - The name of the world info to save changes to.
  */
 function handleCharacterFilterChangeHelper({ characterFilter, data, entry, name }) {
-    characterFilter.on('mousedown change', async function (e) {
+    characterFilter.on('change', async function (e) {
         if (world_names.length === 0) {
             e.preventDefault();
             return;
@@ -5336,13 +5331,10 @@ function handleProbabilityInputHelper({ probabilityInput, data, entry, name }) {
     probabilityInput.on('input', async function (_, { noSave = false } = {}) {
         const uid = $(this).data('uid');
         const value = Number($(this).val());
-        data.entries[uid].probability = !isNaN(value) ? value : null;
-        if (data.entries[uid].probability !== null) {
-            data.entries[uid].probability = Math.min(100, Math.max(0, data.entries[uid].probability));
-            if (data.entries[uid].probability !== value) {
-                $(this).val(data.entries[uid].probability);
-            }
-        }
+        const probability = !isNaN(value) ? Math.min(100, Math.max(0, value)) : null;
+        if (probability !== null && probability !== value) $(this).val(probability);
+        if (noSave) return;
+        data.entries[uid].probability = probability;
         setWIOriginalDataValue(data, uid, 'extensions.probability', data.entries[uid].probability);
         !noSave && await saveWorldInfo(name, data);
     });
@@ -5392,6 +5384,7 @@ function handleProbabilityToggleHelper({ probabilityToggle, data, entry, name, p
 function handleBooleanSelectHelper({ selectElem, entry, entryKey, data, name }) {
     selectElem.data('uid', entry.uid);
     selectElem.on('input', async function (_, { noSave = false } = {}) {
+        if (noSave) return;
         const uid = $(this).data('uid');
         const value = $(this).val();
         data.entries[uid][entryKey] = value === 'null' ? null : value === 'true';
@@ -5427,6 +5420,7 @@ function handleNumberInputHelper({ inputElem, entry, entryKey, data, name, min, 
                 $(this).val(max);
             }
         }
+        if (noSave) return;
         data.entries[uid][entryKey] = !isNaN(value) ? value : null;
         setWIOriginalDataValue(data, uid, `extensions.${entryKey.replace(/[A-Z]/g, m => `_${m.toLowerCase()}`)}`, data.entries[uid][entryKey]);
         !noSave && await saveWorldInfo(name, data);
@@ -5448,6 +5442,7 @@ function handleEntryStateSelectorHelper({ entryStateSelector, entry, data, name 
         event.stopPropagation();
     });
     entryStateSelector.on('input', async function (_, { noSave = false } = {}) {
+        if (noSave) return;
         const uid = entry.uid;
         const value = $(this).val();
         switch (value) {
@@ -5522,6 +5517,7 @@ function setCommentPlaceholder(keys, commentInput) {
  */
 export async function getWorldEntry(name, data, entry) {
     if (!data.entries[entry.uid]) return;
+    [entry] = addMissingWorldInfoFields([data.entries[entry.uid]]);
 
     const headerTemplate = WI_ENTRY_HEADER_TEMPLATE.clone();
     headerTemplate.data('uid', entry.uid);
@@ -5555,6 +5551,7 @@ export async function getWorldEntry(name, data, entry) {
         const uid = $(this).data('uid');
         const value = $(this).val();
         !skipReset && await resetScrollHeight(this);
+        if (noSave) return;
         data.entries[uid].comment = value;
         setWIOriginalDataValue(data, uid, 'comment', data.entries[uid].comment);
         !noSave && await saveWorldInfo(name, data);
@@ -5566,8 +5563,10 @@ export async function getWorldEntry(name, data, entry) {
     orderInput.on('input', async function (_, { noSave = false } = {}) {
         const uid = $(this).data('uid');
         const value = Number($(this).val());
-        data.entries[uid].order = !isNaN(value) ? value : 0;
-        updatePosOrdDisplayHelper({ template: headerTemplate, data, uid });
+        const order = !isNaN(value) ? value : 0;
+        updatePosOrdDisplayHelper({ template: headerTemplate, entry: { ...entry, ...data.entries[uid], order } });
+        if (noSave) return;
+        data.entries[uid].order = order;
         setWIOriginalDataValue(data, uid, 'insertion_order', data.entries[uid].order);
         !noSave && await saveWorldInfo(name, data);
     });
@@ -5589,18 +5588,20 @@ export async function getWorldEntry(name, data, entry) {
     positionInput.on('input', async function (_, { noSave = false } = {}) {
         const uid = $(this).data('uid');
         const value = Number($(this).val());
-        data.entries[uid].position = !isNaN(value) ? value : 0;
+        const position = !isNaN(value) ? value : 0;
+        let role = null;
         if (value === world_info_position.atDepth) {
             depthInput.prop('disabled', false);
             depthInput.css('visibility', 'visible');
-            const role = Number($(this).find(':selected').data('role'));
-            data.entries[uid].role = role;
+            role = Number($(this).find(':selected').data('role'));
         } else {
             depthInput.prop('disabled', true);
             depthInput.css('visibility', 'hidden');
-            data.entries[uid].role = null;
         }
-        updatePosOrdDisplayHelper({ template: headerTemplate, data, uid });
+        updatePosOrdDisplayHelper({ template: headerTemplate, entry: { ...entry, ...data.entries[uid], position } });
+        if (noSave) return;
+        data.entries[uid].position = position;
+        data.entries[uid].role = role;
         setWIOriginalDataValue(data, uid, 'position', data.entries[uid].position == 0 ? 'before_char' : 'after_char');
         setWIOriginalDataValue(data, uid, 'extensions.position', data.entries[uid].position);
         setWIOriginalDataValue(data, uid, 'extensions.role', data.entries[uid].role);
@@ -5696,6 +5697,7 @@ export async function getWorldEntry(name, data, entry) {
     const editOutlet = headerTemplate.find('.inline-drawer-outlet');
 
     function addEditorDrawerContent() {
+        [entry] = addMissingWorldInfoFields([data.entries[entry.uid]]);
         const editTemplate = WI_ENTRY_EDIT_TEMPLATE.clone();
 
         // UID display
@@ -5783,6 +5785,7 @@ export async function getWorldEntry(name, data, entry) {
         selectiveLogicDropdown.data('uid', entry.uid);
         selectiveLogicDropdown.on('click', e => e.stopPropagation());
         selectiveLogicDropdown.on('input', async function (_, { noSave = false } = {}) {
+            if (noSave) return;
             const uid = $(this).data('uid');
             const value = Number($(this).val());
             data.entries[uid].selectiveLogic = !isNaN(value) ? value : world_info_logic.AND_ANY;
@@ -5823,6 +5826,7 @@ export async function getWorldEntry(name, data, entry) {
             const uid = $(this).data('uid');
             const value = $(this).prop('checked');
             characterFilterLabel.text(value ? 'Exclude Character(s)' : 'Filter to Character(s)');
+            if (noSave) return;
             if (data.entries[uid].characterFilter) {
                 if (!value && data.entries[uid].characterFilter.names.length === 0 && data.entries[uid].characterFilter.tags.length === 0) {
                     delete data.entries[uid].characterFilter;
@@ -5863,9 +5867,11 @@ export async function getWorldEntry(name, data, entry) {
         contentInput.on('input', async function (_, { skipCount, noSave } = {}) {
             const uid = $(this).data('uid');
             const value = $(this).val();
-            data.entries[uid].content = value;
-            setWIOriginalDataValue(data, uid, 'content', data.entries[uid].content);
-            !noSave && await saveWorldInfo(name, data);
+            if (!noSave) {
+                data.entries[uid].content = value;
+                setWIOriginalDataValue(data, uid, 'content', data.entries[uid].content);
+                await saveWorldInfo(name, data);
+            }
             if (!skipCount) countTokensDebounced(counter, value);
         });
         contentInput.val(entry.content).trigger('input', { skipCount: true, noSave: true });
@@ -5875,6 +5881,7 @@ export async function getWorldEntry(name, data, entry) {
         const outletNameInput = editTemplate.find('input[name="outletName"]');
         outletNameInput.data('uid', entry.uid);
         outletNameInput.on('input', async function (_, { noSave = false } = {}) {
+            if (noSave) return;
             const uid = $(this).data('uid');
             const value = $(this).val();
             data.entries[uid].outletName = value;
@@ -5892,15 +5899,16 @@ export async function getWorldEntry(name, data, entry) {
             const isEmpty = $(this).val() === '';
             const value = Number($(this).val());
             if (value < 0) {
-                $(this).val(0).trigger('input');
+                $(this).val(0).trigger('input', { noSave });
                 toastr.warning(translate('Scan depth cannot be negative'));
                 return;
             }
             if (value > MAX_SCAN_DEPTH) {
-                $(this).val(MAX_SCAN_DEPTH).trigger('input');
+                $(this).val(MAX_SCAN_DEPTH).trigger('input', { noSave });
                 toastr.warning(t`Scan depth cannot exceed ${MAX_SCAN_DEPTH}`);
                 return;
             }
+            if (noSave) return;
             data.entries[uid].scanDepth = !isEmpty && !isNaN(value) && value >= 0 && value <= MAX_SCAN_DEPTH ? Math.floor(value) : null;
             setWIOriginalDataValue(data, uid, 'extensions.scan_depth', data.entries[uid].scanDepth);
             !noSave && await saveWorldInfo(name, data);
@@ -5911,6 +5919,7 @@ export async function getWorldEntry(name, data, entry) {
         const groupInput = editTemplate.find('input[name="group"]');
         groupInput.data('uid', entry.uid);
         groupInput.on('input', async function (_, { noSave = false } = {}) {
+            if (noSave) return;
             const uid = $(this).data('uid');
             const value = String($(this).val()).trim();
             data.entries[uid].group = value;
@@ -5924,6 +5933,7 @@ export async function getWorldEntry(name, data, entry) {
         const groupOverrideInput = editTemplate.find('input[name="groupOverride"]');
         groupOverrideInput.data('uid', entry.uid);
         groupOverrideInput.on('input', async function (_, { noSave = false } = {}) {
+            if (noSave) return;
             const uid = $(this).data('uid');
             const value = $(this).prop('checked');
             data.entries[uid].groupOverride = value;
@@ -5962,6 +5972,7 @@ export async function getWorldEntry(name, data, entry) {
         const delayUntilRecursionLevelInput = editTemplate.find('input[name="delayUntilRecursionLevel"]');
         delayUntilRecursionLevelInput.data('uid', entry.uid);
         delayUntilRecursionInput.on('input', async function (_, { noSave = false } = {}) {
+            if (noSave) return;
             const uid = $(this).data('uid');
             const toggled = $(this).prop('checked');
             const value = toggled ? data.entries[uid].delayUntilRecursion || true : false;
@@ -5972,6 +5983,7 @@ export async function getWorldEntry(name, data, entry) {
         });
         delayUntilRecursionInput.prop('checked', entry.delayUntilRecursion).trigger('input', { noSave: true });
         delayUntilRecursionLevelInput.on('input', async function (_, { noSave = false } = {}) {
+            if (noSave) return;
             const uid = $(this).data('uid');
             const content = $(this).val();
             const value = content === '' ? (typeof data.entries[uid].delayUntilRecursion === 'boolean' ? data.entries[uid].delayUntilRecursion : true)
@@ -6001,6 +6013,7 @@ export async function getWorldEntry(name, data, entry) {
         const automationIdInput = editTemplate.find('input[name="automationId"]');
         automationIdInput.data('uid', entry.uid);
         automationIdInput.on('input', async function (_, { noSave = false } = {}) {
+            if (noSave) return;
             const uid = $(this).data('uid');
             const value = $(this).val();
             data.entries[uid].automationId = value;
@@ -6014,6 +6027,7 @@ export async function getWorldEntry(name, data, entry) {
         const generationTypeTriggers = editTemplate.find('select[name="triggers"]');
         generationTypeTriggers.data('uid', entry.uid);
         generationTypeTriggers.on('input', async function (_, { noSave = false } = {}) {
+            if (noSave) return;
             const uid = $(this).data('uid');
             const value = $(this).val();
             data.entries[uid].triggers = Array.isArray(value) ? value : [];
@@ -6037,6 +6051,7 @@ export async function getWorldEntry(name, data, entry) {
         const ignoreBudgetInput = editTemplate.find('input[name="ignoreBudget"]');
         ignoreBudgetInput.data('uid', entry.uid);
         ignoreBudgetInput.on('input', async function (_, { noSave = false } = {}) {
+            if (noSave) return;
             const uid = $(this).data('uid');
             const value = $(this).prop('checked');
             data.entries[uid].ignoreBudget = value;
@@ -6049,6 +6064,7 @@ export async function getWorldEntry(name, data, entry) {
         const activationOnlyInput = editTemplate.find('input[name="activationOnly"]');
         activationOnlyInput.data('uid', entry.uid);
         activationOnlyInput.on('input', async function (_, { noSave = false } = {}) {
+            if (noSave) return;
             const uid = $(this).data('uid');
             const value = $(this).prop('checked');
             data.entries[uid].activationOnly = value;

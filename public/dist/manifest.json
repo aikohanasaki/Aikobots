@@ -1,27 +1,27 @@
 {
   "formatVersion": 1,
   "initialRequestCount": 10,
-  "initialGzipBytes": 1711503,
+  "initialGzipBytes": 1711538,
   "builtinExtensionCount": 13,
   "stmbModuleCount": 35,
   "assets": [
     {
       "name": "app.css",
-      "bytes": 492977,
-      "gzipBytes": 92830,
-      "sha256": "5d124e8c633a97dbb8aecf0c8c92e8ca6bd09d0057d384a9bed620421ee92224"
+      "bytes": 501890,
+      "gzipBytes": 92881,
+      "sha256": "d3733523ce7db930de7756cbb234a9b5b483b2b583e231736f0a950864dce13a"
     },
     {
       "name": "app.js",
-      "bytes": 1909459,
-      "gzipBytes": 515227,
-      "sha256": "fafb4452946c2ad6ccf3a31ba384594c03370e6af68cb6f8727a898b0867962b"
+      "bytes": 1909386,
+      "gzipBytes": 515237,
+      "sha256": "3bb1e6b4bde4c291c6718836a6ef7bfa81271b9cf472cfbef4af8a0f52508f34"
     },
     {
       "name": "chunks/builtins.js",
-      "bytes": 900762,
-      "gzipBytes": 187631,
-      "sha256": "b0e150b2ac668f0142db2e6379506cf44683fde6adb41514119f06ae11309bbb"
+      "bytes": 901914,
+      "gzipBytes": 187587,
+      "sha256": "f471475288767123a9aa2b7f1c2290927bf015ce7c7e826640c943954c8ed7ee"
     },
     {
       "name": "legacy.js",
