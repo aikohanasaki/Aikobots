@@ -249,6 +249,49 @@ test('retry preserves the exact pending batch and earlier preview progress', asy
     assert.equal(buildStmbRetryPayload({ type: 'consolidation', payload: {} }).consolidationNeedsReview, true);
 });
 
+test('queued consolidation fingerprints the generation sources and still rejects later edits', async () => {
+    const entry = { uid: 0, content: 'Before queueing' };
+    const payload = { lorebookName: 'Book', selectedEntryIds: ['0'], sourceFingerprints: { 0: fingerprintLorebookEntry(entry) } };
+    entry.content = 'Updated while queued';
+    const data = { entries: { 0: entry } };
+    let changeDuringGeneration = false;
+    let saves = 0;
+    const start = source.indexOf('async function runSummaryConsolidationNow(');
+    const end = source.indexOf('async function executeConsolidationJob(', start);
+    const helperStart = source.indexOf('function buildSummarySourceFingerprints(');
+    const helperEnd = source.indexOf('\nfunction ', helperStart + 1);
+    const run = vm.runInNewContext(source.slice(helperStart, helperEnd) + source.slice(start, end) + '; runSummaryConsolidationNow', {
+        fingerprintLorebookEntry, getSummarySourceUid: item => String(item.uid),
+        buildConsolidationRecoveryContext, buildStmbSceneContext: () => ({}), createAikobotsUuid: () => 'run',
+        getModuleSettings: () => ({}), worldInfoCache: { delete() {} }, loadWorldInfo: async () => structuredClone(data),
+        migrateLorebookSummarySchema, getConsolidationConsumedIds, structuredClone,
+        resolveSelectedSummarySourceEntries: entries => Object.values(entries),
+        normalizeSummaryMinChildren: () => 1, getDefaultSummaryMinChildren: () => 1,
+        identifyManagedSummaryEntries: () => [], filterStmbMemoryRole: entries => entries,
+        getStmbMemoryRole: () => null, hasStmbSharedRoles: () => false,
+        getActiveStmbProfile: () => ({}), stmbSettings: {}, normalizeLorebookEntrySettings: () => ({}),
+        getDefaultSummaryTitleFormat: () => '', getSummaryTierLabel, getSourceTierForTarget: () => 0,
+        getDefaultArcPromptKey: () => 'default', isStmbAbortError: () => false,
+        runSequentialSummaryAnalysis: async entries => {
+            assert.equal(entries[0].content, 'Updated while queued');
+            if (changeDuringGeneration) entry.content = 'Edited during generation';
+            return { summaryCandidates: [{ memberIds: ['0'] }], leftovers: [] };
+        },
+        collectSummaryMemberIds: () => new Set(['0']),
+        commitSummaryCandidates: async (_candidates, options) => {
+            verifySummarySourceFingerprints(data, options.sourceFingerprints, options.sourceIds);
+            saves++;
+            return [{ uid: 1 }];
+        },
+        runPostConsolidationCommitFlow: async () => {}, completeConsolidationCheckpoints: async () => {},
+    });
+    await run(payload);
+    assert.equal(saves, 1);
+    changeDuringGeneration = true;
+    await assert.rejects(run(payload), { type: 'StmbSourceChanged' });
+    assert.equal(saves, 1);
+});
+
 test('an uncertain non-preview save resumes before loading sources or generating', async () => {
     const checkpoint = { preview: false, pending: { batchId: 'pending', summaryCandidates: [{ memberIds: ['0'] }] }, completedEntries: [], completedCandidates: [], rejectedIds: [] };
     const events = [];
