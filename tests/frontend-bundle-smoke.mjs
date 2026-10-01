@@ -9,6 +9,7 @@ import { finished } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
 import { chromium, firefox, webkit } from 'playwright';
+import { fingerprintLorebookEntry, verifySummarySourceFingerprints } from '../public/scripts/stmb-summary.js';
 import { resolveSystemChromiumPath } from '../scripts/browser-path.mjs';
 import { defaultOutputDirectory, hashDirectory } from '../scripts/frontend-build-lib.mjs';
 import { testLayoutSizing } from './layout-sizing-smoke.mjs';
@@ -401,6 +402,128 @@ async function testDataMaidMultiSelect(page, fatalBrowserDiagnostics) {
     assert.equal(bootstrapDiagnostics.length, responsePaths.length * 2, `Unexpected delayed bootstrap diagnostics: ${bootstrapDiagnostics.join('\n')}`);
 }
 
+/** Checks that browsing never edits entries and strategy changes affect only their targets. */
+async function testWorldInfoReadOnlyRendering(page) {
+    const lorebookName = 'Editor Rendering Smoke';
+    const original = makeEditorRenderingBook();
+    const saves = [];
+    const routeHandler = async route => {
+        if (route.request().postDataJSON()?.name !== lorebookName) return route.fallback();
+        saves.push(route.request().postDataJSON().data);
+        await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+    };
+    await page.route('**/api/worldinfo/edit', routeHandler);
+    await page.locator('#world_editor_select').evaluate((select, name) => {
+        select.value = Array.from(select.options).find(option => option.textContent === name).value;
+        globalThis.jQuery(select).trigger('change');
+    }, lorebookName);
+    const row = uid => page.locator(`#world_popup_entries_list .world_entry[uid="${uid}"]`);
+    await row(0).waitFor({ state: 'attached' });
+    const openDrawer = async uid => {
+        await row(uid).locator('.inline-drawer').first().evaluate(element => globalThis.jQuery(element).trigger('inline-drawer-toggle'));
+        await row(uid).locator('textarea[name="content"]').waitFor({ state: 'attached' });
+    };
+    await openDrawer(0);
+    await row(0).locator('select[name="characterFilter"]').evaluate(element => globalThis.jQuery(element).trigger('mousedown'));
+    await page.locator('#world_info_search').evaluate(element => globalThis.jQuery(element).val('Smoke entry 1').trigger('input'));
+    await page.waitForFunction(() => !document.querySelector('#world_popup_entries_list .world_entry[uid="0"]'));
+    await page.locator('#world_info_search').evaluate(element => globalThis.jQuery(element).val('').trigger('input'));
+    await row(0).waitFor({ state: 'attached' });
+    // Pagination and bulk selection must not fill defaults into the saved book either.
+    await page.locator('#world_info_pagination').evaluate(element => globalThis.jQuery(element).pagination('go', 2));
+    await row(29).waitFor({ state: 'attached' });
+    await page.locator('#world_info_pagination').evaluate(element => globalThis.jQuery(element).pagination('go', 1));
+    await row(0).waitFor({ state: 'attached' });
+    await page.locator('#world_bulk_move_mode').evaluate(element => element.click());
+    await row(0).locator('.wi-bulk-select-checkbox').evaluate(element => {
+        element.checked = true;
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.locator('#world_bulk_move_mode').evaluate(element => element.click());
+    await openDrawer(0);
+    await page.waitForTimeout(1200);
+    assert.equal(saves.length, 0, 'Browsing and opening controls must not save.');
+
+    const edit = async (uid, selector, value, event = 'input') => {
+        const saved = page.waitForResponse(response => response.url().endsWith('/api/worldinfo/edit') && response.request().postDataJSON()?.name === lorebookName);
+        await row(uid).locator(selector).evaluate((element, { value, event }) => {
+            globalThis.jQuery(element).val(value).trigger(event);
+        }, { value, event });
+        await saved;
+    };
+    for (const uid of [1, 2]) await edit(uid, 'select[name="entryStateSelector"]', 'vectorized');
+    const expected = structuredClone(original);
+    for (const uid of [1, 2]) {
+        Object.assign(expected.entries[uid], { constant: false, vectorized: true });
+        Object.assign(expected.originalData.entries[uid], { constant: false, extensions: { vectorized: true } });
+    }
+    assert.deepEqual(saves.at(-1), expected, 'Only the two edited strategies and their export metadata may change.');
+    const fingerprints = { 0: fingerprintLorebookEntry(original.entries[0]) };
+    verifySummarySourceFingerprints(saves.at(-1), fingerprints, ['0']);
+
+    await edit(0, 'textarea[name="comment"]', 'Changed title');
+    await edit(0, 'textarea[name="content"]', 'Changed source');
+    await edit(0, 'textarea[name="key"]', 'alpha, beta', 'change');
+    await edit(0, 'input[name="order"]', '123');
+    await edit(0, 'input[name="probability"]', '45');
+    await edit(0, 'select[name="position"]', '1');
+    const edited = saves.at(-1).entries[0];
+    assert.equal(edited.comment, 'Changed title');
+    assert.equal(edited.content, 'Changed source');
+    assert.deepEqual(edited.key, ['alpha', 'beta']);
+    assert.equal(edited.order, 123);
+    assert.equal(edited.probability, 45);
+    assert.equal(edited.position, 1);
+    assert.deepEqual(edited.characterFilter, original.entries[0].characterFilter, 'Opening controls must preserve unknown character references.');
+    assert.throws(() => verifySummarySourceFingerprints(saves.at(-1), fingerprints, ['0']), { type: 'StmbSourceChanged' });
+    // Destroy and rebuild the drawer after edits; its values must come from current data.
+    await row(0).locator('.inline-drawer-outlet').evaluate(element => globalThis.jQuery(element).hide());
+    await row(0).locator('.inline-drawer').first().evaluate(element => globalThis.jQuery(element).trigger('inline-drawer-toggle'));
+    await row(0).locator('textarea[name="content"]').waitFor({ state: 'detached' });
+    await openDrawer(0);
+    assert.equal(await row(0).locator('textarea[name="content"]').inputValue(), 'Changed source');
+    const count = saves.length;
+    await page.waitForTimeout(1200);
+    assert.equal(saves.length, count, 'Reopening an edited drawer must not save.');
+    await row(0).locator('select[name="characterFilter"]').evaluate(element => {
+        const option = new Option('Selected character', 'Selected character');
+        option.dataset.type = 'character';
+        element.append(option);
+    });
+    await edit(0, 'select[name="characterFilter"]', ['Selected character'], 'change');
+    assert.deepEqual(saves.at(-1).entries[0].characterFilter, { isExclude: false, names: ['Selected character'], tags: [] });
+
+    const beforeReorder = structuredClone(saves.at(-1));
+    const reordered = page.waitForResponse(response => response.url().endsWith('/api/worldinfo/edit'));
+    const orderedIds = await page.locator('#world_popup_entries_list').evaluate(async element => {
+        element.prepend(element.querySelector('.world_entry[uid="1"]'));
+        const ids = [...element.querySelectorAll('.world_entry')].map(row => Number(row.getAttribute('uid')));
+        await globalThis.jQuery(element).sortable('option', 'stop').call(element);
+        return ids;
+    });
+    await reordered;
+    orderedIds.forEach((uid, index) => {
+        beforeReorder.entries[uid].displayIndex = 1 + index;
+        const originalEntry = beforeReorder.originalData.entries[uid];
+        originalEntry.extensions ||= {};
+        originalEntry.extensions.display_index = 1 + index;
+    });
+    assert.deepEqual(saves.at(-1), beforeReorder, 'Intentional reorder must only change display order and its export metadata.');
+    await page.unroute('**/api/worldinfo/edit', routeHandler);
+}
+
+/** Synthetic old entries deliberately omit optional fields and retain unknown metadata. */
+function makeEditorRenderingBook() {
+    return {
+        entries: Object.fromEntries(Array.from({ length: 30 }, (_, uid) => [uid, {
+            uid, comment: `Smoke entry ${uid}`, content: `Synthetic text ${uid}`, constant: true,
+            ...(uid === 0 ? { characterFilter: { isExclude: false, names: ['Unavailable character'], tags: [] }, scanDepth: -1, probability: 110 } : {}),
+        }])),
+        originalData: { entries: Array.from({ length: 30 }, (_, uid) => ({ uid, constant: true })) },
+        customMetadata: { retained: true },
+    };
+}
+
 /** Exercises one-shot bulk lorebook deletion through the existing full-save route. */
 async function testWorldInfoBulkDelete(page, fatalBrowserDiagnostics) {
     const lorebookName = 'Bulk Delete Smoke';
@@ -580,6 +703,7 @@ try {
     await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 4)}\n`);
     const worldsPath = path.join(dataRoot, 'default-user', 'worlds');
     await fs.mkdir(worldsPath, { recursive: true });
+    await fs.writeFile(path.join(worldsPath, 'Editor Rendering Smoke.json'), JSON.stringify(makeEditorRenderingBook()));
     await fs.writeFile(path.join(worldsPath, 'Extractor Smoke.json'), JSON.stringify({ entries: {
         0: { uid: 0, comment: 'Necklace [STMB Clip]', content: 'Existing necklace details.', key: ['necklace'], keysecondary: [] },
     } }));
@@ -661,6 +785,7 @@ try {
         await testStmbSettingsControls(page);
         assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected Data Maid browser diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
         await testWorldInfoPresetSelectionUi(page);
+        await testWorldInfoReadOnlyRendering(page);
         await testWorldInfoBulkDelete(page, fatalBrowserDiagnostics);
         assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected World Info bulk-delete diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
         await testLayoutSizing(page);
