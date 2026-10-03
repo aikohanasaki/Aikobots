@@ -6578,4 +6578,6 @@
   ,"Save this exception to your account across reloads and devices.": "Enregistrer cette exception dans votre compte pour la conserver après rechargement et sur vos autres appareils."
   ,"Delete exception": "Supprimer l’exception"
   ,"Effective behavior includes all matching exceptions. Edit broader rules in Manage toast exceptions.": "Le comportement effectif tient compte de toutes les exceptions correspondantes. Modifiez les règles plus larges dans « Gérer les exceptions de notification »."
+  ,"Compact Entry": "Compacter l’entrée"
+  ,"Compacting...": "Compactage en cours..."
 }

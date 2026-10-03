@@ -6518,4 +6518,6 @@
   ,"Save this exception to your account across reloads and devices.": "Diese Ausnahme im Konto speichern, auch nach dem Neuladen und auf anderen Geräten."
   ,"Delete exception": "Ausnahme löschen"
   ,"Effective behavior includes all matching exceptions. Edit broader rules in Manage toast exceptions.": "Das tatsächliche Verhalten berücksichtigt alle passenden Ausnahmen. Allgemeinere Regeln unter „Benachrichtigungsausnahmen verwalten“ bearbeiten."
+  ,"Compact Entry": "Eintrag verdichten"
+  ,"Compacting...": "Wird verdichtet..."
 }

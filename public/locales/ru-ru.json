@@ -6593,4 +6593,6 @@
   ,"Save this exception to your account across reloads and devices.": "Сохранить это исключение в аккаунте для применения после перезагрузки и на других устройствах."
   ,"Delete exception": "Удалить исключение"
   ,"Effective behavior includes all matching exceptions. Edit broader rules in Manage toast exceptions.": "Итоговое поведение учитывает все совпадающие исключения. Более широкие правила можно изменить в разделе «Управление исключениями уведомлений»."
+  ,"Compact Entry": "Сжать запись"
+  ,"Compacting...": "Сжатие..."
 }

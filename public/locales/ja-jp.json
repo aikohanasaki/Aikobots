@@ -6521,4 +6521,6 @@
   ,"Save this exception to your account across reloads and devices.": "この例外をアカウントに保存し、再読み込み後や別のデバイスでも適用します。"
   ,"Delete exception": "例外を削除"
   ,"Effective behavior includes all matching exceptions. Edit broader rules in Manage toast exceptions.": "実際の動作には、一致するすべての例外が適用されます。より広い範囲のルールは「通知の例外を管理」で編集してください。"
+  ,"Compact Entry": "エントリを圧縮"
+  ,"Compacting...": "圧縮中..."
 }

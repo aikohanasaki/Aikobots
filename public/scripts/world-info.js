@@ -53,6 +53,8 @@ export const world_info_logic = {
 const WI_ENTRY_HEADER_TEMPLATE = $('#entry_edit_template .world_entry');
 const WI_ENTRY_EDIT_TEMPLATE = $('#entry_edit_template .world_entry_edit');
 let stmbRegenerationHandler = null;
+let stmbCompactionHandler = null;
+let stmbCompactionEligibility = null;
 
 /**
  * Registers the action invoked by eligible STMB lorebook-entry controls.
@@ -60,6 +62,12 @@ let stmbRegenerationHandler = null;
  */
 export function registerStmbRegenerationHandler(handler) {
     stmbRegenerationHandler = typeof handler === 'function' ? handler : null;
+}
+
+/** Registers the Memory Books Compact Entry action for lorebook entries. */
+export function registerStmbCompactionHandler(handler, isEligible) {
+    stmbCompactionHandler = typeof handler === 'function' ? handler : null;
+    stmbCompactionEligibility = typeof isEligible === 'function' ? isEligible : null;
 }
 
 export let world_info = {};
@@ -5735,6 +5743,16 @@ export async function getWorldEntry(name, data, entry) {
                     void Promise.resolve(stmbRegenerationHandler?.(this));
                 });
             }
+        }
+
+        const compactButton = editTemplate.find('.stmb-compact-entry');
+        if (isOrdinaryUserLorebook && !isReservedTemplateWorldName(name) && stmbCompactionHandler && stmbCompactionEligibility?.(entry)) {
+            compactButton.prop('hidden', false);
+            compactButton.on('click', function (event) {
+                event.preventDefault();
+                event.stopPropagation();
+                void Promise.resolve(stmbCompactionHandler(this, name, entry.uid));
+            });
         }
 
         // Key inputs

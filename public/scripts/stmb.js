@@ -48,7 +48,7 @@ import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js
 import { applyLoadedChatMessageVisibility, hideChatMessageRange } from './chats.js';
 import { groups, selected_group } from './group-chats.js';
 import { getRegexScripts, runRegexScript } from './extensions/regex/engine.js';
-import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, METADATA_KEY, openLorebookOrderingDialog, registerStmbRegenerationHandler, reloadEditor, world_names, worldInfoCache } from './world-info.js';
+import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, METADATA_KEY, openLorebookOrderingDialog, registerStmbCompactionHandler, registerStmbRegenerationHandler, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
 import { SECRET_KEYS, secret_state } from './secrets.js';
 import { buildMemoryPromptText } from './stmb-prompt-assembly.js';
@@ -226,8 +226,10 @@ import {
 } from './connection-profile-request.js';
 import {
     configureStmbClipRuntime,
+    compactStmbEntry,
     hideFloatingClipButton,
     initializeFloatingClipButton,
+    isReviewableCompactionEntry,
     refreshFloatingClipButtonSetting,
     showStmbEntryReviewPopup,
     showTopicalClipPopup,
@@ -12147,6 +12149,22 @@ async function handleLorebookEntryRegeneration(button) {
     }
 }
 
+/** Runs the existing Compact Entry action for the selected lorebook entry. */
+async function handleLorebookEntryCompaction(button, lorebookName, entryUid) {
+    if (button.disabled || isReservedTemplateWorldName(lorebookName) || getLorebookStorageForRequest(lorebookName) !== 'user') return;
+    button.disabled = true;
+    try {
+        const lorebookData = await loadWorldInfo(lorebookName);
+        const entry = Object.values(lorebookData?.entries || {}).find(item => String(item.uid) === String(entryUid));
+        if (!entry || !isReviewableCompactionEntry(entry)) return;
+        await compactStmbEntry(button, lorebookName, lorebookData, entry);
+    } catch (error) {
+        toastr.error(translate('Compaction failed.'), 'STMB');
+    } finally {
+        button.disabled = false;
+    }
+}
+
 export function initStmb() {
     if (stmbInitialized) {
         return;
@@ -12173,6 +12191,7 @@ export function initStmb() {
         eventSource.once(event_types.APP_READY, bindMainEntry);
     }
     registerStmbRegenerationHandler(handleLorebookEntryRegeneration);
+    registerStmbCompactionHandler(handleLorebookEntryCompaction, isReviewableCompactionEntry);
     window.addEventListener(OPEN_APPROVAL_EVENT, event => {
         const jobId = String(event?.detail?.jobId || '').trim();
         if (!jobId) {
