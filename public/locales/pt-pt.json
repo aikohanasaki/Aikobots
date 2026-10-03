@@ -1972,4 +1972,6 @@
   ,"STMemoryBooks_Reminder_ManualHelp": "Com a criação automática desativada, lembra após esta quantidade de mensagens do chat não processadas e repete-se a cada nova quantidade igual de mensagens."
   ,"STMemoryBooks_Reminder_ManualInterval": "Intervalo dos lembretes manuais (mensagens)"
   ,"STMemoryBooks_Reminder_ManualToast": "Há {{count}} mensagens desde seu último resumo de memória. Considere criar uma memória."
+  ,"Compact Entry": "Compactar entrada"
+  ,"Compacting...": "A compactar..."
 }

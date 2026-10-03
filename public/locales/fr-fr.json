@@ -6596,4 +6596,6 @@
   ,"STMemoryBooks_Reminder_ManualHelp": "Lorsque la création automatique est désactivée, affiche un rappel après ce nombre de messages du chat non traités, puis après chaque nouveau groupe de ce nombre de messages."
   ,"STMemoryBooks_Reminder_ManualInterval": "Intervalle des rappels manuels (messages)"
   ,"STMemoryBooks_Reminder_ManualToast": "Il y a {{count}} messages depuis votre dernier résumé de mémoire. Pensez à créer une mémoire."
+  ,"Compact Entry": "Compacter l’entrée"
+  ,"Compacting...": "Compactage en cours..."
 }

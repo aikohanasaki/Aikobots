@@ -6536,4 +6536,6 @@
   ,"STMemoryBooks_Reminder_ManualHelp": "Bei deaktivierter automatischer Erstellung erfolgt die Erinnerung nach dieser Anzahl unverarbeiteter Chatnachrichten, danach jeweils nach ebenso vielen weiteren Nachrichten."
   ,"STMemoryBooks_Reminder_ManualInterval": "Intervall für manuelle Erinnerungen (Nachrichten)"
   ,"STMemoryBooks_Reminder_ManualToast": "Seit deiner letzten Erinnerungs-Zusammenfassung sind {{count}} Nachrichten hinzugekommen. Erwäge, eine Erinnerung zu erstellen."
+  ,"Compact Entry": "Eintrag verdichten"
+  ,"Compacting...": "Wird verdichtet..."
 }

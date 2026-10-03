@@ -1446,6 +1446,27 @@ function setCompactionEntryActionLoading(button, isLoading) {
     }
 }
 
+/** Runs the shared Compact Entry action and restores its button when generation settles. */
+export async function compactStmbEntry(button, lorebookName, lorebookData, entry, options = {}) {
+    setCompactionEntryActionLoading(button, true);
+    let loadingCleared = false;
+    const clearLoadingState = () => {
+        if (loadingCleared) return;
+        loadingCleared = true;
+        setCompactionEntryActionLoading(button, false);
+    };
+    try {
+        return await showCompactReviewPopup(lorebookName, lorebookData, entry, {
+            skipPromptStep: true,
+            profileIndex: options.profileIndex ?? getCompactionProfileIndex(),
+            onCompactionRequestSettled: clearLoadingState,
+            showGoBack: options.showGoBack,
+        });
+    } finally {
+        clearLoadingState();
+    }
+}
+
 function getTopicalClipPromptTemplate() {
     const saved = getModuleSettings().topicalClipPromptTemplate;
     return typeof saved === 'string' && saved.trim()
@@ -2896,26 +2917,12 @@ export async function showStmbEntryReviewPopup(options = {}) {
         const entry = findEntryByUid(currentLorebookData, uid);
         if (!entry) return;
 
-        setCompactionEntryActionLoading(button, true);
-        let loadingCleared = false;
-        const clearLoadingState = () => {
-            if (loadingCleared) return;
-            loadingCleared = true;
-            setCompactionEntryActionLoading(button, false);
-        };
-        let replaced = false;
-        try {
-            const profileIndex = getCompactionProfileIndexFromSelect(popup, 'stmb-compaction-profile-select');
-            setCompactionProfileIndex(profileIndex);
-            replaced = await showCompactReviewPopup(currentLorebookName, currentLorebookData, entry, {
-                skipPromptStep: true,
-                profileIndex,
-                onCompactionRequestSettled: clearLoadingState,
-                showGoBack: options.showGoBack,
-            });
-        } finally {
-            clearLoadingState();
-        }
+        const profileIndex = getCompactionProfileIndexFromSelect(popup, 'stmb-compaction-profile-select');
+        setCompactionProfileIndex(profileIndex);
+        const replaced = await compactStmbEntry(button, currentLorebookName, currentLorebookData, entry, {
+            profileIndex,
+            showGoBack: options.showGoBack,
+        });
         if (replaced) {
             currentEntries = Object.values(currentLorebookData?.entries || {})
                 .filter(item => isReviewableCompactionEntry(item))

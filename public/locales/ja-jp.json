@@ -6539,4 +6539,6 @@
   ,"STMemoryBooks_Reminder_ManualHelp": "自動作成が無効な場合、未処理のチャットメッセージがこの数に達すると通知し、その後は同じ数のメッセージが増えるたびに繰り返します。"
   ,"STMemoryBooks_Reminder_ManualInterval": "手動メモリのリマインダー間隔（メッセージ数）"
   ,"STMemoryBooks_Reminder_ManualToast": "前回のメモリサマリー以降、{{count}}件のメッセージがあります。メモリの作成をご検討ください。"
+  ,"Compact Entry": "エントリを圧縮"
+  ,"Compacting...": "圧縮中..."
 }
