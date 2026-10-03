@@ -18,10 +18,12 @@ export function normalizeReminderInterval(value, fallback) {
 export function createMemoryReminderController({ current, save, show, clear }) {
     let visible = null;
     let visibleKey = null;
+    let visibleCount = null;
     function dismiss() {
         const toast = visible;
         visible = null;
         visibleKey = null;
+        visibleCount = null;
         if (toast) clear(toast);
     }
     function check({ notify = false } = {}) {
@@ -38,7 +40,7 @@ export function createMemoryReminderController({ current, save, show, clear }) {
             ? normalizeReminderInterval(settings.autoSummaryInterval, 50) + buffer + interval : interval;
         const signature = JSON.stringify([baseline, enabled, interval, first]);
         const key = JSON.stringify([chatKey, mode, signature]);
-        if (visibleKey !== key) dismiss();
+        if (visibleKey !== key || (visible && count < visibleCount)) dismiss();
         const states = markers.memoryReminderState || {};
         let state = states[mode];
         // Don't write metadata for users who have never enabled reminders.
@@ -57,10 +59,11 @@ export function createMemoryReminderController({ current, save, show, clear }) {
         if (notify && due && !busy && !(markers.autoSummaryNextPromptAt > count)) {
             if (!visible) {
                 const toast = show(mode, Math.max(0, count - baseline - 1), () => {
-                    if (visible === toast) { visible = null; visibleKey = null; }
+                    if (visible === toast) { visible = null; visibleKey = null; visibleCount = null; }
                 });
                 visible = toast;
                 visibleKey = key;
+                visibleCount = count;
             }
             state.notifiedAt = count;
         }

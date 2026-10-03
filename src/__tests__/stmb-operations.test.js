@@ -147,7 +147,7 @@ it('rolls back an isolated book before remapping retained UUIDs, versions and li
     const options = { sourceChatId: 'parent', targetChatId: 'child', boundary: 1, settings: {},
         resolveMessage: uuid => /^u\d$/.test(uuid) ? { logicalIndex: Number(uuid.slice(1)) } : null,
         uuidMap: new Map([['u0', 'child0'], ['u1', 'child1']]) };
-    const { data, highest } = planStmbChatCopyBook(original, options);
+    const { data, highest, unhideRanges } = planStmbChatCopyBook(original, options);
     expect(Object.keys(data.entries)).toEqual(['1', '4', '5', '7']);
     expect(data.entries[1]).toMatchObject({ STMB_startUuid: 'child0', STMB_endUuid: 'child1', STMB_chatId: 'child', disable: false });
     expect(data.entries[1].disabledBySummaryId).toBeUndefined();
@@ -159,6 +159,10 @@ it('rolls back an isolated book before remapping retained UUIDs, versions and li
     expect(snapshot.writtenFingerprint).toBe(hashStmbRollbackState(written));
     expect(snapshot.sceneEndUuid).toBe('child1');
     expect(highest).toBe(1);
+    expect(unhideRanges).toEqual([{ start: 1, end: 1 }]);
+    expect(planStmbChatCopyBook(original, { ...options, boundary: 0, retainedEnd: 1 }).unhideRanges)
+        .toEqual([{ start: 0, end: 1 }, { start: 1, end: 1 }]);
+    expect(planStmbChatCopyBook(original, { ...options, settings: { deleteMemories: false } }).unhideRanges).toEqual([]);
     expect(original).toEqual(before);
     expect(data.entries[7]).toEqual(original.entries[7]);
     const malformed = structuredClone(original);

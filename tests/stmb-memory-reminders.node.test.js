@@ -112,6 +112,18 @@ test('deletions rebase the repeat checkpoint without spamming', () => {
     f.check(110); assert.equal(f.shown.length, 2);
 });
 
+test('deletions dismiss a toast for a higher message count', () => {
+    const f = fixture();
+    f.context.settings.manualMemoryReminders = true;
+    f.check(50);
+    f.check(50);
+    assert.equal(f.cleared.length, 0);
+    f.check(40, false);
+    assert.equal(f.cleared.length, 1);
+    f.check(50);
+    assert.equal(f.shown.length, 1);
+});
+
 test('chat switches, disabling and interval changes clear visible reminders', () => {
     const f = fixture();
     f.context.settings.manualMemoryReminders = true;
