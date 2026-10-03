@@ -1,4 +1,13 @@
 {
+    "Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.": "Источники консолидации изменились. Откройте «Ожидающие действия» в Memory Books, чтобы проверить и сохранить созданные сводки.",
+    "Consolidation sources changed. Review the current lorebook before starting a new consolidation.": "Источники консолидации изменились. Проверьте текущий лорбук перед началом новой консолидации.",
+    "Review and save": "Проверить и сохранить",
+    "Source entry no longer exists.": "Исходная запись больше не существует.",
+    "A source entry was deleted. Review the generated summaries, then dismiss this save and start a new consolidation.": "Исходная запись была удалена. Проверьте созданные сводки, затем отмените это сохранение и начните новую консолидацию.",
+    "Saving accepts these summaries despite changed sources and disables their assigned source entries. Review the current sources below before saving.": "При сохранении эти сводки будут приняты, несмотря на изменения источников, а связанные исходные записи будут отключены. Перед сохранением проверьте текущие источники ниже.",
+    "Saving accepts these summaries despite changed sources. Source entries will remain unchanged. Review the current sources below before saving.": "При сохранении эти сводки будут приняты, несмотря на изменения источников. Исходные записи останутся без изменений. Перед сохранением проверьте текущие источники ниже.",
+    "Current source entries": "Текущие исходные записи",
+    "Save reviewed summaries": "Сохранить проверенные сводки",
     "Draft": "Черновик",
     "Memory Book rollback could not be verified. Nothing was created. Disable branch rollback or create a chat-only copy.": "Не удалось подтвердить безопасность отката книги памяти. Ничего не создано. Отключите откат веток или создайте копию только чата.",
     "Apply auto-rollback to branches/checkpoints": "Применять автоматический откат к веткам и контрольным точкам",

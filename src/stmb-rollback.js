@@ -139,7 +139,7 @@ export function planStmbRollbackBook(db, operation, book, { resolveMessage = uui
 }
 
 /** Rolls back an isolated copy against source UUIDs, then remaps only proven source-owned identities. */
-export function planStmbChatCopyBook(book, { sourceChatId, targetChatId, boundary, settings, resolveMessage, uuidMap }) {
+export function planStmbChatCopyBook(book, { sourceChatId, targetChatId, boundary, retainedEnd = boundary, settings, resolveMessage, uuidMap }) {
     const owned = (start, end, chatId) => {
         const first = start ? resolveMessage(start) : null;
         const last = end ? resolveMessage(end) : null;
@@ -191,6 +191,18 @@ export function planStmbChatCopyBook(book, { sourceChatId, targetChatId, boundar
     }
     const operation = { data: { copyBoundary: boundary, settings } };
     const next = planStmbRollbackBook(null, operation, book, { resolveMessage });
+    const unhideRanges = [];
+    if (settings.deleteMemories !== false) {
+        for (const [key, entry] of Object.entries(book.entries || {})) {
+            if (next.entries?.[key] || entry.stmemorybooks !== true || entry.stmbSummary === true
+                || entry.stmbArc === true || Number(entry.stmbSummaryTier) > 0
+                || ['arc', 'chapter', 'book', 'legend', 'series', 'epic'].includes(String(entry.type || '').toLowerCase())
+                || memoryOwners.get(String(entry.uid)) !== true) continue;
+            const start = resolveMessage(entry.STMB_startUuid).logicalIndex;
+            const end = resolveMessage(entry.STMB_endUuid).logicalIndex;
+            if (start <= retainedEnd) unhideRanges.push({ start, end: Math.min(end, retainedEnd) });
+        }
+    }
     let highest = -1;
     const remapGroup = group => {
         if (typeof group !== 'string') return group;
@@ -254,7 +266,7 @@ export function planStmbChatCopyBook(book, { sourceChatId, targetChatId, boundar
         }
         remap(entry);
     }
-    return { data: next, highest };
+    return { data: next, highest, unhideRanges };
 }
 
 /** Executes a prevalidated rollback with per-book before/after hashes for crash recovery. */

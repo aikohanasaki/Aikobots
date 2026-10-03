@@ -1,4 +1,13 @@
 {
+    "Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.": "As fontes da consolidação foram alteradas. Abra «Ações pendentes» em Memory Books para rever e guardar os resumos gerados.",
+    "Consolidation sources changed. Review the current lorebook before starting a new consolidation.": "As fontes da consolidação foram alteradas. Reveja o lorebook atual antes de iniciar uma nova consolidação.",
+    "Review and save": "Rever e guardar",
+    "Source entry no longer exists.": "A entrada de origem já não existe.",
+    "A source entry was deleted. Review the generated summaries, then dismiss this save and start a new consolidation.": "Uma entrada de origem foi eliminada. Reveja os resumos gerados, descarte esta gravação e inicie uma nova consolidação.",
+    "Saving accepts these summaries despite changed sources and disables their assigned source entries. Review the current sources below before saving.": "Ao guardar, aceita estes resumos apesar das alterações nas fontes e desativa as entradas de origem associadas. Reveja as fontes atuais abaixo antes de guardar.",
+    "Saving accepts these summaries despite changed sources. Source entries will remain unchanged. Review the current sources below before saving.": "Ao guardar, aceita estes resumos apesar das alterações nas fontes. As entradas de origem permanecerão inalteradas. Reveja as fontes atuais abaixo antes de guardar.",
+    "Current source entries": "Entradas de origem atuais",
+    "Save reviewed summaries": "Guardar resumos revistos",
     "Draft": "Rascunho",
     "Resume": "Retomar",
     "Memory Books Jobs": "Tarefas do Memory Books",

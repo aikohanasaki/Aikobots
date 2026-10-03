@@ -283,19 +283,21 @@ test('direct and group copy transactions prevalidate rollback, publish once, and
     const endpoint = fs.readFileSync(new URL('../src/endpoints/chats.js', import.meta.url), 'utf8');
     const body = endpoint.slice(endpoint.indexOf('async function copyPrefixWithMemoryBooks('), endpoint.indexOf("router.post('/save-prefix'"));
     for (const isGroup of [false, true]) {
-        const messages = [0, 1, 2].map(index => ({ mes: `Ordinary message ${index}`, aikobots_message_uuid: randomUUID() }));
+        const messages = [0, 1, 2].map(index => ({ mes: `Ordinary message ${index}`, is_system: true, aikobots_message_uuid: randomUUID() }));
         const parent = { chat_revision: 1, chat_metadata: { STMemoryBooks: { manualLorebook: 'Book', highestMemoryProcessed: 2,
             autoRollbackPolicy: { enabled: true, applyToBranches: true },
             ...(isGroup ? { narratorMode: { enabled: true, members: [{ id: 'alice', lorebookName: 'Tracker', retired: true }] } } : {}),
         } } };
         const books = new Map(['Book', 'Tracker'].map((name, index) => [name, { entries: { 1: { uid: 1, stmemorybooks: true,
-            STMB_startUuid: messages[index * 2].aikobots_message_uuid, STMB_endUuid: messages[index * 2].aikobots_message_uuid } } }]));
+            STMB_startUuid: messages[index].aikobots_message_uuid,
+            STMB_endUuid: messages[index === 0 ? 1 : 2].aikobots_message_uuid } } }]));
         const original = structuredClone({ parent, books, messages });
         const copies = new Map();
         let child = null;
         let bookLock = false;
         let chatLock = false;
         let writes = 0;
+        let failNextWrite = false;
         const copy = vm.runInNewContext(body + '; copyPrefixWithMemoryBooks', {
             StmbChatCopyError, structuredClone, Map, Set, AIKOBOTS_MESSAGE_UUID_KEY, AIKOBOTS_SWIPE_UUID_KEY,
             normalizeStmbCopyKind: request => request.copy_kind, requireRequestOperationId: request => request.operation_id,
@@ -323,7 +325,12 @@ test('direct and group copy transactions prevalidate rollback, publish once, and
             getLogicalMessageRowByUuid: (_db, uuid) => { const index = messages.findIndex(message => message.aikobots_message_uuid === uuid); return index < 0 ? null : { logicalIndex: index }; },
             planStmbChatCopyBook, finalizeStmbLorebookCopy, rewriteStmbChatMetadataForCopy, clearStmbChatMetadataBindings,
             buildCopiedChatHeader: ({ chatMetadata, marker }) => ({ chat_metadata: chatMetadata, marker }),
-            writeLogicalChat: async (_path, header, targetMessages) => { writes++; child = { ...header, messages: targetMessages }; return {}; },
+            writeLogicalChat: async (_path, header, targetMessages) => {
+                writes++;
+                if (failNextWrite) { failNextWrite = false; throw new Error('write failed'); }
+                child = { ...header, messages: targetMessages };
+                return {};
+            },
             getChatRevision: () => 1, deleteChatStorageCompanions: () => { child = null; },
         });
         const options = { request: { user: {}, body: { copy_kind: isGroup ? 'checkpoint' : 'branch', copy_memory_books: true,
@@ -335,16 +342,31 @@ test('direct and group copy transactions prevalidate rollback, publish once, and
         const label = isGroup ? 'Checkpoint' : 'Branch';
         assert.equal(Object.keys(copies.get(`Tracker ${label} 1`).entries).length, 0);
         assert.equal(copies.get(`Book ${label} 1`).entries[1].STMB_startUuid, child.messages[0].aikobots_message_uuid);
+        assert.deepEqual(child.messages.map(message => message.is_system), [true, false]);
         assert.notEqual(child.messages[0].aikobots_message_uuid, messages[0].aikobots_message_uuid);
-        assert.equal(child.chat_metadata.STMemoryBooks.highestMemoryProcessed, 0);
+        assert.equal(child.chat_metadata.STMemoryBooks.highestMemoryProcessed, 1);
         assert.equal((await copy(options)).duplicate_operation, true);
         assert.equal(writes, 1);
         assert.deepEqual({ parent, books, messages }, original);
+        child = null; copies.clear();
+        options.request.body.selected_swipe_uuid = 'alternate-swipe';
+        options.request.body.operation_id = 'copy-2';
+        assert.equal((await copy(options)).ok, true);
+        assert.deepEqual(child.messages.map(message => message.is_system), [false, false]);
+        assert.deepEqual({ parent, books, messages }, original);
+        child = null; copies.clear();
+        options.request.body.operation_id = 'copy-3';
+        failNextWrite = true;
+        await assert.rejects(copy(options), /write failed/);
+        assert.equal(child, null);
+        assert.equal(copies.size, 0);
+        assert.equal((await copy(options)).ok, true);
+        assert.deepEqual(child.messages.map(message => message.is_system), [false, false]);
         child = null; copies.clear();
         delete books.get('Tracker').entries[1].STMB_startUuid;
         await assert.rejects(copy(options), { code: 'stmb_copy_rollback_unsafe' });
         assert.equal(child, null);
         assert.equal(copies.size, 0);
-        assert.equal(writes, 1);
+        assert.equal(writes, 4);
     }
 });

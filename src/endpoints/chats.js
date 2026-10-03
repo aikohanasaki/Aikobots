@@ -5767,6 +5767,7 @@ async function copyPrefixWithMemoryBooks({
             }
             regenerateChatIdentities(targetMessages, { generateUuid: uuidv4 });
             let highestCopiedMemory = -1;
+            const unhideRanges = [];
             if (rollbackCopy) {
                 const sourceSqlitePath = replaceChatStorageExtension(sourcePath, '.sqlite');
                 if (!fs.existsSync(sourceSqlitePath)) throw new StmbChatCopyError('stmb_copy_rollback_unsafe', 'Memory Book rollback requires verified message identities. Nothing was created.');
@@ -5781,14 +5782,19 @@ async function copyPrefixWithMemoryBooks({
                     for (const source of copiedSources) {
                         const planned = planStmbChatCopyBook(source.data, {
                             sourceChatId: String(isGroup ? request.body.source_id : request.body.source_file),
-                            targetChatId, boundary: rollbackBoundary, settings: policy, resolveMessage, uuidMap,
+                            targetChatId, boundary: rollbackBoundary, retainedEnd: prefixEndId,
+                            settings: policy, resolveMessage, uuidMap,
                         });
                         source.data = planned.data;
                         highestCopiedMemory = Math.max(highestCopiedMemory, planned.highest);
+                        unhideRanges.push(...planned.unhideRanges);
                     }
                 } catch {
                     throw new StmbChatCopyError('stmb_copy_rollback_unsafe', 'Memory Book rollback could not be verified. Nothing was created. Disable branch rollback or create a chat-only copy.');
                 } finally { db.close(); }
+            }
+            for (const { start, end } of unhideRanges) {
+                for (let index = start; index <= end; index++) targetMessages[index].is_system = false;
             }
             const hasDerivedEntries = copiedSources.some(source => source.hasDerivedEntries);
             const createdNames = [];

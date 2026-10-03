@@ -12,6 +12,8 @@ const stmbGenerationCooldowns = new Map();
 
 /** Localizes STMB save/history failures without exposing entry metadata in the UI. */
 export function localizeSidePromptHistoryError(error) {
+    if (error?.type === 'StmbConsolidationSourceChanged') error.message = translate('Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.');
+    if (error?.type === 'StmbSourceChanged') error.message = translate('Consolidation sources changed. Review the current lorebook before starting a new consolidation.');
     if (error?.type === 'StmbConsolidationCommitConflict') error.message = translate('Consolidation recovery requires review. Reload the lorebook and review saved summaries before starting again.');
     if (error?.type === 'StmbConsolidationCommitFailed') error.message = translate('Consolidation could not be saved.');
     if (error?.type === 'StmbSidePromptHistoryConflict') error.message = translate('Side-prompt history is ambiguous. No changes were saved.');
@@ -23,8 +25,8 @@ export function localizeSidePromptHistoryError(error) {
 export function getStmbOperations(chatRef) { return postStmb('operations', { chatRef }); }
 
 /** Lists or resolves an accepted ordinary-book consolidation without generating it again. */
-export function resolveStmbConsolidationRecovery(action = 'list', id = null) {
-    return postStmb('consolidation-recovery', { action, ...(id ? { id } : {}) });
+export function resolveStmbConsolidationRecovery(action = 'list', id = null, reviewToken = null) {
+    return postStmb('consolidation-recovery', { action, ...(id ? { id } : {}), ...(reviewToken ? { reviewToken } : {}) });
 }
 
 /** Captures the source and marker before generation begins. */
