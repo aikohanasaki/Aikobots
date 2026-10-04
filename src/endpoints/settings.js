@@ -29,6 +29,7 @@ import { getFileNameValidationFunction } from '../middleware/validateFileName.js
 import { listLorebooksForManagement } from '../lorebook-repository.js';
 import { preserveCharacterRepushBlacklistSettings } from '../character-repush-blacklist-settings.js';
 import { withSettingsPersonasLock } from '../settings-lock.js';
+import { getPendingPresetUpdate } from '../admin-preset-updates.js';
 import { isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
 
 const ENABLE_EXTENSIONS = !!getConfigValue('extensions.enabled', true, 'boolean');
@@ -428,12 +429,14 @@ router.post('/save', async function (request, response) {
 // Wintermute's code
 router.post('/get', async (request, response) => {
     let settingsString;
+    let adminPresetUpdate;
     try {
         settingsString = await withSettingsPersonasLock(request.user.directories, () => {
             const pathToSettings = getSettingsPath(request.user.directories);
             const settings = JSON.parse(fs.readFileSync(pathToSettings, 'utf8'));
             const personasDocument = readOrMigratePersonasDocument(request.user.directories, settings);
             const customsDocument = readCustomsDocument(request.user.directories);
+            adminPresetUpdate = safeRead(() => getPendingPresetUpdate(request.user.directories), null, 'admin preset update');
             return buildMergedSettingsString(settings, personasDocument, customsDocument);
         });
     } catch (error) {
@@ -464,6 +467,7 @@ router.post('/get', async (request, response) => {
 
     response.send({
         settings: settingsString,
+        adminPresetUpdate,
         world_names,
         world_info_items: worldInfoItems,
         openai_settings,

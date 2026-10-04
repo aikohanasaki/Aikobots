@@ -1,4 +1,12 @@
 {
+    "Compaction failed.": "Не удалось выполнить сжатие.",
+    "Save your Aikobots preset before pushing its update.": "Сохраните пресет Aikobots перед рассылкой обновления.",
+    "Aikobots preset update": "Обновление пресета Aikobots",
+    "Update the Aikobots sampler and prompt settings? If you do not have this preset, it will be created and selected. Connection settings will stay unchanged.": "Обновить настройки сэмплеров и промптов Aikobots? Если у вас нет этого пресета, он будет создан и выбран. Настройки подключения останутся без изменений.",
+    "The preset update could not be completed. Please reload to try again.": "Не удалось завершить обновление пресета. Перезагрузите страницу, чтобы повторить попытку.",
+    "Push Aikobots preset update": "Разослать обновление пресета Aikobots",
+    "Publish your saved Aikobots preset to all users? Save any preset edits before pushing. Connection settings and credentials are excluded.": "Опубликовать сохранённый пресет Aikobots для всех пользователей? Сохраните изменения пресета перед рассылкой. Настройки подключения и учётные данные не включаются.",
+    "Aikobots preset update published.": "Обновление пресета Aikobots опубликовано.",
     "Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.": "Источники консолидации изменились. Откройте «Ожидающие действия» в Memory Books, чтобы проверить и сохранить созданные сводки.",
     "Consolidation sources changed. Review the current lorebook before starting a new consolidation.": "Источники консолидации изменились. Проверьте текущий лорбук перед началом новой консолидации.",
     "Review and save": "Проверить и сохранить",

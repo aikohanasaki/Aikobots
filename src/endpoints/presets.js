@@ -6,6 +6,10 @@ import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { getDefaultPresetFile, getDefaultPresets } from './content-manager.js';
+import { requireAdminMiddleware } from '../users.js';
+import { processPresetUpdate } from '../admin-preset-updates.js';
+import { withSettingsPersonasLock } from '../settings-lock.js';
+import { isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
 
 /**
  * Gets the folder and extension for the preset settings based on the API source ID.
@@ -26,7 +30,29 @@ function getPresetSettingsByAPI(apiId, directories) {
 
 export const router = express.Router();
 
-router.post('/save', function (request, response) {
+/** Keep mutation failures generic: preset content must never enter error responses or logs. */
+function presetMutation(handler) {
+    return async (request, response) => {
+        try {
+            return await handler(request, response);
+        } catch (error) {
+            if (isActiveSessionError(error)) return sendActiveSessionRequired(response);
+            return response.sendStatus(error.status || 500);
+        }
+    };
+}
+
+for (const action of ['publish', 'accept', 'skip']) {
+    const middleware = action === 'publish' ? [requireAdminMiddleware] : [];
+    router.post(`/admin-update/${action}`, ...middleware, presetMutation(async (request, response) => {
+        const result = await processPresetUpdate(action, request.user.directories, request.body, {
+            assertAllowed: () => request.activeSessionOperation?.assertAllowed(),
+        });
+        return response.json(result);
+    }));
+}
+
+router.post('/save', presetMutation(async function (request, response) {
     const name = sanitize(request.body.name);
     if (!request.body.preset || !name) {
         return response.sendStatus(400);
@@ -40,11 +66,14 @@ router.post('/save', function (request, response) {
     }
 
     const fullpath = path.join(settings.folder, filename);
-    writeFileAtomicSync(fullpath, JSON.stringify(request.body.preset, null, 4), 'utf-8');
+    await withSettingsPersonasLock(request.user.directories, async lock => {
+        await request.activeSessionOperation?.assertAllowed();
+        await lock.run(() => writeFileAtomicSync(fullpath, JSON.stringify(request.body.preset, null, 4), 'utf-8'));
+    });
     return response.send({ name });
-});
+}));
 
-router.post('/delete', function (request, response) {
+router.post('/delete', presetMutation(async function (request, response) {
     const name = sanitize(request.body.name);
     if (!name) {
         return response.sendStatus(400);
@@ -59,13 +88,13 @@ router.post('/delete', function (request, response) {
 
     const fullpath = path.join(settings.folder, filename);
 
-    if (fs.existsSync(fullpath)) {
-        fs.unlinkSync(fullpath);
+    return withSettingsPersonasLock(request.user.directories, async lock => {
+        await request.activeSessionOperation?.assertAllowed();
+        if (!fs.existsSync(fullpath)) return response.sendStatus(404);
+        await lock.run(() => fs.unlinkSync(fullpath));
         return response.sendStatus(200);
-    } else {
-        return response.sendStatus(404);
-    }
-});
+    });
+}));
 
 router.post('/restore', function (request, response) {
     try {

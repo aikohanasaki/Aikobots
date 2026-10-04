@@ -1,4 +1,12 @@
 {
+    "Compaction failed.": "Échec de la compaction.",
+    "Save your Aikobots preset before pushing its update.": "Enregistrez votre préréglage Aikobots avant de diffuser sa mise à jour.",
+    "Aikobots preset update": "Mise à jour du préréglage Aikobots",
+    "Update the Aikobots sampler and prompt settings? If you do not have this preset, it will be created and selected. Connection settings will stay unchanged.": "Mettre à jour les paramètres d’échantillonnage et les prompts d’Aikobots ? Si vous ne disposez pas de ce préréglage, il sera créé et sélectionné. Les paramètres de connexion resteront inchangés.",
+    "The preset update could not be completed. Please reload to try again.": "La mise à jour du préréglage n’a pas pu être terminée. Rechargez la page pour réessayer.",
+    "Push Aikobots preset update": "Diffuser la mise à jour du préréglage Aikobots",
+    "Publish your saved Aikobots preset to all users? Save any preset edits before pushing. Connection settings and credentials are excluded.": "Publier votre préréglage Aikobots enregistré pour tous les utilisateurs ? Enregistrez vos modifications avant de le diffuser. Les paramètres de connexion et les identifiants sont exclus.",
+    "Aikobots preset update published.": "Mise à jour du préréglage Aikobots publiée.",
     "Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.": "Les sources de la consolidation ont changé. Ouvrez « Actions en attente » dans Memory Books pour vérifier et enregistrer les résumés générés.",
     "Consolidation sources changed. Review the current lorebook before starting a new consolidation.": "Les sources de la consolidation ont changé. Vérifiez le lorebook actuel avant de lancer une nouvelle consolidation.",
     "Review and save": "Vérifier et enregistrer",

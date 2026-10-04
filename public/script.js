@@ -172,6 +172,7 @@ import {
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
 import { ACTIVE_SESSION_STATUS_ACTION, getActiveSessionStatusAction } from './scripts/active-session-status.js';
+import { queueAdminPresetUpdate } from './scripts/admin-preset-updates.js';
 import { beginMobileBackgroundAudioGeneration } from './scripts/mobile-background-audio.js';
 import {
     AIKOBOTS_MESSAGE_UUID_KEY,
@@ -15063,9 +15064,11 @@ export async function getSettings() {
     }
     settingsReady = true;
     await eventSource.emit(event_types.SETTINGS_LOADED);
+    queueAdminPresetUpdate(data.adminPresetUpdate);
 }
 
 //MARK: saveSettings()
+/** Return true after persistence, false on failure, or undefined when saving is deferred. */
 export async function saveSettings(loopCounter = 0) {
     if (!settingsReady) {
         console.warn('Settings not ready, scheduling another save');
@@ -15125,9 +15128,11 @@ export async function saveSettings(loopCounter = 0) {
 
         settings = payload;
         await eventSource.emit(event_types.SETTINGS_UPDATED);
+        return true;
     } catch (error) {
         console.error('Error saving settings:', error);
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Settings could not be saved`);
+        return false;
     }
 }
 

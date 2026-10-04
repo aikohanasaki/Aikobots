@@ -4,6 +4,16 @@ This document records Aikobots’ native SQLite storage decisions, the current t
 
 `AGENTS.md` is the governing project directive. This file must not be treated as proof that every current mutation path already satisfies the target architecture. Claims in this document must remain consistent with verified code and tests.
 
+## Admin Aikobots preset releases
+
+Admin preset publication is opt-in and does not mutate chat storage. The admin-only preset push publishes the saved `OpenAI Settings/Aikobots.json`, filtered to supported generation and prompt fields. Credentials, connection configuration, extension payloads, unknown nested metadata, and character-specific prompt orders are excluded. Macros and lorebook references are never resolved during publication.
+
+`DATA_ROOT/admin-aikobots-preset.json` holds the latest immutable snapshot and UUID release ID. Publishing a newer snapshot supersedes the previous offer. `/api/settings/get` returns only pending-release metadata alongside ordinary settings; reads never apply a release. No migration or background polling is required.
+
+Each user's `admin-preset-update-state.json` is server-owned, separate from `settings.json` and settings snapshots. It records the handled release ID, an unfinished acceptance ID, and `pendingCreated` (whether that acceptance creates a missing preset), so ordinary settings saves and restores cannot erase decisions. No skips only the offered release. Acceptance first records intent, then atomically replaces the saved preset; the acceptance response includes `created`, and the browser selects and applies newly created presets through the existing preset events, just like an import. Existing presets are applied only if Aikobots is already selected. The creation decision is made under the locks and retained across retries, including browser reloads. Older pending records without this flag use current file existence. Connection settings remain unchanged. Completion is acknowledged after any required settings save succeeds. Interrupted acceptance remains offered for retry; dismissing the popup leaves the offer pending.
+
+Publication and decisions acquire a shared filesystem release lock before the existing per-user settings/personas lock. Preset save/delete use that same per-user lock. Atomic file replacement and filesystem locks coordinate all PM2 workers; no process-local cache controls persistent decisions. Superseded IDs receive HTTP 409 and are re-offered from the latest settings read. Publish requires admin authorization; all mutations retain active-session enforcement. Files are individually atomic, not a multi-file transaction: a failed acceptance may leave intent or an installed preset, but never marks the release handled before completion.
+
 ## Architectural Status
 
 Aikobots has completed the storage-engine transition from `sql.js` whole-file persistence to native SQLite through `better-sqlite3`.

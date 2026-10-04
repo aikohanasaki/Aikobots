@@ -1,4 +1,11 @@
 {
+    "Save your Aikobots preset before pushing its update.": "Guarde a sua predefinição Aikobots antes de distribuir a atualização.",
+    "Aikobots preset update": "Atualização da predefinição Aikobots",
+    "Update the Aikobots sampler and prompt settings? If you do not have this preset, it will be created and selected. Connection settings will stay unchanged.": "Atualizar as definições de amostragem e os prompts do Aikobots? Se não tiver esta predefinição, será criada e selecionada. As definições de ligação permanecerão inalteradas.",
+    "The preset update could not be completed. Please reload to try again.": "Não foi possível concluir a atualização da predefinição. Recarregue a página para tentar novamente.",
+    "Push Aikobots preset update": "Distribuir atualização da predefinição Aikobots",
+    "Publish your saved Aikobots preset to all users? Save any preset edits before pushing. Connection settings and credentials are excluded.": "Publicar a sua predefinição Aikobots guardada para todos os utilizadores? Guarde as alterações antes de distribuir. As definições de ligação e as credenciais são excluídas.",
+    "Aikobots preset update published.": "Atualização da predefinição Aikobots publicada.",
     "Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.": "As fontes da consolidação foram alteradas. Abra «Ações pendentes» em Memory Books para rever e guardar os resumos gerados.",
     "Consolidation sources changed. Review the current lorebook before starting a new consolidation.": "As fontes da consolidação foram alteradas. Reveja o lorebook atual antes de iniciar uma nova consolidação.",
     "Review and save": "Rever e guardar",

@@ -1,4 +1,12 @@
 {
+    "Compaction failed.": "圧縮に失敗しました。",
+    "Save your Aikobots preset before pushing its update.": "更新を配信する前にAikobotsプリセットを保存してください。",
+    "Aikobots preset update": "Aikobotsプリセットの更新",
+    "Update the Aikobots sampler and prompt settings? If you do not have this preset, it will be created and selected. Connection settings will stay unchanged.": "Aikobotsのサンプラーとプロンプト設定を更新しますか？このプリセットがない場合は、作成して選択します。接続設定は変更されません。",
+    "The preset update could not be completed. Please reload to try again.": "プリセットの更新を完了できませんでした。ページを再読み込みして、もう一度お試しください。",
+    "Push Aikobots preset update": "Aikobotsプリセットの更新を配信",
+    "Publish your saved Aikobots preset to all users? Save any preset edits before pushing. Connection settings and credentials are excluded.": "保存済みのAikobotsプリセットをすべてのユーザーに公開しますか？配信する前にプリセットの変更を保存してください。接続設定と認証情報は含まれません。",
+    "Aikobots preset update published.": "Aikobotsプリセットの更新を公開しました。",
     "Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.": "統合元のエントリーが変更されました。Memory Books の「保留中の操作」を開き、生成された要約を確認して保存してください。",
     "Consolidation sources changed. Review the current lorebook before starting a new consolidation.": "統合元のエントリーが変更されました。新しい統合を開始する前に、現在のロアブックを確認してください。",
     "Review and save": "確認して保存",

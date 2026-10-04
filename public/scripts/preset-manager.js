@@ -13,6 +13,7 @@ import {
     this_chid,
 } from '../script.js';
 import { groups, selected_group } from './group-chats.js';
+import { initAdminPresetUpdates } from './admin-preset-updates.js';
 import { t } from './i18n.js';
 import { oai_settings, openai_setting_names, openai_settings } from './openai.js';
 import { Popup } from './popup.js';
@@ -298,10 +299,24 @@ class PresetManager {
      * Updates the preset list with a new or existing preset.
      * @param {string} name Name of the preset
      * @param {object} preset Preset object
+     * @param {{select?: boolean}} [options] Whether to select and apply the updated preset
      */
-    updateList(name, preset) {
+    updateList(name, preset, { select = true } = {}) {
         const { presets, preset_names } = this.getPresetList();
         const presetExists = this.isKeyedApi() ? preset_names.includes(name) : Object.keys(preset_names).includes(name);
+
+        if (!select) {
+            const value = this.isKeyedApi() ? name : (presetExists ? preset_names[name] : presets.length);
+            if (presetExists) {
+                presets[this.isKeyedApi() ? preset_names.indexOf(name) : value] = preset;
+            } else {
+                presets.push(preset);
+                if (this.isKeyedApi()) preset_names.push(name);
+                else preset_names[name] = value;
+                $(this.select).append($('<option></option>', { value, text: name }));
+            }
+            return;
+        }
 
         if (presetExists) {
             if (this.isKeyedApi()) {
@@ -655,6 +670,7 @@ async function waitForConnection() {
 }
 
 export async function initPresetManager() {
+    initAdminPresetUpdates();
     eventSource.on(event_types.CHAT_CHANGED, autoSelectPreset);
     registerPresetManagers();
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
