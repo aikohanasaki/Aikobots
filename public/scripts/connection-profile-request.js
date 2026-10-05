@@ -3,6 +3,7 @@ import { extension_settings } from './extensions.js';
 import { ChatCompletionService } from './custom-request.js';
 import { t, translate } from './i18n.js';
 import { proxies } from './openai.js';
+import { getAdditionalParameters } from './chat-completion-parameters.js';
 import { getPresetManager } from './preset-manager.js';
 import {
     mergeConnectionProfilePayloadOverrides,
@@ -11,6 +12,7 @@ import {
 } from './connection-profile-request-policy.js';
 
 const REQUEST_OVERRIDE_KEYS = Object.freeze([
+    'additional_parameters',
     'azure_base_url',
     'azure_deployment_name',
     'azure_api_version',
@@ -62,14 +64,16 @@ function getPresetTemperature(presetName) {
     return Number.isFinite(temperature) && temperature >= 0 ? temperature : undefined;
 }
 
-function copyRequestOverrides(profile) {
+function copyRequestOverrides(profile, provider) {
     const source = profile?.['request-overrides'];
     if (!source || typeof source !== 'object' || Array.isArray(source)) {
-        return {};
+        return getAdditionalParameters({}, provider);
     }
-    return Object.fromEntries(REQUEST_OVERRIDE_KEYS
+    const overrides = Object.fromEntries(REQUEST_OVERRIDE_KEYS
+        .filter(key => key !== 'additional_parameters')
         .filter(key => source[key] !== undefined)
         .map(key => [key, structuredClone(source[key])]));
+    return { ...overrides, ...getAdditionalParameters(source, provider) };
 }
 
 /**
@@ -95,7 +99,7 @@ export function createConnectionProfileRequestSnapshot(profileId, overrides = {}
         proxyName: String(profile.proxy || ''),
         proxyUrl: String(proxy?.url || ''),
         promptPostProcessing: String(profile['prompt-post-processing'] || ''),
-        requestOverrides: Object.freeze(copyRequestOverrides(profile)),
+        requestOverrides: Object.freeze(copyRequestOverrides(profile, apiMap.source)),
     });
 }
 

@@ -36,6 +36,7 @@ test('publication allowlists nested prompt data and excludes connection/extensio
     const source = preset();
     source.proxy_password = 'sample-credential';
     source.custom_include_headers = 'sample-header';
+    source.additional_parameters = { openai: { custom_include_headers: 'sample-header' } };
     source.openai_model = 'sample-model';
     source.chat_completion_source = 'custom';
     source.custom_url = 'https://example.invalid';

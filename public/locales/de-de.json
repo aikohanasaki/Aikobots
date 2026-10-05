@@ -1,4 +1,5 @@
 {
+    "additional_parameters_notice": "Für fortgeschrittene Benutzer. Prüfen Sie vor der Verwendung zusätzlicher Parameter die Dokumentation Ihres Anbieters auf unterstützte Parameter und Header.",
     "Compaction failed.": "Kompaktierung fehlgeschlagen.",
     "Save your Aikobots preset before pushing its update.": "Speichere deine Aikobots-Voreinstellung, bevor du die Aktualisierung verteilst.",
     "Aikobots preset update": "Aikobots-Voreinstellung aktualisieren",

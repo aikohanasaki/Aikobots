@@ -1,4 +1,5 @@
 {
+    "additional_parameters_notice": "Pour les utilisateurs avancés. Avant d’utiliser des paramètres supplémentaires, consultez la documentation de votre fournisseur pour connaître les paramètres et les en-têtes pris en charge.",
     "Compaction failed.": "Échec de la compaction.",
     "Save your Aikobots preset before pushing its update.": "Enregistrez votre préréglage Aikobots avant de diffuser sa mise à jour.",
     "Aikobots preset update": "Mise à jour du préréglage Aikobots",

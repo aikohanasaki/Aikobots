@@ -6,6 +6,8 @@ This document records Aikobots’ native SQLite storage decisions, the current t
 
 ## Admin Aikobots preset releases
 
+Chat-completion settings and saved completion presets also support an `additional_parameters` map keyed by provider source. Each entry holds the three existing YAML strings (`custom_include_body`, `custom_exclude_body`, `custom_include_headers`); custom connections continue using the legacy top-level fields. Connection profiles store only their provider's entry in `request-overrides` (legacy custom profiles retain top-level fields). Missing provider entries resolve to empty strings, and legacy custom fields are ignored for other providers. Presets containing the map restore it; older presets and admin releases without it preserve current connection settings. These additions use existing settings/preset persistence and locks, require no chat migration, and are excluded from admin preset publication.
+
 Admin preset publication is opt-in and does not mutate chat storage. The admin-only preset push publishes the saved `OpenAI Settings/Aikobots.json`, filtered to supported generation and prompt fields. Credentials, connection configuration, extension payloads, unknown nested metadata, and character-specific prompt orders are excluded. Macros and lorebook references are never resolved during publication.
 
 `DATA_ROOT/admin-aikobots-preset.json` holds the latest immutable snapshot and UUID release ID. Publishing a newer snapshot supersedes the previous offer. `/api/settings/get` returns only pending-release metadata alongside ordinary settings; reads never apply a release. No migration or background polling is required.
