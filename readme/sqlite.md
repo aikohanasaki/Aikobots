@@ -4,6 +4,12 @@ This document records Aikobots’ native SQLite storage decisions, the current t
 
 `AGENTS.md` is the governing project directive. This file must not be treated as proof that every current mutation path already satisfies the target architecture. Claims in this document must remain consistent with verified code and tests.
 
+## Additional connection parameters
+
+Chat-completion settings and saved completion presets also support an `additional_parameters` map keyed by provider source. Each entry holds the three existing YAML strings (`custom_include_body`, `custom_exclude_body`, `custom_include_headers`); custom connections continue using the legacy top-level fields. Connection profiles store only their provider's entry in `request-overrides` (legacy custom profiles retain top-level fields). Missing provider entries resolve to empty strings, and legacy custom fields are ignored for other providers. Presets containing the map restore it; older presets without it preserve current connection settings. These additions use existing settings/preset persistence and locks, require no chat migration.
+
+Applying a connection profile without stored parameters for its provider preserves the current values; explicitly saved empty values clear them.
+
 ## Architectural Status
 
 Aikobots has completed the storage-engine transition from `sql.js` whole-file persistence to native SQLite through `better-sqlite3`.

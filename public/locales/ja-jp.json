@@ -1,4 +1,5 @@
 {
+    "additional_parameters_notice": "上級ユーザー向けです。追加パラメータを使用する前に、プロバイダーのドキュメントで対応しているパラメータとヘッダーを確認してください。",
     "Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.": "統合元のエントリーが変更されました。Memory Books の「保留中の操作」を開き、生成された要約を確認して保存してください。",
     "Consolidation sources changed. Review the current lorebook before starting a new consolidation.": "統合元のエントリーが変更されました。新しい統合を開始する前に、現在のロアブックを確認してください。",
     "Review and save": "確認して保存",

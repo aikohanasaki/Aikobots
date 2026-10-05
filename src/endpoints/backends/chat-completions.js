@@ -7,6 +7,7 @@ import express from 'express';
 import fetch from 'node-fetch';
 import urlJoin from 'url-join';
 import writeFileAtomic from 'write-file-atomic';
+import { applyAdditionalParameters } from './chat-completion-parameters.js';
 
 import {
     AIMLAPI_HEADERS,
@@ -27,7 +28,6 @@ import {
     tryParse,
     uuidv4,
     mergeObjectWithYaml,
-    excludeKeysByYaml,
     color,
     trimTrailingSlash,
     flattenSchema,
@@ -1231,16 +1231,16 @@ async function sendClaudeRequest(request) {
 
         console.debug('Claude request:', getSafeProviderRequestLog(requestBody));
 
-        const generateResponse = await fetch(`${apiUrl}/messages`, {
+        const generateResponse = await fetch(`${apiUrl}/messages`, applyAdditionalParameters(request.body, {
             method: 'POST',
             signal: controller.signal,
-            body: JSON.stringify(requestBody),
+            body: requestBody,
             headers: {
                 'Content-Type': 'application/json',
                 'anthropic-version': CLAUDE_API_VERSION,
                 ...(apiKey ? { 'x-api-key': apiKey } : {}),
             },
-        });
+        }));
 
         if (request.body.stream) {
             return createProviderStreamResult(generateResponse);
@@ -1481,12 +1481,12 @@ async function sendMakerSuiteRequest(request) {
             url = `${apiUrl.toString().replace(/\/$/, '')}/${apiVersion}/models/${model}:${responseType}?key=${apiKey}${stream ? '&alt=sse' : ''}`;
         }
 
-        const generateResponse = await fetch(url, {
-            body: JSON.stringify(body),
+        const generateResponse = await fetch(url, applyAdditionalParameters(request.body, {
+            body: body,
             method: 'POST',
             headers: headers,
             signal: controller.signal,
-        });
+        }));
 
         if (stream) {
             return createProviderStreamResult(generateResponse);
@@ -1569,16 +1569,16 @@ async function sendAI21Request(request) {
         tools: request.body.tools,
         ...bodyParams,
     };
-    const options = {
+    const options = applyAdditionalParameters(request.body, {
         method: 'POST',
         headers: {
             accept: 'application/json',
             'content-type': 'application/json',
             Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify(body),
+        body: body,
         signal: controller.signal,
-    };
+    });
 
     console.debug('AI21 request:', getSafeProviderRequestLog(body));
 
@@ -1649,16 +1649,16 @@ async function sendMistralAIRequest(request) {
             };
         }
 
-        const config = {
+        const config = applyAdditionalParameters(request.body, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer ' + apiKey,
             },
-            body: JSON.stringify(requestBody),
+            body: requestBody,
             signal: controller.signal,
             timeout: 0,
-        };
+        });
 
         console.debug('MisralAI request:', getSafeProviderRequestLog(requestBody));
 
@@ -1737,16 +1737,16 @@ async function sendCohereRequest(request) {
 
         console.debug('Cohere request:', getSafeProviderRequestLog(requestBody));
 
-        const config = {
+        const config = applyAdditionalParameters(request.body, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer ' + apiKey,
             },
-            body: JSON.stringify(requestBody),
+            body: requestBody,
             signal: controller.signal,
             timeout: 0,
-        };
+        });
 
         const apiUrl = API_COHERE_V2 + '/chat';
 
@@ -1833,15 +1833,15 @@ async function sendDeepSeekRequest(request) {
             ...bodyParams,
         };
 
-        const config = {
+        const config = applyAdditionalParameters(request.body, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer ' + apiKey,
             },
-            body: JSON.stringify(requestBody),
+            body: requestBody,
             signal: controller.signal,
-        };
+        });
 
         console.debug('DeepSeek request:', getSafeProviderRequestLog(requestBody));
 
@@ -1939,15 +1939,15 @@ async function sendXaiRequest(request) {
             ...bodyParams,
         };
 
-        const config = {
+        const config = applyAdditionalParameters(request.body, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer ' + apiKey,
             },
-            body: JSON.stringify(requestBody),
+            body: requestBody,
             signal: controller.signal,
-        };
+        });
 
         console.debug('xAI request:', getSafeProviderRequestLog(requestBody));
 
@@ -2032,16 +2032,16 @@ async function sendAimlapiRequest(request) {
             ...bodyParams,
         };
 
-        const config = {
+        const config = applyAdditionalParameters(request.body, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer ' + apiKey,
                 ...AIMLAPI_HEADERS,
             },
-            body: JSON.stringify(requestBody),
+            body: requestBody,
             signal: controller.signal,
-        };
+        });
 
         console.debug('AI/ML API request:', getSafeProviderRequestLog(requestBody));
 
@@ -2123,15 +2123,15 @@ async function sendElectronHubRequest(request) {
             ...bodyParams,
         };
 
-        const config = {
+        const config = applyAdditionalParameters(request.body, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer ' + apiKey,
             },
-            body: JSON.stringify(requestBody),
+            body: requestBody,
             signal: controller.signal,
-        };
+        });
 
         console.debug('Electron Hub request:', getSafeProviderRequestLog(requestBody));
 
@@ -2211,15 +2211,15 @@ async function sendAzureOpenAIRequest(request) {
     const controller = new AbortController();
     bindAbortControllerToRequestSocket(request, controller);
 
-    const config = {
+    const config = applyAdditionalParameters(request.body, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'api-key': apiKey,
         },
-        body: JSON.stringify(apiRequestBody),
+        body: apiRequestBody,
         signal: controller.signal,
-    };
+    });
 
     console.info(`Sending request to Azure OpenAI: ${endpointUrl}`);
     console.debug('Azure OpenAI request:', getSafeProviderRequestLog(apiRequestBody));
@@ -4138,9 +4138,6 @@ export async function handleChatCompletionsGenerate(request, response) {
                 bodyParams.top_logprobs = bodyParams.logprobs;
                 bodyParams.logprobs = true;
             }
-
-            mergeObjectWithYaml(bodyParams, request.body.custom_include_body);
-            mergeObjectWithYaml(headers, request.body.custom_include_headers);
         } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.PERPLEXITY) {
             apiUrl = API_PERPLEXITY;
             apiKey = readRequestSecret(request, SECRET_KEYS.PERPLEXITY);
@@ -4264,9 +4261,6 @@ export async function handleChatCompletionsGenerate(request, response) {
                 bodyParams.top_logprobs = bodyParams.logprobs;
                 bodyParams.logprobs = true;
             }
-
-            mergeObjectWithYaml(bodyParams, request.body.custom_include_body);
-            mergeObjectWithYaml(headers, request.body.custom_include_headers);
         } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZAI) {
             apiUrl = request.body.zai_endpoint === ZAI_ENDPOINT.CODING ? API_ZAI_CODING : API_ZAI_COMMON;
             apiKey = readRequestSecret(request, SECRET_KEYS.ZAI);
@@ -4381,21 +4375,17 @@ export async function handleChatCompletionsGenerate(request, response) {
             requestBody.stream_options = { include_usage: true };
         }
 
-        if ([CHAT_COMPLETION_SOURCES.CUSTOM, CHAT_COMPLETION_SOURCES.ZANITY].includes(request.body.chat_completion_source)) {
-            excludeKeysByYaml(requestBody, request.body.custom_exclude_body);
-        }
-
         /** @type {import('node-fetch').RequestInit} */
-        const config = {
+        const config = applyAdditionalParameters(request.body, {
             method: 'post',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer ' + apiKey,
                 ...headers,
             },
-            body: JSON.stringify(requestBody),
+            body: requestBody,
             signal: controller.signal,
-        };
+        });
 
         await assertActiveSessionOperation(request);
         providerResult = await makeRequest(config, request);

@@ -26,6 +26,41 @@ if (!browserType) {
 }
 const browserPath = browserName === 'chromium' ? resolveSystemChromiumPath() : '';
 
+/** Exercises the shared parameters dialog and provider isolation using the production bundle. */
+async function testAdditionalParameters(page) {
+    const originalSource = await page.locator('#chat_completion_source').inputValue();
+    const sources = await page.locator('#chat_completion_source option').evaluateAll(options => options.map(option => option.value));
+    for (const source of sources) {
+        await page.locator('#chat_completion_source').evaluate((select, value) => {
+            globalThis.jQuery(select).val(value).trigger('change');
+        }, source);
+        assert.notEqual(await page.locator('#customize_additional_parameters').evaluate(button => getComputedStyle(button).display), 'none');
+        await page.locator('#customize_additional_parameters').evaluate(button => button.click());
+        const popup = page.locator('dialog.popup').filter({ has: page.locator('#custom_include_body') });
+        await popup.waitFor({ state: 'visible' });
+        assert.match(await popup.locator('[data-i18n="additional_parameters_notice"]').textContent(), /For advanced users/);
+        assert.equal(await popup.locator('#custom_include_body').inputValue(), '');
+        await popup.locator('#custom_include_body').fill(`example_provider: ${source}`);
+        await popup.locator('.popup-button-ok').click();
+        await popup.waitFor({ state: 'detached' });
+    }
+    for (const source of sources) {
+        await page.locator('#chat_completion_source').evaluate((select, value) => {
+            globalThis.jQuery(select).val(value).trigger('change');
+        }, source);
+        await page.locator('#customize_additional_parameters').evaluate(button => button.click());
+        const popup = page.locator('dialog.popup').filter({ has: page.locator('#custom_include_body') });
+        await popup.waitFor({ state: 'visible' });
+        assert.equal(await popup.locator('#custom_include_body').inputValue(), `example_provider: ${source}`);
+        await popup.locator('#custom_include_body').fill('');
+        await popup.locator('.popup-button-ok').click();
+        await popup.waitFor({ state: 'detached' });
+    }
+    await page.locator('#chat_completion_source').evaluate((select, value) => {
+        globalThis.jQuery(select).val(value).trigger('change');
+    }, originalSource);
+}
+
 /** Exercises the actual STMB change listener, keyboard toggles, and saved settings payload. */
 async function testStmbSettingsControls(page) {
     await page.locator('#stmb-menu-item').evaluate(element => element.click());
@@ -797,6 +832,7 @@ try {
         assert.equal(await page.locator('#stmb-menu-item').count(), 1, 'STMB menu was not initialized.');
         assert.equal(await page.locator('#stmb-jobs-topbar-button[aria-controls="top_chat_stmb_jobs"]').count(), 1, 'STMB jobs UI was not initialized.');
         assert.equal(await page.locator('#aiko-layout-css[href="css/layouts/classic.css"]').count(), 1, 'Selected runtime layout link was not retained.');
+        await testAdditionalParameters(page);
         await testDataMaidMultiSelect(page, fatalBrowserDiagnostics);
         await testStmbSettingsControls(page);
         assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected Data Maid browser diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);

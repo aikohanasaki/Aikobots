@@ -1,4 +1,12 @@
 {
+    "Additional Parameters": "Parâmetros adicionais",
+    "Include Body Parameters": "Incluir parâmetros no corpo",
+    "Exclude Body Parameters": "Excluir parâmetros do corpo",
+    "Include Request Headers": "Incluir cabeçalhos do pedido",
+    "custom_include_body_desc": "Parâmetros a incluir no corpo do pedido de conclusão de chat (objeto YAML)\n\nExemplo:\ntop_k: 20\nrepetition_penalty: 1.1",
+    "custom_exclude_body_desc": "Parâmetros a excluir do corpo do pedido de conclusão de chat (lista YAML)\n\nExemplo:\n- frequency_penalty\n- presence_penalty",
+    "custom_include_headers_desc": "Cabeçalhos adicionais para pedidos de conclusão de chat (objeto YAML)\n\nExemplo:\nCustomHeader: custom-value\nAnotherHeader: custom-value",
+    "additional_parameters_notice": "Para utilizadores avançados. Antes de utilizar parâmetros adicionais, consulte a documentação do seu fornecedor para saber quais os parâmetros e cabeçalhos suportados.",
     "Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.": "As fontes da consolidação foram alteradas. Abra «Ações pendentes» em Memory Books para rever e guardar os resumos gerados.",
     "Consolidation sources changed. Review the current lorebook before starting a new consolidation.": "As fontes da consolidação foram alteradas. Reveja o lorebook atual antes de iniciar uma nova consolidação.",
     "Review and save": "Rever e guardar",

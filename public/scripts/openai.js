@@ -4,6 +4,7 @@
 * https://github.com/CncAnon1/TavernAITurbo
 */
 import { Fuse, DOMPurify } from '../lib.js';
+import { ADDITIONAL_PARAMETER_KEYS, getAdditionalParameters, setAdditionalParameters } from './chat-completion-parameters.js';
 
 import {
     abortStatusCheck,
@@ -587,6 +588,7 @@ const sensitiveFields = [
     'reverse_proxy',
     'proxy_password',
     'custom_url',
+    'additional_parameters',
     'custom_include_body',
     'custom_exclude_body',
     'custom_include_headers',
@@ -642,6 +644,7 @@ export const settingsToUpdate = {
     zanity_endpoint: ['#zanity_endpoint', 'zanity_endpoint', false, true],
     custom_model: ['#custom_model_id', 'custom_model', false, true],
     custom_url: ['#custom_api_url_text', 'custom_url', false, true],
+    additional_parameters: ['', 'additional_parameters', false, true],
     custom_include_body: ['#custom_include_body', 'custom_include_body', false, true],
     custom_exclude_body: ['#custom_exclude_body', 'custom_exclude_body', false, true],
     custom_include_headers: ['#custom_include_headers', 'custom_include_headers', false, true],
@@ -764,6 +767,7 @@ const default_settings = {
     azure_openai_model: '',
     custom_model: '',
     custom_url: '',
+    additional_parameters: {},
     custom_include_body: '',
     custom_exclude_body: '',
     custom_include_headers: '',
@@ -2840,12 +2844,11 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
         generate_data['stop'] = getCustomStoppingStrings(); // Mistral shouldn't have limits on stop strings.
     }
 
+    Object.assign(generate_data, getAdditionalParameters(oai_settings));
+
     if (isCustom) {
         delete generate_data.verbosity;
         generate_data['custom_url'] = oai_settings.custom_url;
-        generate_data['custom_include_body'] = oai_settings.custom_include_body;
-        generate_data['custom_exclude_body'] = oai_settings.custom_exclude_body;
-        generate_data['custom_include_headers'] = oai_settings.custom_include_headers;
     }
 
     if (isCohere) {
@@ -2917,9 +2920,6 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
 
     if (isZanity) {
         generate_data['custom_url'] = getZanityApiUrl();
-        generate_data['custom_include_body'] = '';
-        generate_data['custom_exclude_body'] = '';
-        generate_data['custom_include_headers'] = '';
     }
 
     // https://docs.z.ai/api-reference/llm/chat-completion
@@ -4715,6 +4715,7 @@ async function saveOpenAIPreset(name, settings, triggerUi = true) {
         zai_endpoint: settings.zai_endpoint,
         custom_model: settings.custom_model,
         custom_url: settings.custom_url,
+        additional_parameters: structuredClone(settings.additional_parameters ?? {}),
         custom_include_body: settings.custom_include_body,
         custom_exclude_body: settings.custom_exclude_body,
         custom_include_headers: settings.custom_include_headers,
@@ -5045,7 +5046,9 @@ async function onExportPresetClick() {
 
     const preset = structuredClone(openai_settings[openai_setting_names[oai_settings.preset_settings_openai]]);
 
-    const fieldValues = sensitiveFields.filter(field => preset[field]).map(field => `<b>${field}</b>: <code>${preset[field]}</code>`);
+    const fieldValues = sensitiveFields
+        .filter(field => preset[field] && (field !== 'additional_parameters' || Object.keys(preset[field]).length > 0))
+        .map(field => `<b>${field}</b>: <code>${typeof preset[field] === 'object' ? JSON.stringify(preset[field]) : preset[field]}</code>`);
     if (fieldValues.length > 0) {
         const textHeader = t`Your preset contains proxy and/or custom endpoint settings.`;
         const textMessage = '<div>' + t`Do you want to remove these fields before exporting?` + `</div><br>${DOMPurify.sanitize(fieldValues.join('<br>'))}`;
@@ -5222,6 +5225,13 @@ function onSettingsPresetChange() {
         presetNameBefore: presetNameBefore,
     }).finally(async () => {
         for (const [key, [selector, setting, isCheckbox, isConnection]] of Object.entries(settingsToUpdate)) {
+            if (key === 'additional_parameters') {
+                // Legacy presets and admin releases omit connection parameters.
+                if (preset.additional_parameters !== undefined) {
+                    oai_settings.additional_parameters = structuredClone(preset.additional_parameters ?? {});
+                }
+                continue;
+            }
             if (isConnection) {
                 continue;
             }
@@ -6415,20 +6425,15 @@ function onProxyPasswordShowClick() {
 async function onCustomizeParametersClick() {
     const template = $(await renderTemplateAsync('customEndpointAdditionalParameters'));
 
-    template.find('#custom_include_body').val(oai_settings.custom_include_body).on('input', function () {
-        oai_settings.custom_include_body = String($(this).val());
-        saveSettingsDebounced();
-    });
-
-    template.find('#custom_exclude_body').val(oai_settings.custom_exclude_body).on('input', function () {
-        oai_settings.custom_exclude_body = String($(this).val());
-        saveSettingsDebounced();
-    });
-
-    template.find('#custom_include_headers').val(oai_settings.custom_include_headers).on('input', function () {
-        oai_settings.custom_include_headers = String($(this).val());
-        saveSettingsDebounced();
-    });
+    const source = oai_settings.chat_completion_source;
+    const values = getAdditionalParameters(oai_settings, source);
+    for (const key of ADDITIONAL_PARAMETER_KEYS) {
+        template.find(`#${key}`).val(values[key]).on('input', function () {
+            values[key] = String($(this).val());
+            setAdditionalParameters(oai_settings, source, values);
+            saveSettingsDebounced();
+        });
+    }
 
     await callGenericPopup(template, POPUP_TYPE.TEXT, '', { wide: true, large: true });
 }

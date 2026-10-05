@@ -2,6 +2,7 @@ import { DOMPurify, Fuse } from '../../../lib.js';
 
 import { event_types, eventSource, main_api, online_status, saveSettingsDebounced, setOnlineStatus } from '../../../script.js';
 import { CONNECTION_PROFILE_REQUEST_OVERRIDE_KEYS as REQUEST_OVERRIDE_KEYS } from '../../connection-profile-request.js';
+import { ADDITIONAL_PARAMETER_KEYS, getAdditionalParameters, setAdditionalParameters } from '../../chat-completion-parameters.js';
 import { extension_settings, renderExtensionTemplateAsync } from '../../extensions.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from '../../popup.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
@@ -231,8 +232,16 @@ function removeObsoleteProfileCommands(profile) {
 /** Saves provider options that are not represented by connection-manager slash commands. */
 function captureRequestOverrides(profile) {
     profile['request-overrides'] = Object.fromEntries(REQUEST_OVERRIDE_KEYS
+        .filter(key => !ADDITIONAL_PARAMETER_KEYS.includes(key) && key !== 'additional_parameters')
         .filter(key => oai_settings[key] !== undefined)
         .map(key => [key, structuredClone(oai_settings[key])]));
+    const source = oai_settings.chat_completion_source;
+    const parameters = getAdditionalParameters(oai_settings, source);
+    if (source === 'custom') {
+        Object.assign(profile['request-overrides'], parameters);
+    } else {
+        profile['request-overrides'].additional_parameters = { [source]: parameters };
+    }
 }
 
 /**
@@ -502,6 +511,18 @@ export async function applyConnectionProfile(profile) {
             } catch (error) {
                 console.error(`Failed to execute connection profile command: ${command}`, error);
                 throw new Error(`Connection profile command failed: ${command}`, { cause: error });
+            }
+        }
+
+        if (mode === 'cc' && profile['request-overrides']) {
+            const source = oai_settings.chat_completion_source;
+            const overrides = profile['request-overrides'];
+            const hasStored = source === 'custom'
+                ? ADDITIONAL_PARAMETER_KEYS.some(key => overrides[key] !== undefined)
+                : Object.hasOwn(overrides.additional_parameters ?? {}, source);
+            if (hasStored) {
+                setAdditionalParameters(oai_settings, source, getAdditionalParameters(overrides, source));
+                saveSettingsDebounced();
             }
         }
 
