@@ -6862,11 +6862,11 @@ function getStloCharacterOverrideOptions() {
 function getStloPriorityOptions() {
     return [
         { value: '', label: t`Default (3)` },
-        { value: '1', label: t`Lowest` },
-        { value: '2', label: t`Low` },
-        { value: '3', label: t`Default` },
-        { value: '4', label: t`High` },
-        { value: '5', label: t`Highest` },
+        { value: '1', label: t`Lowest (1)` },
+        { value: '2', label: t`Low (2)` },
+        { value: '3', label: t`Default (3)` },
+        { value: '4', label: t`High (4)` },
+        { value: '5', label: t`Highest (5)` },
     ];
 }
 
