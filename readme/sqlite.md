@@ -1075,6 +1075,12 @@ When rollback deletes a source-owned Memory, its verified source UUID range is c
 
 Base-memory saves fall back to the existing logical JSONL reader when the referenced chat has not yet been migrated to SQLite. The server still verifies that both numeric scene boundaries exist in that exact referenced chat; persisted boundary UUIDs are included only when both are already present. This compatibility read does not migrate, rewrite, or delete the legacy chat, and the resulting numeric-only memory continues through the existing legacy range rules.
 
+### Interrupted streamed replies
+
+A terminal provider/stream error (including a 503) retains non-empty answer text through the same validated message append/update and authoritative SQLite read-back used when stopping a response. The retained reply is an ordinary message, including its unfinished last sentence; Continue keeps the existing prefix and swipe generation updates only its validated target. Tool execution, auto-swipe, and automatic continuation do not run for an interrupted reply. Rendering/validation failures and resumable or parked connections still use their existing cleanup/recovery paths.
+
+When response reasoning stripping is enabled, an interrupted reasoning-only result saves the localized text “Only reasoning tokens were returned. No response text was generated.” instead of reasoning, including an unfinished inline reasoning block. Otherwise reasoning keeps its existing display/storage behavior. Empty output still rolls back the ephemeral mutation. Recovery is acknowledged only after a retained reply is saved and read back successfully; a failed save does not acknowledge it. No schema, locking, or UUID rules change.
+
 ### STMB entry regeneration
 
 Regeneration runs as a core STMB client job so it is serialized with other Memory Books work and appears in the job queue. The queued record contains only the lorebook name, entry UID, and chat identity; the executor re-reads the entry instead of storing lorebook content in queue state.

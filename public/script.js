@@ -259,7 +259,7 @@ import { applyBrowserFixes } from './scripts/browser-fixes.js';
 import { initServerHistory } from './scripts/server-history.js';
 import { initBulkEdit } from './scripts/bulk-edit.js';
 import { getContext } from './scripts/st-context.js';
-import { applyVisibleReasoningEditDraft, extractReasoningFromData, extractReasoningSignatureFromData, initReasoning, parseReasoningInSwipes, PromptReasoning, ReasoningHandler, ReasoningType, removeReasoningFromString, updateReasoningUI } from './scripts/reasoning.js';
+import { applyVisibleReasoningEditDraft, extractReasoningFromData, extractReasoningSignatureFromData, initReasoning, parseReasoningInSwipes, prepareInterruptedResponse, PromptReasoning, ReasoningHandler, ReasoningType, removeReasoningFromString, updateReasoningUI } from './scripts/reasoning.js';
 import { accountStorage } from './scripts/util/AccountStorage.js';
 import { initWelcomeScreen, openPermanentAssistantChat, getPermanentAssistantAvatar } from './scripts/welcome-screen.js';
 import { initDataMaid } from './scripts/data-maid.js';
@@ -9483,6 +9483,8 @@ class StreamingProcessor {
         this.type = type;
         this.isStopped = false;
         this.isFinished = false;
+        this.interrupted = false;
+        this.receivedReasoning = false;
         this.detachedRecoveryPending = false;
         this.detachedRecoveryParked = false;
         this.generator = this.nullStreamingGeneration;
@@ -9599,7 +9601,8 @@ class StreamingProcessor {
             }
         }
 
-        let processedText = cleanUpMessage({
+        // Interrupted output was already cleaned without trimming its unfinished sentence.
+        let processedText = isFinal && this.interrupted ? text : cleanUpMessage({
             getMessage: text,
             isImpersonate: isImpersonate,
             isContinue: isContinue,
@@ -9637,7 +9640,9 @@ class StreamingProcessor {
             targetMessage['extra']['time_to_first_token'] = this.timeToFirstToken;
 
             // Update reasoning
-            await this.reasoningHandler.process(messageId, mesChanged, this.promptReasoning);
+            await this.reasoningHandler.process(messageId, mesChanged, this.promptReasoning, {
+                skipAutoParse: isFinal && this.interrupted && power_user.strip_ai_thinking_from_response,
+            });
             processedText = targetMessage['mes'];
             if (this.temporaryGenerationAttempt
                 && ((processedText.trim() !== '' && processedText.trim() !== '...') || this.reasoningHandler.reasoning)) {
@@ -9808,7 +9813,7 @@ class StreamingProcessor {
             await eventSource.emit(event_types.IMPERSONATE_READY, text);
         }
         const isAborted = this.abortController.signal.aborted;
-        if (!isAborted && power_user.auto_swipe && generatedTextFiltered(text)) {
+        if (!this.interrupted && !isAborted && power_user.auto_swipe && generatedTextFiltered(text)) {
             is_send_press = false;
             try {
                 await swipe(null, SWIPE_DIRECTION.RIGHT, {
@@ -9825,6 +9830,43 @@ class StreamingProcessor {
         }
 
         playMessageSound();
+        return true;
+    }
+
+    /** Prepares terminal stream output for the existing Stop/final-save path. */
+    retainInterruptedResponse(error) {
+        if (this.type === 'impersonate' || this.type === 'quiet' || this.abortController.signal.aborted
+            || error?.generationRecoveryAvailable || error?.generationParked || error?.name === 'AbortError') {
+            return false;
+        }
+        const prepared = prepareInterruptedResponse(this.result, {
+            receivedReasoning: this.receivedReasoning,
+            prefixIncomplete: this.type === 'continue' && this.promptReasoning?.prefixIncomplete,
+        });
+        if (!prepared.answer.trim() && !prepared.receivedReasoning) {
+            return false;
+        }
+        let text = cleanUpMessage({
+            getMessage: prepared.text,
+            isImpersonate: false,
+            isContinue: this.type === 'continue',
+            displayIncompleteSentences: true,
+            stoppingStrings: this.stoppingStrings,
+        });
+        if (!text.trim() && power_user.strip_ai_thinking_from_response && prepared.receivedReasoning) {
+            text = t`Only reasoning tokens were returned. No response text was generated.`;
+        }
+        if (!text.trim() && !(this.receivedReasoning && this.reasoningHandler.reasoning.trim())) {
+            return false;
+        }
+        if (power_user.strip_ai_thinking_from_response) {
+            this.swipes = this.swipes.map(swipe => prepareInterruptedResponse(swipe).text);
+            this.reasoningSignature = null;
+            this.swipeReasoning = [];
+        }
+        this.result = text;
+        this.interrupted = true;
+        this.isFinished = true;
         return true;
     }
 
@@ -9896,10 +9938,22 @@ class StreamingProcessor {
         const isContinue = this.type == 'continue';
         this.stoppingStrings = getStoppingStrings(isImpersonate, isContinue);
 
+        let iterator;
+        let streamFailed = false;
         try {
             const sw = new Stopwatch(1000 / power_user.streaming_fps);
             const timestamps = [];
-            for await (const { text, swipes, logprobs, toolCalls, state } of this.generator()) {
+            iterator = this.generator();
+            while (true) {
+                let next;
+                try {
+                    next = await iterator.next();
+                } catch (error) {
+                    streamFailed = true;
+                    throw error;
+                }
+                if (next.done) break;
+                const { text, swipes, logprobs, toolCalls, state } = next.value;
                 const now = Date.now();
                 timestamps.push(now);
                 if (!this.timeToFirstToken) {
@@ -9911,6 +9965,7 @@ class StreamingProcessor {
 
                 this.toolCalls = toolCalls;
                 this.result = text;
+                this.receivedReasoning ||= Boolean(state?.receivedReasoning || state?.reasoning?.trim());
                 this.swipes = Array.from(swipes ?? []);
                 this.swipeReasoning = Array.from(state?.swipeReasoning ?? []);
                 if (typeof state?.signature === 'string' && state.signature.length > 0) {
@@ -9934,9 +9989,14 @@ class StreamingProcessor {
             // in the case of a self-inflicted abort, we have already cleaned up
             if (!this.isFinished) {
                 console.error(err);
+                if (streamFailed && this.retainInterruptedResponse(err)) {
+                    return this.result;
+                }
                 await this.onErrorStreaming(err);
             }
             return this.result;
+        } finally {
+            await iterator?.return?.();
         }
 
         this.isFinished = true;
@@ -11201,7 +11261,7 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
 
             const isStreamFinished = streamingProcessor && !streamingProcessor.isStopped && streamingProcessor.isFinished;
             const isStreamWithToolCalls = streamingProcessor && Array.isArray(streamingProcessor.toolCalls) && streamingProcessor.toolCalls.length;
-            if (canPerformToolCalls && isStreamFinished && isStreamWithToolCalls) {
+            if (canPerformToolCalls && isStreamFinished && !streamingProcessor.interrupted && isStreamWithToolCalls) {
                 const lastMessage = chat[chat.length - 1];
                 const hasToolCalls = ToolManager.hasToolCalls(streamingProcessor.toolCalls);
                 const shouldDeleteMessage = type !== 'swipe' && ['', '...'].includes(lastMessage?.mes) && !lastMessage?.extra?.reasoning && ['', '...'].includes(streamingProcessor?.result);
@@ -11242,7 +11302,7 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
                     if (streamingProcessor === finishedStreamingProcessor) {
                         streamingProcessor = null;
                     }
-                    if (!transferGenerationToAutoContinue(messageChunk, isImpersonate)) {
+                    if (finishedStreamingProcessor.interrupted || !transferGenerationToAutoContinue(messageChunk, isImpersonate)) {
                         unblockGeneration(type);
                     }
                 }

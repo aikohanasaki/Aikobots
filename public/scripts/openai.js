@@ -3403,6 +3403,16 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
     state.signature ??= '';
     state.toolSignatures ??= {};
 
+    // Record presence before display/stripping preferences discard reasoning text.
+    const delta = data.choices?.[0]?.delta;
+    state.receivedReasoning ||= Boolean(
+        data?.delta?.thinking?.trim()
+        || delta?.reasoning_content?.trim()
+        || delta?.reasoning?.trim()
+        || data?.candidates?.[0]?.content?.parts?.some(part => part.thought && part.text?.trim())
+        || (Array.isArray(delta?.content) && delta.content.some(part => part.thinking?.some(thought => thought.text?.trim()))),
+    );
+
     if (chat_completion_source === chat_completion_sources.CLAUDE) {
         accumulateClaudeToolTurnBlock(state, data);
         if (typeof data?.delta?.stop_reason === 'string') state.stopReason = data.delta.stop_reason;

@@ -172,6 +172,25 @@ function containsThinkTags(value) {
     return typeof value === 'string' && THINK_TAG_DETECTION_REGEX.test(value);
 }
 
+/** Separates interrupted answer text from reasoning without retaining stripped reasoning. */
+export function prepareInterruptedResponse(text, { receivedReasoning = false, prefixIncomplete = false } = {}) {
+    let answer = String(text || '');
+    const { auto_parse, prefix, suffix } = power_user.reasoning;
+    if (auto_parse && prefix && suffix && (prefixIncomplete || answer.startsWith(prefix))) {
+        const reasoningStart = prefixIncomplete ? 0 : prefix.length;
+        const reasoningEnd = answer.indexOf(suffix, reasoningStart);
+        receivedReasoning ||= Boolean(answer.slice(reasoningStart, reasoningEnd < 0 ? undefined : reasoningEnd).trim());
+        answer = reasoningEnd < 0 ? '' : answer.slice(reasoningEnd + suffix.length);
+    }
+    if (shouldStripAiThinkingFromResponses()) {
+        answer = answer.replace(/<think\b[^>]*>([\s\S]*?)(?:<\/think>|$)/gi, (_, reasoning) => {
+            receivedReasoning ||= Boolean(reasoning.trim());
+            return '';
+        });
+    }
+    return { text: shouldStripAiThinkingFromResponses() ? answer : String(text || ''), answer, receivedReasoning };
+}
+
 function clearStoredReasoningFields(extra) {
     if (!extra || typeof extra !== 'object') {
         return false;
@@ -646,10 +665,13 @@ export class ReasoningHandler {
      * @param {number} messageId - The ID of the message to process
      * @param {boolean} mesChanged - Whether the message has changed
      * @param {PromptReasoning} promptReasoning - Prompt reasoning object
+     * @param {{ skipAutoParse?: boolean }} [options] Already separated interrupted output.
      * @returns {Promise<void>}
      */
-    async process(messageId, mesChanged, promptReasoning) {
-        mesChanged = this.#autoParseReasoningFromMessage(messageId, mesChanged, promptReasoning);
+    async process(messageId, mesChanged, promptReasoning, { skipAutoParse = false } = {}) {
+        if (!skipAutoParse) {
+            mesChanged = this.#autoParseReasoningFromMessage(messageId, mesChanged, promptReasoning);
+        }
 
         if (shouldStripAiThinkingFromResponses()) {
             const message = chat[messageId];

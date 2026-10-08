@@ -25,5 +25,6 @@
     "ChatExtract_CaptureFailed": "Selected messages are unavailable or changed. Extract them again before generating.",
     "Consolidation recovery requires review. Reload the lorebook and review saved summaries before starting again.": "Consolidation recovery requires review. Reload the lorebook and review saved summaries before starting again.",
     "Consolidation could not be saved.": "Consolidation could not be saved.",
-    "This consolidation has no save receipt. Review saved summaries and start a new consolidation.": "This consolidation has no save receipt. Review saved summaries and start a new consolidation."
+    "This consolidation has no save receipt. Review saved summaries and start a new consolidation.": "This consolidation has no save receipt. Review saved summaries and start a new consolidation.",
+    "Only reasoning tokens were returned. No response text was generated.": "Only reasoning tokens were returned. No response text was generated."
 }
