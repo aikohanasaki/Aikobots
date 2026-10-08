@@ -10,6 +10,8 @@ const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 export const projectRoot = path.resolve(moduleDirectory, '..');
 export const publicDirectory = path.join(projectRoot, 'public');
 export const defaultOutputDirectory = path.join(publicDirectory, 'dist');
+export const expectedStmbModuleCount = (await fs.readdir(path.join(publicDirectory, 'scripts'), { withFileTypes: true }))
+    .filter(entry => entry.isFile() && /^stmb.*\.js$/u.test(entry.name)).length;
 
 export const legacyScripts = [
     'lib/polyfill.js',
@@ -308,9 +310,9 @@ export async function buildFrontend(outputDirectory = defaultOutputDirectory) {
     if (!emittedAssets.includes('stmb.js') || !stmbChunk) {
         throw new Error('The dedicated STMB chunk was not emitted.');
     }
-    if (stmbModules.length !== 35 || stmbModules.some(module => module.chunks?.length !== 1 || module.chunks[0] !== stmbChunk.id)) {
+    if (stmbModules.length !== expectedStmbModuleCount || stmbModules.some(module => module.chunks?.length !== 1 || module.chunks[0] !== stmbChunk.id)) {
         const placements = [...new Set(stmbModules.map(module => JSON.stringify(module.chunks)))].join(', ');
-        throw new Error(`Expected all 35 STMB modules only in chunk ${stmbChunk.id}; found ${stmbModules.length} with placements ${placements}.`);
+        throw new Error(`Expected all ${expectedStmbModuleCount} STMB modules only in chunk ${stmbChunk.id}; found ${stmbModules.length} with placements ${placements}.`);
     }
 
     const manifest = {

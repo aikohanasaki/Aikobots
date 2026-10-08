@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
     bundledStylesheets,
     defaultOutputDirectory,
+    expectedStmbModuleCount,
     inlineStylesheet,
     legacyScripts,
     publicDirectory,
@@ -51,7 +52,7 @@ test('committed build stays within startup budgets and contains bundled registri
     assert.ok(manifest.initialRequestCount <= 12);
     assert.ok(manifest.initialGzipBytes <= 1.8 * 1024 * 1024);
     assert.equal(manifest.builtinExtensionCount, 13);
-    assert.equal(manifest.stmbModuleCount, 34);
+    assert.equal(manifest.stmbModuleCount, expectedStmbModuleCount);
     assert.ok(manifest.assets.some(asset => asset.name === 'chunks/builtins.js'));
     assert.ok(manifest.assets.some(asset => asset.name === 'stmb.js'));
 });

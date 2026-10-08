@@ -2981,7 +2981,6 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, si
             <section class="stmb-settings-subsection" data-stmb-settings-view="automatic">
             <h3 class="stmb-section-title" data-i18n="Automatic Memories">Automatic Memories</h3>
             ${renderMemoryReminderSettings('automatic', moduleSettings)}
-            ${renderMemoryReminderSettings('manual', moduleSettings)}
             <div class="world_entry_form_control">
                 <label class="checkbox_label"><input type="checkbox" data-stmb-rollback="autoRollbackEnabled" ${moduleSettings.autoRollbackEnabled === true ? 'checked' : ''}><span data-i18n="Auto-rollback after message deletion">Auto-rollback after message deletion</span></label>
                 <label class="checkbox_label"><input type="checkbox" data-stmb-rollback="autoRollbackApplyToBranches" ${moduleSettings.autoRollbackApplyToBranches === true ? 'checked' : ''} ${moduleSettings.autoRollbackEnabled === true ? '' : 'disabled'}><span data-i18n="Apply auto-rollback to branches/checkpoints">Apply auto-rollback to branches/checkpoints</span></label>
