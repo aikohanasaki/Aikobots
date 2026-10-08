@@ -1987,5 +1987,6 @@
   ,"STMemoryBooks_Reminder_ManualToast": "Há {{count}} mensagens desde seu último resumo de memória. Considere criar uma memória."
   ,"Compact Entry": "Compactar entrada"
   ,"Compacting...": "A compactar..."
+  ,"Compaction failed.": "A compactação falhou."
   ,"Only reasoning tokens were returned. No response text was generated.": "Foram devolvidos apenas tokens de raciocínio. Não foi gerado texto de resposta."
 }

@@ -4,7 +4,7 @@ Aikobots is a fork of SillyTavern. Portions of the codebase remain derived from 
 
 This document summarizes major Aikobots-specific additions, integrations, and behavioral changes from the upstream SillyTavern base. It is intended as a provenance and orientation guide, not a complete line-by-line changelog.
 
-Release-specific architecture is recorded in [Code Provenance v3](Code%20Provenance%20v3.md), [Code Provenance v4](Code%20Provenance%20v4.md), and [Code Provenance v5](Code%20Provenance%20v5.md).
+Release-specific architecture is recorded in [Code Provenance v3](Code%20Provenance%20v3.md), [Code Provenance v4](Code%20Provenance%20v4.md), [Code Provenance v5](Code%20Provenance%20v5.md), and [Code Provenance v6](Code%20Provenance%20v6.md).
 
 ## Attribution
 

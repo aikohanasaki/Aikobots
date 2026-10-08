@@ -6603,5 +6603,6 @@
   ,"STMemoryBooks_Reminder_ManualToast": "Il y a {{count}} messages depuis votre dernier résumé de mémoire. Pensez à créer une mémoire."
   ,"Compact Entry": "Compacter l’entrée"
   ,"Compacting...": "Compactage en cours..."
+  ,"Compaction failed.": "Le compactage a échoué."
   ,"Only reasoning tokens were returned. No response text was generated.": "Seuls des tokens de raisonnement ont été renvoyés. Aucun texte de réponse n’a été généré."
 }

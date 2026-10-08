@@ -6543,5 +6543,6 @@
   ,"STMemoryBooks_Reminder_ManualToast": "Seit deiner letzten Erinnerungs-Zusammenfassung sind {{count}} Nachrichten hinzugekommen. Erwäge, eine Erinnerung zu erstellen."
   ,"Compact Entry": "Eintrag verdichten"
   ,"Compacting...": "Wird verdichtet..."
+  ,"Compaction failed.": "Verdichtung fehlgeschlagen."
   ,"Only reasoning tokens were returned. No response text was generated.": "Es wurden nur Denktokens zurückgegeben. Es wurde kein Antworttext generiert."
 }

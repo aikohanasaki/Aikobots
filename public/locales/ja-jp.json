@@ -6546,5 +6546,6 @@
   ,"STMemoryBooks_Reminder_ManualToast": "前回のメモリサマリー以降、{{count}}件のメッセージがあります。メモリの作成をご検討ください。"
   ,"Compact Entry": "エントリを圧縮"
   ,"Compacting...": "圧縮中..."
+  ,"Compaction failed.": "圧縮に失敗しました。"
   ,"Only reasoning tokens were returned. No response text was generated.": "推論トークンのみが返されました。応答テキストは生成されませんでした。"
 }

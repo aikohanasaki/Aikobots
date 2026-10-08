@@ -2,7 +2,9 @@
 
 Aikobots v5 began by changing how the browser application is delivered. Earlier versions served roughly 200 or more individual JavaScript and CSS files during startup. v5 builds those sources ahead of time into a small, deterministic set of production bundles committed under `public/dist`.
 
-The current v5.1 line also adds a shared detached-generation scheduler, server-authoritative prompt preparation for ordinary SQLite chats, resumable patron chat tabs, safer new-chat persistence, cross-worker user-record updates, administrative session reset, Data Maid lorebook cleanup, tab-local notification history, Russian localization, and a unified test toolchain.
+The v5.1 line also adds a shared detached-generation scheduler, server-authoritative prompt preparation for ordinary SQLite chats, resumable patron chat tabs, safer new-chat persistence, cross-worker user-record updates, administrative session reset, Data Maid lorebook cleanup, tab-local notification history, Russian localization, and a unified test toolchain.
+
+This document records the v5 release line. Subsequent stabilization, efficiency refactors, and quality-of-life changes are recorded in [Code Provenance v6](Code%20Provenance%20v6.md).
 
 This is not a chat-storage reset. v5 carries forward the native SQLite chat format, transaction, identity, locking, and recovery architecture documented in [Code Provenance v4](Code%20Provenance%20v4.md). The original v5.0 bundle work did not change application APIs or persistent payloads. Later v5.x work adds generation-job APIs and a separate content-restricted job database, but does not replace or expose chat, secure-lorebook, or character storage.
 
@@ -165,6 +167,10 @@ The core feature retains up to 200 plain-text notification records and exact-mat
 v5.1 pins Node.js 24.18.0 and npm 12.0.1, records dependency install-script policy, and separates `node:test` files from Jest files by filename. `npm test` runs a read-only environment doctor, both unit-test runners, the committed frontend comparison, and the self-contained Chromium smoke test. `npm run verify` adds ESLint and full localization coverage.
 
 The Selenium harness remains explicit because it requires a running server, a dedicated connection profile, matching browser and driver binaries, and may spend model API credits. Its scenarios now include dirty new-chat persistence and stronger chat edit/send-cycle coverage in addition to the original v4 workflows.
+
+### Closing v5 refinements
+
+Later v5 work strengthens cross-chat guards, Continue and group-tab behavior, pending-write handling, and STMB consolidation recovery. It also adds message search, SidePrompt versioning, Topical Clip suggestion workflows, layout selection improvements, and batched Data Maid cleanup. These changes build on the same integrated systems and retain their existing attribution.
 
 ## Summary
 

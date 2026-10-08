@@ -6618,5 +6618,6 @@
   ,"STMemoryBooks_Reminder_ManualToast": "Сообщений с момента последней сводки памяти: {{count}}. Подумайте о создании сводки памяти."
   ,"Compact Entry": "Сжать запись"
   ,"Compacting...": "Сжатие..."
+  ,"Compaction failed.": "Не удалось сжать запись."
   ,"Only reasoning tokens were returned. No response text was generated.": "Были возвращены только токены рассуждений. Текст ответа не был сгенерирован."
 }
