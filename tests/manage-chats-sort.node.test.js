@@ -91,3 +91,45 @@ test('regular, group and deleted chat responses expose exact bytes with and with
     fs.writeFileSync(legacy, '{"chat_metadata":{}}\n{"mes":"synthetic needle","send_date":1}\n');
     assert.equal((await getChatSearchResult({ path: legacy, file_name: 'legacy.jsonl', file_size: '1 KB' })).file_size_bytes, fs.statSync(legacy).size);
 });
+
+test('chat summaries use persisted last-message dates despite identical file modification times', async t => {
+    setConfigFilePath(fs.existsSync(path.resolve('config.yaml')) ? path.resolve('config.yaml') : path.resolve('../config.yaml'));
+    const { getChatInfo, getChatSearchResult } = await import('../src/endpoints/chats.js');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-summary-dates-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const fallback = Date.UTC(2026, 8, 16, 21, 26);
+    const cases = [
+        ['June 14, 2026 10:30am', new Date(2026, 5, 14, 10, 30).getTime()],
+        ['July 7, 2026 6:38pm', new Date(2026, 6, 7, 18, 38).getTime()],
+        ['July 7, 2026 12:00am', new Date(2026, 6, 7).getTime()],
+        ['July 7, 2026 12:00pm', new Date(2026, 6, 7, 12).getTime()],
+        ['2024-7-12@01h31m37s', Date.UTC(2024, 6, 12, 1, 31, 37)],
+        ['2024-6-5 @14h 56m 50s 68ms', Date.UTC(2024, 5, 5, 14, 56, 50, 68)],
+        ['2026-10-01T12:00:00Z', Date.UTC(2026, 9, 1, 12)],
+        [1234, 1234],
+        ['1234', 1234],
+        [undefined, fallback],
+        ['invalid', fallback],
+    ];
+    for (const [index, [send_date, expected]] of cases.entries()) {
+        for (const extension of ['sqlite', 'jsonl']) {
+            const file = path.join(root, `${index}.${extension}`);
+            const records = [{ chat_metadata: {} }, { mes: 'synthetic needle', send_date }];
+            if (extension === 'sqlite') {
+                const db = await loadDb(file);
+                setMessages(db, records);
+                db.close();
+            } else {
+                fs.writeFileSync(file, records.map(record => JSON.stringify(record)).join('\n') + '\n');
+            }
+            fs.utimesSync(file, fallback / 1000, fallback / 1000);
+            for (const isGroup of [false, true]) {
+                assert.equal((await getChatInfo(file, {}, isGroup)).last_mes, expected);
+                for (const fragments of [[], ['needle']]) {
+                    const result = await getChatSearchResult({ path: file, file_name: path.basename(file) }, fragments, { isGroup });
+                    assert.equal(result.last_mes, expected);
+                }
+            }
+        }
+    }
+});

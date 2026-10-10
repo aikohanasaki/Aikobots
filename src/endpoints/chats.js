@@ -10,6 +10,7 @@ import express from 'express';
 import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import _ from 'lodash';
+import moment from 'moment';
 
 import validateAvatarUrlMiddleware from '../middleware/validateFileName.js';
 import { touchUserActivity } from '../users.js';
@@ -813,6 +814,7 @@ function normalizeLongChatConfig({ displayCount = LONG_CHAT_DISPLAY_DEFAULT } = 
     };
 }
 
+/** Parses persisted message dates, retaining the caller's fallback for missing or invalid dates. */
 function normalizeChatTimestamp(value, fallback) {
     if (typeof value === 'number' && Number.isFinite(value)) {
         return value;
@@ -827,7 +829,19 @@ function normalizeChatTimestamp(value, fallback) {
                 return numeric;
             }
 
-            const parsed = Date.parse(trimmed);
+            // Match the frontend's local-time interpretation of getMessageTimeStamp().
+            const messageDate = moment(trimmed, 'MMMM D, YYYY h:mma', 'en', true);
+            if (messageDate.isValid()) {
+                return messageDate.valueOf();
+            }
+
+            // Legacy humanized dates are interpreted as UTC by the frontend.
+            const normalized = trimmed.replace(
+                /^(\d{4})-(\d{1,2})-(\d{1,2})\s?@(\d{1,2})h\s?(\d{1,2})m\s?(\d{1,2})s(?:\s(\d{1,3})ms)?$/,
+                (_, year, month, day, hour, minute, second, ms = '0') =>
+                    `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${hour.padStart(2, '0')}:${minute.padStart(2, '0')}:${second.padStart(2, '0')}.${ms.padStart(3, '0')}Z`,
+            );
+            const parsed = Date.parse(normalized);
             if (Number.isFinite(parsed)) {
                 return parsed;
             }
