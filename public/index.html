@@ -4279,6 +4279,22 @@
                         </button>
                     </div>
                     <input type="search" id="select_chat_search" class="text_pole flex1" data-i18n="[placeholder]Search..." placeholder="Search..." autocomplete="off">
+                    <label class="flex-container alignitemscenter gap5px" for="manage_chats_sort_field">
+                        <span data-i18n="Sort by">Sort by</span>
+                        <select id="manage_chats_sort_field" class="widthNatural">
+                            <option value="file_name" data-i18n="Alphabetical">Alphabetical</option>
+                            <option value="file_size_bytes" data-i18n="File size">File size</option>
+                            <option value="message_count" data-i18n="Number of messages">Number of messages</option>
+                            <option value="last_mes" data-i18n="Last message sent" selected>Last message sent</option>
+                        </select>
+                    </label>
+                    <label class="flex-container alignitemscenter gap5px" for="manage_chats_sort_direction">
+                        <span data-i18n="Direction">Direction</span>
+                        <select id="manage_chats_sort_direction" class="widthNatural">
+                            <option value="asc" data-i18n="Ascending">Ascending</option>
+                            <option value="desc" data-i18n="Descending" selected>Descending</option>
+                        </select>
+                    </label>
                     <div id="select_chat_cross" class="opacity50p hoverglow fa-solid fa-circle-xmark fontsize120p" alt="Close Past Chat Popup" data-i18n="[alt]Close Past Chat Popup"></div>
                 </div>
                 <div id="select_chat_div"></div>

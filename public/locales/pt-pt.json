@@ -1,4 +1,12 @@
 {
+    "Sort by": "Ordenar por",
+    "Alphabetical": "Ordem alfabética",
+    "File size": "Tamanho do ficheiro",
+    "Number of messages": "Número de mensagens",
+    "Last message sent": "Última mensagem enviada",
+    "Direction": "Ordem",
+    "Ascending": "Ascendente",
+    "Descending": "Descendente",
     "Additional Parameters": "Parâmetros adicionais",
     "Include Body Parameters": "Incluir parâmetros no corpo",
     "Exclude Body Parameters": "Excluir parâmetros do corpo",

@@ -1,4 +1,12 @@
 {
+    "Sort by": "Сортировать по",
+    "Alphabetical": "По алфавиту",
+    "File size": "Размер файла",
+    "Number of messages": "Количество сообщений",
+    "Last message sent": "Последнее отправленное сообщение",
+    "Direction": "Порядок",
+    "Ascending": "По возрастанию",
+    "Descending": "По убыванию",
     "additional_parameters_notice": "Для опытных пользователей. Перед использованием дополнительных параметров ознакомьтесь с документацией вашего провайдера, чтобы узнать, какие параметры и заголовки поддерживаются.",
     "Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.": "Источники консолидации изменились. Откройте «Ожидающие действия» в Memory Books, чтобы проверить и сохранить созданные сводки.",
     "Consolidation sources changed. Review the current lorebook before starting a new consolidation.": "Источники консолидации изменились. Проверьте текущий лорбук перед началом новой консолидации.",

@@ -1,4 +1,12 @@
 {
+    "Sort by": "Sortieren nach",
+    "Alphabetical": "Alphabetisch",
+    "File size": "Dateigröße",
+    "Number of messages": "Anzahl der Nachrichten",
+    "Last message sent": "Letzte gesendete Nachricht",
+    "Direction": "Reihenfolge",
+    "Ascending": "Aufsteigend",
+    "Descending": "Absteigend",
     "additional_parameters_notice": "Für fortgeschrittene Benutzer. Prüfen Sie vor der Verwendung zusätzlicher Parameter die Dokumentation Ihres Anbieters auf unterstützte Parameter und Header.",
     "Consolidation sources changed. Open Pending Actions in Memory Books to review and save the generated summaries.": "Die Quellen der Konsolidierung wurden geändert. Öffne „Ausstehende Aktionen“ in Memory Books, um die erzeugten Zusammenfassungen zu prüfen und zu speichern.",
     "Consolidation sources changed. Review the current lorebook before starting a new consolidation.": "Die Quellen der Konsolidierung wurden geändert. Prüfe das aktuelle Lorebook, bevor du eine neue Konsolidierung startest.",

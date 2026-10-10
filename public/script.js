@@ -102,7 +102,7 @@ import {
     assignChunkMessagesByAbsoluteId,
     validateChunkedChatPayload,
 } from './scripts/chat-chunking.js';
-import { fetchChatSearchResults } from './scripts/chat-search.js';
+import { createChatSortComparator, fetchChatSearchResults } from './scripts/chat-search.js';
 
 import {
     setOpenAIMessageExamples,
@@ -223,7 +223,7 @@ import { registerPromptManagerMigration } from './scripts/PromptManager.js';
 import { getRegexScripts, getRegexedString, regex_placement } from './scripts/extensions/regex/engine.js';
 import { initLogprobs, saveLogprobsForActiveMessage } from './scripts/logprobs.js';
 import { FILTER_STATES, FILTER_TYPES, FilterHelper, isFilterState } from './scripts/filters.js';
-import { initLocales, t, translate } from './scripts/i18n.js';
+import { getCurrentLocale, initLocales, t, translate } from './scripts/i18n.js';
 import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, getTokenizerModel, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
 import {
     user_avatar,
@@ -16223,6 +16223,15 @@ function initManageChatsUi() {
     initManageChatsOwnerSelect();
     initManageChatsOrphanSelect();
     initManageChatsModeToggle();
+    for (const [id, fallback] of [['field', 'last_mes'], ['direction', 'desc']]) {
+        const select = $(`#manage_chats_sort_${id}`);
+        select.val(accountStorage.getItem(`ManageChats_sort_${id}`) || fallback);
+        if (!select.val()) select.val(fallback);
+        select.on('change', function () {
+            accountStorage.setItem(`ManageChats_sort_${id}`, String($(this).val()));
+            sortManageChatsRows();
+        });
+    }
     refreshManageChatsModeUi();
     manageChatsUiInitialized = true;
 }
@@ -17189,8 +17198,40 @@ export async function openManageChatsOrphanCharacterChat(orphanKey, fileName) {
     });
 }
 
+/** Uses the same sort order for newly fetched summaries and existing rows. */
+function getManageChatsSortComparator() {
+    return createChatSortComparator(
+        String($('#manage_chats_sort_field').val()),
+        String($('#manage_chats_sort_direction').val()),
+        getCurrentLocale() || undefined,
+    );
+}
+
+/** Moves existing rows within each heading so selection and row actions survive sorting. */
+function sortManageChatsRows() {
+    const container = document.getElementById('select_chat_div');
+    const compare = getManageChatsSortComparator();
+    let rows = [];
+    const flush = boundary => {
+        rows.sort((a, b) => compare($(a).data('chat-sort'), $(b).data('chat-sort')));
+        for (const row of rows) container.insertBefore(row, boundary);
+        rows = [];
+    };
+    for (const child of Array.from(container.children)) {
+        if (child.matches('.select_chat_block_wrapper')) rows.push(child);
+        else flush(child);
+    }
+    flush(null);
+}
+
 function appendManageChatsRow(target, chat, options = {}) {
     const template = $('#past_chat_template .select_chat_block_wrapper').clone();
+    template.data('chat-sort', {
+        file_name: chat.file_name,
+        file_size_bytes: chat.file_size_bytes,
+        message_count: chat.message_count,
+        last_mes: chat.last_mes,
+    });
     const chatBlock = template.find('.select_chat_block');
     chatBlock.attr('file_name', chat.file_name);
     setManageChatsRowContext(template, options.rowContext);
@@ -17297,7 +17338,7 @@ async function displayDeletedCharacterChats(orphanKey = manageChatsSelectedOrpha
 
         if (directChats.length) {
             $('#select_chat_div').append(`<div class="manage_chats_section_title">${t`Character chats`}</div>`);
-            directChats.forEach((chat) => appendManageChatsRow($('#select_chat_div'), chat, {
+            [...directChats].sort(getManageChatsSortComparator()).forEach((chat) => appendManageChatsRow($('#select_chat_div'), chat, {
                 avatarImgURL: default_avatar,
                 rowContext: { rowType: 'orphan-character', orphanKey: entry.orphan_key },
                 highlightNames,
@@ -17312,7 +17353,7 @@ async function displayDeletedCharacterChats(orphanKey = manageChatsSelectedOrpha
                 const groupDetails = getManageChatsOwnerDetails({ type: 'group', id: group.id });
                 const currentGroupChat = groupDetails.group?.chat_id || '';
 
-                group.chats.forEach((chat) => appendManageChatsRow($('#select_chat_div'), chat, {
+                [...group.chats].sort(getManageChatsSortComparator()).forEach((chat) => appendManageChatsRow($('#select_chat_div'), chat, {
                     avatarImgURL: group.avatar_url || default_avatar,
                     rowContext: {
                         rowType: 'orphan-group',
@@ -17406,7 +17447,7 @@ async function displayChats(searchQuery, chatDetails, highlightNames) {
         });
         $('#select_chat_div').empty();
 
-        filteredData.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
+        filteredData.sort(getManageChatsSortComparator());
 
         for (const chat of filteredData) {
             const isSelected = trimExtension(chatDetails.sessionName) === trimExtension(chat.file_name);

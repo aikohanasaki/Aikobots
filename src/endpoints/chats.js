@@ -3850,6 +3850,7 @@ async function buildLogicalChatSummary(pathToFile, {
         file_id: parsedPath.name,
         file_name: parsedPath.base,
         file_size: `${(fileStats.totalSize / 1024).toFixed(2)}kb`,
+        file_size_bytes: fileStats.totalSize,
         chat_items: 0,
         mes: '[The chat is empty]',
         last_mes: fallbackTimestamp,
@@ -4356,10 +4357,12 @@ export async function getChatSearchResult(chatFile, fragments = [], { isGroup = 
             if (fragments.length > 0 && !lastMessage) {
                 return null;
             }
-            const fallbackTimestamp = Math.round(getChatFileStats(chatFile.path).latestMtimeMs);
+            const fileStats = getChatFileStats(chatFile.path);
+            const fallbackTimestamp = Math.round(fileStats.latestMtimeMs);
             return {
                 file_name: chatFile.file_name,
                 file_size: chatFile.file_size,
+                file_size_bytes: fileStats.totalSize,
                 message_count: messageCount,
                 last_mes: normalizeChatTimestamp(lastMessage?.send_date, fallbackTimestamp),
                 preview_message: getPreviewMessage(lastMessage ? [lastMessage] : []),
@@ -4381,11 +4384,13 @@ export async function getChatSearchResult(chatFile, fragments = [], { isGroup = 
     }
 
     const lastMessage = useMetadataOnly ? logicalChat.lastMessage : messages[messages.length - 1];
-    const fallbackTimestamp = Math.round(getChatFileStats(chatFile.path).latestMtimeMs);
+    const fileStats = getChatFileStats(chatFile.path);
+    const fallbackTimestamp = Math.round(fileStats.latestMtimeMs);
     const lastMesDate = normalizeChatTimestamp(lastMessage?.send_date, fallbackTimestamp);
     const result = {
         file_name: chatFile.file_name,
         file_size: chatFile.file_size,
+        file_size_bytes: fileStats.totalSize,
         message_count: logicalChat.totalMessages,
         last_mes: lastMesDate,
         preview_message: getPreviewMessage(useMetadataOnly ? (lastMessage ? [lastMessage] : []) : messages),
@@ -4639,6 +4644,7 @@ async function checkChatIntegrity(filePath, integritySlug) {
  * @property {string} [file_id] - The name of the chat file (without extension)
  * @property {string} [file_name] - The name of the chat file (with extension)
  * @property {string} [file_size] - The size of the chat file
+ * @property {number} [file_size_bytes] - The unrounded size of the chat file in bytes
  * @property {number} [chat_items] - The number of chat items in the file
  * @property {string} [mes] - The last message in the chat
  * @property {number} [last_mes] - The timestamp of the last message
@@ -7490,6 +7496,7 @@ router.post('/orphaned', async function (request, response) {
         const toChatSummary = (chatData) => ({
             file_name: chatData.file_name,
             file_size: chatData.file_size,
+            file_size_bytes: chatData.file_size_bytes,
             message_count: chatData.chat_items ?? 0,
             last_mes: normalizeChatTimestamp(chatData.last_mes, 0),
             preview_message: chatData.mes ?? '',

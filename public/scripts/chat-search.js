@@ -32,6 +32,23 @@ export async function fetchChatSearchResults({
     return results;
 }
 
+/** Compares chat summaries by the selected field, keeping missing numbers last. */
+export function createChatSortComparator(field = 'last_mes', direction = 'desc', locale = undefined) {
+    const compareNames = new Intl.Collator(locale, { sensitivity: 'accent' }).compare;
+    const sign = direction === 'asc' ? 1 : -1;
+    const name = chat => String(chat.file_name ?? '').replace(/\.(jsonl|sqlite)$/i, '');
+    return (a, b) => {
+        const byName = compareNames(name(a), name(b));
+        if (field === 'file_name') return sign * byName;
+        const aValue = a[field];
+        const bValue = b[field];
+        const aValid = typeof aValue === 'number' && Number.isFinite(aValue);
+        const bValid = typeof bValue === 'number' && Number.isFinite(bValue);
+        if (aValid !== bValid) return aValid ? -1 : 1;
+        return (aValid ? sign * (aValue - bValue) : 0) || byName;
+    };
+}
+
 /** Finds literal, case-insensitive matches in current message text, excluding alternate swipes and metadata. */
 export function findChatMessages(messages, query) {
     const term = query.trim().toLowerCase();

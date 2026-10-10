@@ -14,6 +14,7 @@ import { resolveSystemChromiumPath } from '../scripts/browser-path.mjs';
 import { defaultOutputDirectory, hashDirectory } from '../scripts/frontend-build-lib.mjs';
 import { testLayoutSizing } from './layout-sizing-smoke.mjs';
 import { testChatExtractor } from './chat-extractor-smoke.mjs';
+import { testManageChatsSorting } from './manage-chats-sort-smoke.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const serverStartAttempts = 3;
@@ -809,7 +810,10 @@ try {
     await page.waitForFunction(() => Boolean(globalThis.SillyTavern?.getContext().SlashCommandParser.commands['stmb-highest']), null, { timeout: 30_000 });
 
     const requests = [...applicationRequests].sort();
-    if (layoutsOnly) {
+    if (process.argv.includes('--manage-chats')) {
+        await testManageChatsSorting(page);
+        assert.deepEqual(pageErrors, [], 'Manage Chats sorting produced browser errors.');
+    } else if (layoutsOnly) {
         await page.evaluate(() => new Promise(resolve => {
             const context = globalThis.SillyTavern.getContext();
             context.eventSource.once(context.eventTypes.APP_READY, resolve);
@@ -843,6 +847,7 @@ try {
         await testLayoutSizing(page);
         assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected layout diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
         await testChatExtractor(page);
+        await testManageChatsSorting(page);
         await testChatOnlyControls(page);
         assert.deepEqual(pageErrors, [], 'Chat extraction produced browser errors.');
     }
