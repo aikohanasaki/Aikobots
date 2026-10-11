@@ -6552,5 +6552,10 @@
   ,"Compact Entry": "Eintrag verdichten"
   ,"Compacting...": "Wird verdichtet..."
   ,"Compaction failed.": "Verdichtung fehlgeschlagen."
-  ,"Only reasoning tokens were returned. No response text was generated.": "Es wurden nur Denktokens zurückgegeben. Es wurde kein Antworttext generiert."
+  ,"Only reasoning tokens were returned. No response text was generated.": "Es wurden nur Denktokens zurückgegeben. Es wurde kein Antworttext generiert.",
+  "Standalone universe": "Eigenständiges Universum",
+  "Allow users to select this server lorebook globally without viewing its contents.": "Benutzern erlauben, dieses Server-Lorebook global auszuwählen, ohne seinen Inhalt einzusehen.",
+  "“${0}” has been withdrawn as a standalone universe and is no longer active in your global selection.": "„${0}“ wurde als eigenständiges Universum zurückgezogen und ist in deiner globalen Auswahl nicht mehr aktiv.",
+  "Could not update standalone universe availability.": "Die Verfügbarkeit des eigenständigen Universums konnte nicht aktualisiert werden.",
+  "Could not refresh lorebook availability. The preset was not applied.": "Die Verfügbarkeit der Lorebooks konnte nicht aktualisiert werden. Die Voreinstellung wurde nicht angewendet."
 }

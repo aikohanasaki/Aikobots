@@ -6627,5 +6627,10 @@
   ,"Compact Entry": "Сжать запись"
   ,"Compacting...": "Сжатие..."
   ,"Compaction failed.": "Не удалось сжать запись."
-  ,"Only reasoning tokens were returned. No response text was generated.": "Были возвращены только токены рассуждений. Текст ответа не был сгенерирован."
+  ,"Only reasoning tokens were returned. No response text was generated.": "Были возвращены только токены рассуждений. Текст ответа не был сгенерирован.",
+  "Standalone universe": "Самостоятельная вселенная",
+  "Allow users to select this server lorebook globally without viewing its contents.": "Разрешить пользователям выбирать этот серверный лорбук в глобальном списке без доступа к его содержимому.",
+  "“${0}” has been withdrawn as a standalone universe and is no longer active in your global selection.": "«${0}» больше не доступен как самостоятельная вселенная и отключён в вашем глобальном выборе.",
+  "Could not update standalone universe availability.": "Не удалось обновить доступность самостоятельной вселенной.",
+  "Could not refresh lorebook availability. The preset was not applied.": "Не удалось обновить доступность лорбуков. Пресет не был применён."
 }

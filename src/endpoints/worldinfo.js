@@ -21,6 +21,9 @@ import {
     demoteLorebook,
     getLorebookForManagement,
     listLorebooksForManagement,
+    listStandaloneUniverseNames,
+    setStandaloneUniverse,
+    filterGlobalLorebookNames,
     promoteLorebook,
     promoteLorebookToShared,
     readLorebookForGenerationWithMetadata,
@@ -412,7 +415,8 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
         return sourceEntries;
     }
 
-    const globalWorldNames = claimWorldNames(selectedWorldSet);
+    const filterGlobal = options.filterGlobalLorebookNames ?? filterGlobalLorebookNames;
+    const globalWorldNames = claimWorldNames(filterGlobal(user, [...selectedWorldSet]));
     const chatWorldNames = claimWorldNames(chatWorld ? [chatWorld] : []);
     const personaWorldNames = claimWorldNames(personaWorld ? [personaWorld] : []);
     const visibleCharacterWorldNames = claimWorldNames(visibleCharacterBooks);
@@ -708,7 +712,22 @@ async function validateEnabledHandle(handle) {
 router.post('/list', async (request, response) => {
     try {
         const items = await listLorebooksForManagement(request.user);
-        return response.send({ items, world_info_items: items, world_names: items.map(item => item.name) });
+        let standalone_universe_names;
+        try {
+            standalone_universe_names = listStandaloneUniverseNames();
+        } catch {
+            console.warn('[Lorebooks] Standalone universe catalog is unavailable.');
+        }
+        return response.send({ items, world_info_items: items, world_names: items.map(item => item.name), standalone_universe_names });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/standalone-universe', async (request, response) => {
+    try {
+        const item = await setStandaloneUniverse(request.user, request.body?.name, request.body?.enabled);
+        return response.send(item);
     } catch (error) {
         return sendLorebookError(response, error);
     }

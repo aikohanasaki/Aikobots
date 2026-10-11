@@ -31,6 +31,7 @@ describe('World Info activation sources', () => {
             },
             {
                 readEntries,
+                filterGlobalLorebookNames: (_user, names) => names,
                 getHiddenBooks: () => ['Default Background Book', 'Character Background Book', 'Shared Book'],
                 hasLorebook: () => true,
             },
@@ -75,7 +76,7 @@ describe('World Info activation sources', () => {
                 selectedGroup: true,
                 activeSpeaker: { name: 'Alice' },
             },
-            { readEntries },
+            { readEntries, filterGlobalLorebookNames: (_user, names) => names },
         );
 
         expect(Object.fromEntries(result.entries.map(entry => [entry.world, entry.lorebookPriority]))).toEqual({

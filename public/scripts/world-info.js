@@ -41,7 +41,7 @@ import {
     normalizeWorldInfoSortOrder,
     SEARCH_WORLD_INFO_SORT_ORDER,
 } from './world-info-sort-order.js';
-import { mergeWorldInfoPresetSelection } from './world-info-locks-policy.js';
+import { mergeWorldInfoPresetSelection, getWithdrawnUniverseNames } from './world-info-locks-policy.js';
 
 export const world_info_logic = {
     AND_ANY: 0,
@@ -75,6 +75,9 @@ export let selected_world_info = [];
 /** @type {string[]} */
 export let world_names;
 let world_info_items = [];
+let standaloneUniverseNames = [];
+let globalWorldNames = [];
+let universeRefreshPromise = null;
 const worldInfoItemMap = new Map();
 let worldEditorLoadToken = 0;
 export let world_info_depth = 2;
@@ -314,6 +317,7 @@ function normalizeWorldInfoItems(data = {}) {
                     canForceCheckout: hasOwn('canForceCheckout') ? Boolean(item.canForceCheckout) : undefined,
                     canManageOwners: hasOwn('canManageOwners') ? Boolean(item.canManageOwners) : undefined,
                     reservedTemplate: Boolean(item.reservedTemplate),
+                    standaloneUniverse: item.standaloneUniverse === true,
                 };
             });
     }
@@ -420,17 +424,71 @@ export function getSecureWorldNames() {
     return world_info_items.filter(item => item.storage === 'secure').map(item => item.name);
 }
 
-/** Returns ordinary user lorebooks that may be stored in and changed by a World Info preset. */
+/** Returns ordinary books and public universes managed by a World Info preset. */
 export function getPresetEligibleWorldNames() {
-    return world_info_items
+    return [...new Set([...world_info_items
         .filter(item => item.storage === 'user' && !item.reservedTemplate)
-        .map(item => item.name);
+        .map(item => item.name), ...standaloneUniverseNames])];
+}
+
+/** Keeps secure universe names out of the preset's optional bundled contents. */
+export function isOrdinaryPresetLorebook(name) {
+    const item = getWorldInfoItem(name);
+    return item?.storage === 'user' && !item.reservedTemplate;
+}
+
+/** Returns the public universe references to retain with a preset. */
+export function getPresetStandaloneUniverses(names) {
+    return names.filter(name => standaloneUniverseNames.includes(name));
+}
+
+/** Remembers public selections so withdrawal can be recognized after an offline restart. */
+function rememberStandaloneUniverses(names = selected_world_info) {
+    const remembered = Array.isArray(world_info.standaloneUniverses) ? world_info.standaloneUniverses : [];
+    world_info.standaloneUniverses = [...new Set([...remembered, ...names.filter(name => standaloneUniverseNames.includes(name))])];
+}
+
+/** Announces withdrawal using escaped text, never lorebook contents. */
+function notifyWithdrawnUniverse(name) {
+    toastr.warning(t`“${name}” has been withdrawn as a standalone universe and is no longer active in your global selection.`, t`World Info`, { escapeHtml: true });
+}
+
+/** Applies only successful catalogs; missing catalogs never erase saved selections. */
+function reconcileStandaloneUniverses(data) {
+    if (!Array.isArray(data?.standalone_universe_names)) return;
+    standaloneUniverseNames = data.standalone_universe_names.filter(name => typeof name === 'string' && name);
+    const withdrawn = getWithdrawnUniverseNames(selected_world_info, world_info.standaloneUniverses, standaloneUniverseNames, world_names);
+    if (withdrawn.length) {
+        selected_world_info = selected_world_info.filter(name => !withdrawn.includes(name));
+        world_info.globalSelect = selected_world_info;
+        withdrawn.forEach(notifyWithdrawnUniverse);
+        saveSettingsDebounced();
+        eventSource.emit(event_types.WORLDINFO_SETTINGS_UPDATED);
+    }
+    rememberStandaloneUniverses();
+}
+
+/** Refreshes opt-in availability before presets and when a selected universe may be withdrawn. */
+export async function refreshStandaloneUniverses(presetNames = [], presetUniverses = []) {
+    const previouslySelected = new Set(selected_world_info);
+    const remembered = Array.isArray(world_info.standaloneUniverses) ? world_info.standaloneUniverses : [];
+    world_info.standaloneUniverses = [...new Set([...remembered, ...presetUniverses.filter(name => typeof name === 'string' && presetNames.includes(name))])];
+    if (!universeRefreshPromise) {
+        universeRefreshPromise = updateWorldInfoList().catch(() => false).finally(() => { universeRefreshPromise = null; });
+    }
+    const refreshed = await universeRefreshPromise;
+    if (refreshed) {
+        getWithdrawnUniverseNames(presetNames, world_info.standaloneUniverses, standaloneUniverseNames, world_names)
+            .filter(name => !previouslySelected.has(name))
+            .forEach(notifyWithdrawnUniverse);
+    }
+    return refreshed;
 }
 
 /**
- * Replaces the preset-managed user lorebooks while preserving secure and hidden selections.
- * @param {string[]} names Ordinary user lorebook names requested by the preset.
- * @returns {string[]} The ordinary lorebooks that were applied.
+ * Replaces preset-managed selections while preserving other secure and hidden bindings.
+ * @param {string[]} names Eligible lorebook names requested by the preset.
+ * @returns {string[]} The requested lorebooks that were applied.
  */
 export function applyWorldInfoPresetSelection(names = []) {
     const eligibleNames = new Set(getPresetEligibleWorldNames());
@@ -442,13 +500,14 @@ export function applyWorldInfoPresetSelection(names = []) {
         requestedNames,
         eligibleNames,
         secureNames,
-        new Set(world_names),
+        new Set(globalWorldNames),
     );
     Object.assign(world_info, { globalSelect: selected_world_info });
+    rememberStandaloneUniverses();
 
     $('#world_info option').each(function () {
         const value = String($(this).val());
-        const worldName = value ? world_names[Number(value)] : '';
+        const worldName = value ? globalWorldNames[Number(value)] : '';
         $(this).prop('selected', Boolean(worldName && selected_world_info.includes(worldName)));
     });
     $('#world_info').trigger('change.select2');
@@ -514,7 +573,7 @@ function hasBoundWorldInfo(name) {
 }
 
 function getHiddenSelectedWorldInfo() {
-    return selected_world_info.filter(name => hasBoundWorldInfo(name) && !world_names.includes(name));
+    return selected_world_info.filter(name => hasBoundWorldInfo(name) && !globalWorldNames.includes(name));
 }
 
 export function getLegacyCharacterExtraBooks(fileName) {
@@ -597,6 +656,8 @@ function updateWorldInfoStorageButton(name = '') {
     const button = $('#world_secure_toggle');
     const icon = button.find('i');
     const item = getWorldInfoItem(name);
+    $('#world_standalone_universe_label').prop('hidden', item?.storage !== 'secure');
+    $('#world_standalone_universe').prop('checked', item?.standaloneUniverse === true).prop('disabled', !item?.canEdit);
 
     if (!item) {
         const label = t`Move lorebook between user and secure storage`;
@@ -650,12 +711,11 @@ function refreshWorldInfoSelectors(editorSelected = '') {
     $('#world_info').find('option[value!=""]').remove();
     $('#world_editor_select').find('option[value!=""]').remove();
 
+    globalWorldNames = [...new Set([...world_names.filter(name => !isReservedTemplateWorldName(name)), ...standaloneUniverseNames])];
+    globalWorldNames.forEach((name, i) => {
+        $('#world_info').append(new Option(name, i.toString(), false, selected_world_info.includes(name)));
+    });
     world_names.forEach((item, i) => {
-        if (!isReservedTemplateWorldName(item)) {
-            const globalListOption = new Option(item, i.toString());
-            globalListOption.selected = selected_world_info.includes(item);
-            $('#world_info').append(globalListOption);
-        }
         const editorListOption = new Option(item, i.toString());
         editorListOption.selected = editorSelected === item;
         $('#world_editor_select').append(editorListOption);
@@ -665,6 +725,7 @@ function refreshWorldInfoSelectors(editorSelected = '') {
     updateWorldInfoSharedManageButton(editorSelected);
     updateWorldInfoCheckoutButton(editorSelected);
     updateWorldInfoCheckoutStatus(editorSelected);
+    $('#world_info').trigger('change.select2');
 }
 
 async function requestWorldInfoList() {
@@ -1721,6 +1782,7 @@ export function setWorldInfoSettings(settings, data) {
 
     // Add to existing selected WI if it exists
     selected_world_info = normalizeArray(selected_world_info.concat(settings.world_info?.globalSelect?.filter(hasBoundWorldInfo) ?? []));
+    reconcileStandaloneUniverses(data);
 
     refreshWorldInfoSelectors();
 
@@ -4065,8 +4127,11 @@ export async function updateWorldInfoList() {
     if (data) {
         const editorSelected = String($('#world_editor_select').find(':selected').text());
         setWorldInfoItems(normalizeWorldInfoItems(data));
+        reconcileStandaloneUniverses(data);
         refreshWorldInfoSelectors(editorSelected);
+        return Array.isArray(data.standalone_universe_names);
     }
+    return false;
 }
 
 /**
@@ -7783,10 +7848,10 @@ export function onWorldInfoChange(args, text) {
     } else { //if it's a pointer selection
         const tempWorldInfo = [];
         const val = $('#world_info').val();
-        const selectedWorlds = (Array.isArray(val) ? val : [val]).map((e) => Number(e)).filter((e) => !isNaN(e));
+        const selectedWorlds = (Array.isArray(val) ? val : [val]).filter(value => value !== null && value !== '').map(Number).filter(Number.isInteger);
         if (selectedWorlds.length > 0) {
             selectedWorlds.forEach((worldIndex) => {
-                const existingWorldName = world_names[worldIndex];
+                const existingWorldName = globalWorldNames[worldIndex];
                 if (existingWorldName) {
                     tempWorldInfo.push(existingWorldName);
                 } else {
@@ -7799,6 +7864,7 @@ export function onWorldInfoChange(args, text) {
         selected_world_info = normalizeArray([...tempWorldInfo, ...getHiddenSelectedWorldInfo()]);
     }
 
+    rememberStandaloneUniverses();
     saveSettingsDebounced();
     eventSource.emit(event_types.WORLDINFO_SETTINGS_UPDATED);
     return '';
@@ -8369,9 +8435,34 @@ export async function charSetAuxWorlds(fileName, books) {
 }
 
 export function initWorldInfo() {
+    $('#world_standalone_universe').on('change', async function () {
+        const name = world_names[Number($('#world_editor_select').val())];
+        $(this).prop('disabled', true);
+        try {
+            const response = await fetch('/api/worldinfo/standalone-universe', {
+                method: 'POST', headers: getRequestHeaders(),
+                body: JSON.stringify({ name, enabled: this.checked }),
+            });
+            if (!response.ok) throw new Error('Designation update failed');
+            upsertWorldInfoItem(await response.json());
+            await refreshStandaloneUniverses();
+        } catch {
+            toastr.error(t`Could not update standalone universe availability.`, t`World Info`);
+        } finally {
+            const selectedIndex = $('#world_editor_select').val();
+            updateWorldInfoStorageButton(selectedIndex === '' ? '' : world_names[Number(selectedIndex)]);
+        }
+    });
+    const refreshSelectedUniverses = () => {
+        if (!document.hidden && selected_world_info.some(name => world_info.standaloneUniverses?.includes(name))) {
+            void refreshStandaloneUniverses();
+        }
+    };
+    document.addEventListener('visibilitychange', refreshSelectedUniverses);
+    setInterval(refreshSelectedUniverses, 60_000);
     $('#world_info').on('mousedown change', async function (e) {
         // If there's no world names, don't do anything
-        if (world_names.length === 0) {
+        if (globalWorldNames.length === 0) {
             e.preventDefault();
             return;
         }

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
     getEligiblePresetWorldNames,
+    getWithdrawnUniverseNames,
     isCoreWorldInfoLocksExtension,
     isSafeOrdinaryLorebookExportResponse,
     loadWorldInfoLocksSettingsSource,
@@ -23,6 +24,33 @@ test('canonical legacy World Info Locks manifests are superseded by core', () =>
         homePage: 'https://github.com/aikohanasaki/SillyTavern-WorldInfoLocks/',
     }), true);
     assert.equal(isCoreWorldInfoLocksExtension('another-extension', { homePage: 'https://example.com' }), false);
+});
+
+test('standalone universes can be combined and deselected without changing protected bindings', () => {
+    assert.deepEqual(mergeWorldInfoPresetSelection(
+        ['Universe A', 'Secure', 'Hidden'], ['Ordinary', 'Universe B'],
+        ['Ordinary', 'Universe A', 'Universe B'], ['Universe A', 'Secure'], ['Ordinary', 'Universe A', 'Universe B', 'Secure'],
+    ), ['Ordinary', 'Universe B', 'Secure', 'Hidden']);
+    const preset = validateWorldInfoPresetImport({ name: 'Universes', worldList: ['Universe A', 'Universe B'], standaloneUniverses: ['Universe A', 'Universe B'] });
+    assert.deepEqual(preset.standaloneUniverses, ['Universe A', 'Universe B']);
+    assert.equal(isSafeOrdinaryLorebookExportResponse({ metadata: { storage: 'secure' }, data: { entries: {} } }), false);
+});
+
+test('preset universe references normalize whitespace before matching and deduplicating', () => {
+    const preset = validateWorldInfoPresetImport({
+        name: 'Universes',
+        worldList: [' Universe A ', ' Universe B ', 'Universe C'],
+        standaloneUniverses: [' Universe A ', 'Universe A', 'Universe B', ' Universe C ', 'Missing', ' ', null, 42],
+    });
+    assert.deepEqual(preset.worldList, ['Universe A', 'Universe B', 'Universe C']);
+    assert.deepEqual(preset.standaloneUniverses, preset.worldList);
+});
+
+test('withdrawal recognizes offline selections and protects owner/local books and unrelated selections', () => {
+    const remembered = ['Withdrawn', 'Available', 'Owned', 'Local'];
+    assert.deepEqual(getWithdrawnUniverseNames(['Withdrawn', 'Available', 'Owned', 'Local', 'Hidden'], remembered, ['Available'], ['Owned', 'Local']), ['Withdrawn']);
+    assert.deepEqual(getWithdrawnUniverseNames(['Available', 'Hidden'], remembered, ['Available'], []), []);
+    assert.deepEqual(getWithdrawnUniverseNames(['Withdrawn'], remembered, [], []), ['Withdrawn']);
 });
 
 test('legacy World Info Locks settings normalize without dropping compatibility fields', () => {

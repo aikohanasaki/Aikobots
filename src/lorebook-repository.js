@@ -85,6 +85,7 @@ function runWithSecureLorebookMutationLock(operation) {
  * @property {boolean} [canCheckIn]
  * @property {boolean} [canForceCheckout]
  * @property {boolean} [canManageOwners]
+ * @property {boolean} [standaloneUniverse] Absent for legacy books; false records withdrawal.
  */
 
 function hasTrailingJsonExtension(name) {
@@ -182,6 +183,7 @@ function normalizeSharedSecureIndexBooks(books) {
 
         normalizedBooks[canonicalName] = {
             owners,
+            ...(typeof metadata?.standaloneUniverse === 'boolean' ? { standaloneUniverse: metadata.standaloneUniverse } : {}),
             createdAt: metadata?.createdAt || null,
             updatedAt: metadata?.updatedAt || null,
             createdBy: metadata?.createdBy || null,
@@ -557,6 +559,7 @@ function getSecureIndexEntry(name) {
         storage: 'secure',
         sharingMode: 'single',
         ownerHandle: String(metadata.ownerHandle || ''),
+        standaloneUniverse: metadata.standaloneUniverse,
         ownerHandles: [String(metadata.ownerHandle || '')].filter(Boolean),
         createdAt: metadata.createdAt || null,
         updatedAt: metadata.updatedAt || null,
@@ -607,6 +610,7 @@ function getSharedSecureIndexEntry(name) {
         storage: 'secure',
         sharingMode: 'shared',
         ownerHandle: getPrimaryOwnerHandle(ownerHandles),
+        standaloneUniverse: metadata.standaloneUniverse,
         ownerHandles,
         createdAt: metadata.createdAt || null,
         updatedAt: metadata.updatedAt || null,
@@ -710,6 +714,7 @@ function buildLorebookMetadata(record, user = null) {
 
     return {
         name: record?.name || '',
+        standaloneUniverse: record?.standaloneUniverse,
         storage: record?.storage === 'secure' ? 'secure' : 'user',
         ownerHandle: getPrimaryOwnerHandle(ownerHandles) || String(record?.ownerHandle || '').trim(),
         ownerHandles,
@@ -736,6 +741,7 @@ function buildListItem(record, user) {
     return {
         name: record.name,
         storage: record.storage,
+        standaloneUniverse: record.standaloneUniverse,
         ownerHandle: metadata.ownerHandle,
         ownerHandles: metadata.ownerHandles,
         sharingMode: metadata.sharingMode,
@@ -874,6 +880,7 @@ function writeSecureLorebookMetadata(name, ownerHandle, actorHandle, existingMet
     mutateSecureIndex(index => {
         index.books[canonicalName] = {
             ownerHandle,
+            ...(typeof existingMetadata?.standaloneUniverse === 'boolean' ? { standaloneUniverse: existingMetadata.standaloneUniverse } : {}),
             createdAt: existingMetadata?.createdAt || timestamp,
             updatedAt: timestamp,
             createdBy: existingMetadata?.createdBy || actorHandle,
@@ -896,6 +903,7 @@ function writeSharedSecureLorebookMetadata(name, ownerHandles, actorHandle, exis
         const preserveCheckout = nextCheckedOutBy && normalizedOwners.includes(nextCheckedOutBy);
         index.books[canonicalName] = {
             owners: normalizedOwners,
+            ...(typeof existingMetadata?.standaloneUniverse === 'boolean' ? { standaloneUniverse: existingMetadata.standaloneUniverse } : {}),
             createdAt: existingMetadata?.createdAt || timestamp,
             updatedAt: timestamp,
             createdBy: existingMetadata?.createdBy || actorHandle,
@@ -2168,6 +2176,79 @@ export function listLorebooksForManagement(user) {
     return items.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Fails closed instead of treating an unreadable index as a successful empty catalog. */
+function readStandaloneUniverseIndexes() {
+    return [getSecureIndexPath(), getSharedSecureIndexPath()].map(indexPath => {
+        if (!fs.existsSync(indexPath)) return { books: {} };
+        try {
+            const index = readJsonFileSync(indexPath);
+            if (index?.books && typeof index.books === 'object' && !Array.isArray(index.books)) return index;
+        } catch { /* Return a content-free error below. */ }
+        throw new LorebookRepositoryError('LorebookCatalogUnavailable', 'Lorebook catalog is unavailable.', 503);
+    });
+}
+
+/** Lists only the public names of available standalone universes, without reading entries. */
+export function listStandaloneUniverseNames() {
+    const names = new Set();
+    const [secure, shared] = readStandaloneUniverseIndexes();
+    for (const [index, resolve] of [[secure, getSecureIndexEntry], [shared, getSharedSecureIndexEntry]]) {
+        for (const [name, metadata] of Object.entries(index.books)) {
+            if (metadata?.standaloneUniverse !== true) continue;
+            const record = resolve(name);
+            if (!record) {
+                console.warn('[Lorebooks] Skipping an unavailable standalone universe record.');
+                continue;
+            }
+            names.add(record.name);
+        }
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+/** Updates discoverability under the same cross-worker lock and permissions as secure edits. */
+export async function setStandaloneUniverse(user, name, enabled) {
+    if (typeof name !== 'string' || !name.trim()) {
+        throw new LorebookRepositoryError('LorebookInvalidName', 'Lorebook name is required.', 400);
+    }
+    if (typeof enabled !== 'boolean') {
+        throw new LorebookRepositoryError('LorebookInvalidDesignation', 'Standalone universe must be a boolean.', 400);
+    }
+    const canonicalName = assertCanonicalName(name);
+    return runWithSecureLorebookMutationLock(async () => {
+        readStandaloneUniverseIndexes();
+        const record = getSharedSecureIndexEntry(canonicalName) || getSecureIndexEntry(canonicalName);
+        if (!record || !canManageSecureLorebook(user, record)) {
+            throw new LorebookRepositoryError('LorebookNotFound', 'Lorebook not found.', 404);
+        }
+        assertSharedLorebookCheckedOutForEdit(user, record);
+        const mutate = record.sharingMode === 'shared' ? mutateSharedSecureIndex : mutateSecureIndex;
+        mutate(index => {
+            const metadata = index.books[canonicalName];
+            // An untouched unchecked box must not turn a legacy book into a withdrawn universe.
+            if (enabled || typeof metadata.standaloneUniverse === 'boolean') metadata.standaloneUniverse = enabled;
+            metadata.updatedAt = new Date().toISOString();
+            metadata.updatedBy = user.profile.handle;
+        });
+        return buildListItem({ ...record, standaloneUniverse: typeof record.standaloneUniverse === 'boolean' || enabled ? enabled : undefined }, user);
+    });
+}
+
+/** Filters global opt-ins from one index snapshot, preserving local shadowing and management access. */
+export function filterGlobalLorebookNames(user, names) {
+    if (!names.length) return [];
+    const [secure, shared] = readStandaloneUniverseIndexes();
+    return names.filter(name => {
+        const canonicalName = getCanonicalLorebookName(name);
+        if (!canonicalName) return false;
+        const metadata = shared.books[canonicalName] || secure.books[canonicalName];
+        if (metadata?.standaloneUniverse !== false) return true;
+        const record = getSharedSecureIndexEntry(canonicalName) || getSecureIndexEntry(canonicalName);
+        if (record && canManageSecureLorebook(user, record)) return true;
+        return Boolean(getUserLorebookRecord(user.profile.handle, canonicalName));
+    });
+}
+
 /** Returns content-free occupied lorebook names for allocation under the mutation lock. */
 export function listLorebookNamesForAllocation(user) {
     const names = new Set([
@@ -3006,7 +3087,7 @@ export async function promoteLorebookToShared(user, sourceName, sharedName, owne
 
         try {
             writeSharedSecureLorebook(sharedCanonicalName, data);
-            writeSharedSecureLorebookMetadata(sharedCanonicalName, normalizedOwners, user.profile.handle, existingSharedTarget);
+            writeSharedSecureLorebookMetadata(sharedCanonicalName, normalizedOwners, user.profile.handle, existingSharedTarget || { standaloneUniverse: secureSourceRecord?.standaloneUniverse });
             if (secureSourceRecord) {
                 removeSecureLorebook(sourceCanonicalName);
                 const sourceBackingPath = getUserLorebookPath(secureSourceRecord.ownerHandle, sourceCanonicalName);
@@ -3183,7 +3264,7 @@ export async function unshareLorebook(user, name, targetOwnerHandle) {
         try {
             writeUserLorebook(normalizedTargetOwnerHandle, targetName, data);
             createSecureLorebookLink(targetName, normalizedTargetOwnerHandle);
-            writeSecureLorebookMetadata(targetName, normalizedTargetOwnerHandle, user.profile.handle);
+            writeSecureLorebookMetadata(targetName, normalizedTargetOwnerHandle, user.profile.handle, { standaloneUniverse: sharedSecureRecord.standaloneUniverse });
             removeSharedSecureLorebook(canonicalName);
         } catch (error) {
             if (didUnshareLorebookSucceed(canonicalName, targetName, normalizedTargetOwnerHandle)) {

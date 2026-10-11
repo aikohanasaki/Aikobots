@@ -1996,5 +1996,10 @@
   ,"Compact Entry": "Compactar entrada"
   ,"Compacting...": "A compactar..."
   ,"Compaction failed.": "A compactação falhou."
-  ,"Only reasoning tokens were returned. No response text was generated.": "Foram devolvidos apenas tokens de raciocínio. Não foi gerado texto de resposta."
+  ,"Only reasoning tokens were returned. No response text was generated.": "Foram devolvidos apenas tokens de raciocínio. Não foi gerado texto de resposta.",
+  "Standalone universe": "Universo independente",
+  "Allow users to select this server lorebook globally without viewing its contents.": "Permitir que os utilizadores selecionem globalmente este livro de lore do servidor sem verem o seu conteúdo.",
+  "“${0}” has been withdrawn as a standalone universe and is no longer active in your global selection.": "«${0}» foi retirado como universo independente e já não está ativo na sua seleção global.",
+  "Could not update standalone universe availability.": "Não foi possível atualizar a disponibilidade do universo independente.",
+  "Could not refresh lorebook availability. The preset was not applied.": "Não foi possível atualizar a disponibilidade dos livros de lore. A predefinição não foi aplicada."
 }

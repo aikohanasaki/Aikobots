@@ -6612,5 +6612,10 @@
   ,"Compact Entry": "Compacter l’entrée"
   ,"Compacting...": "Compactage en cours..."
   ,"Compaction failed.": "Le compactage a échoué."
-  ,"Only reasoning tokens were returned. No response text was generated.": "Seuls des tokens de raisonnement ont été renvoyés. Aucun texte de réponse n’a été généré."
+  ,"Only reasoning tokens were returned. No response text was generated.": "Seuls des tokens de raisonnement ont été renvoyés. Aucun texte de réponse n’a été généré.",
+  "Standalone universe": "Univers autonome",
+  "Allow users to select this server lorebook globally without viewing its contents.": "Autoriser les utilisateurs à sélectionner globalement ce lorebook du serveur sans consulter son contenu.",
+  "“${0}” has been withdrawn as a standalone universe and is no longer active in your global selection.": "« ${0} » a été retiré des univers autonomes et n’est plus actif dans votre sélection globale.",
+  "Could not update standalone universe availability.": "Impossible de mettre à jour la disponibilité de l’univers autonome.",
+  "Could not refresh lorebook availability. The preset was not applied.": "Impossible d’actualiser la disponibilité des lorebooks. Le préréglage n’a pas été appliqué."
 }

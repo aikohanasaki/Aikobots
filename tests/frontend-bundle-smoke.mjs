@@ -653,13 +653,23 @@ async function testWorldInfoBulkDelete(page, fatalBrowserDiagnostics) {
 
 /** Verifies World Info preset changes redraw the global Select2 selection. */
 async function testWorldInfoPresetSelectionUi(page) {
+    const universeName = 'Synthetic Universe <b>plain text</b>';
+    let universeAvailable = true;
+    const catalogHandler = async route => {
+        const response = await route.fetch();
+        const catalog = await response.json();
+        await route.fulfill({ json: { ...catalog, standalone_universe_names: universeAvailable ? [universeName] : [] } });
+    };
+    await page.route('**/api/worldinfo/list', catalogHandler);
+    await page.locator('#world_info_locks_restore').evaluate(button => button.click());
+    await page.locator('#world_info option').filter({ hasText: universeName }).waitFor({ state: 'attached' });
+    assert.equal(await page.locator('#world_editor_select option').filter({ hasText: universeName }).count(), 0, 'Public universes must not enter the editor selector.');
     const worldSelect = page.locator('#world_info');
     await page.locator('#world_info option').filter({ hasText: 'Bulk Delete Smoke' }).waitFor({ state: 'attached' });
-    await worldSelect.evaluate(select => {
-        const option = Array.from(select.options).find(candidate => candidate.textContent === 'Bulk Delete Smoke');
-        select.value = option.value;
+    await worldSelect.evaluate((select, universeName) => {
+        for (const option of select.options) option.selected = ['Bulk Delete Smoke', universeName].includes(option.textContent);
         globalThis.jQuery(select).trigger('change');
-    });
+    }, universeName);
 
     await page.locator('#world_info_locks_create').evaluate(button => button.click());
     const namePopup = page.locator('dialog.popup').filter({ hasText: 'Create World Info Preset' });
@@ -675,12 +685,13 @@ async function testWorldInfoPresetSelectionUi(page) {
     const presetSelect = page.locator('#world_info_locks_preset');
     await page.locator('#world_info_locks_preset option[value="Global Selection Smoke"]').waitFor({ state: 'attached' });
     await worldSelect.evaluate(select => globalThis.jQuery(select).val(null).trigger('change'));
-    await page.locator('#world_info option:checked:not([value=""])').waitFor({ state: 'detached' });
+    await page.locator('#world_info option:checked:not([value=""])').first().waitFor({ state: 'detached' });
     await presetSelect.evaluate(select => {
         select.value = 'Global Selection Smoke';
         globalThis.jQuery(select).trigger('change');
     });
     await page.locator('#world_info option:checked').filter({ hasText: 'Bulk Delete Smoke' }).waitFor({ state: 'attached' });
+    assert.equal(await page.locator('#world_info option:checked').filter({ hasText: universeName }).count(), 1, 'Presets must restore standalone universe selections.');
     assert.match(
         await page.locator('#world_info + .select2').textContent(),
         /Bulk Delete Smoke/u,
@@ -691,12 +702,29 @@ async function testWorldInfoPresetSelectionUi(page) {
         select.value = '';
         globalThis.jQuery(select).trigger('change');
     });
-    await page.locator('#world_info option:checked:not([value=""])').waitFor({ state: 'detached' });
+    await page.locator('#world_info option:checked:not([value=""])').first().waitFor({ state: 'detached' });
     assert.doesNotMatch(
         await page.locator('#world_info + .select2').textContent(),
         /Bulk Delete Smoke/u,
         'Deactivating a World Info preset must remove stale global lorebook choices.',
     );
+
+    await presetSelect.evaluate(select => {
+        select.value = 'Global Selection Smoke';
+        globalThis.jQuery(select).trigger('change');
+    });
+    await page.locator('#world_info option:checked').filter({ hasText: universeName }).waitFor({ state: 'attached' });
+    universeAvailable = false;
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await page.locator('#world_info option').filter({ hasText: universeName }).waitFor({ state: 'detached' });
+    const withdrawal = page.locator('.toast-message').filter({ hasText: 'has been withdrawn as a standalone universe' });
+    await withdrawal.waitFor();
+    assert.equal(await withdrawal.locator('b').count(), 0, 'Withdrawal names must render as text.');
+    assert.equal(await page.locator('#world_info option:checked').filter({ hasText: 'Bulk Delete Smoke' }).count(), 1, 'Withdrawal must preserve unrelated selections.');
+    await page.locator('#world_info_locks_restore').evaluate(button => button.click());
+    await page.waitForFunction(() => document.querySelectorAll('.toast-message').length >= 2);
+    assert.equal(await page.locator('#world_info option').filter({ hasText: universeName }).count(), 0, 'Restoring a stale preset must not reintroduce withdrawn universes.');
+    await page.unroute('**/api/worldinfo/list', catalogHandler);
 }
 
 /** Checks that surviving image integrations can open their shared key manager. */

@@ -17,6 +17,9 @@ import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import {
     applyWorldInfoPresetSelection,
     getPresetEligibleWorldNames,
+    isOrdinaryPresetLorebook,
+    getPresetStandaloneUniverses,
+    refreshStandaloneUniverses,
     getWorldInfoSettings,
     importWorldInfo,
     selected_world_info,
@@ -346,6 +349,11 @@ function applyWorldInfoEngineSettings(value) {
 }
 
 async function activatePreset(preset, { skipLockPrompt = false } = {}) {
+    if (preset && !await refreshStandaloneUniverses(preset.worldList || [], preset.standaloneUniverses || [])) {
+        toastr.warning(t`Could not refresh lorebook availability. The preset was not applied.`, t`World Info Presets`);
+        renderPresetSelect();
+        return false;
+    }
     const currentLock = getContextLock();
     if (!skipLockPrompt && currentLock && currentLock !== (preset?.name || '')) {
         const confirmed = await Popup.show.confirm(
@@ -366,6 +374,7 @@ async function activatePreset(preset, { skipLockPrompt = false } = {}) {
     if (failures.length) {
         toastr.warning(t`Some saved World Info settings are no longer supported and were not applied.`, t`World Info Presets`);
     }
+    return true;
 }
 
 async function activatePresetByName(name, options = {}) {
@@ -390,16 +399,18 @@ async function applyLocksForCurrentContext() {
             renderPresetSelect();
             return;
         }
-        await activatePreset(preset, { skipLockPrompt: true });
-        showNotification(t`Applied the locked World Info preset.`);
+        if (await activatePreset(preset, { skipLockPrompt: true })) {
+            showNotification(t`Applied the locked World Info preset.`);
+        }
         return;
     }
 
     if (settings.globalDefaultPreset) {
         const preset = findPreset(settings.globalDefaultPreset);
         if (preset) {
-            await activatePreset(preset, { skipLockPrompt: true });
-            showNotification(t`Applied the default World Info preset.`);
+            if (await activatePreset(preset, { skipLockPrompt: true })) {
+                showNotification(t`Applied the default World Info preset.`);
+            }
         }
     }
     renderPresetSelect();
@@ -573,6 +584,7 @@ async function createPreset() {
     const preset = normalizeWorldInfoPreset({
         name,
         worldList: getCurrentEligibleWorldNames(),
+        standaloneUniverses: getPresetStandaloneUniverses(getCurrentEligibleWorldNames()),
         worldInfoSettings,
     });
     settings.presetList.push(preset);
@@ -588,6 +600,7 @@ async function updateCurrentPreset() {
         return;
     }
     preset.worldList = getCurrentEligibleWorldNames();
+    preset.standaloneUniverses = getPresetStandaloneUniverses(preset.worldList);
     const previousSettings = preset.worldInfoSettings && typeof preset.worldInfoSettings === 'object' && !Array.isArray(preset.worldInfoSettings)
         ? preset.worldInfoSettings
         : {};
@@ -750,7 +763,7 @@ async function importPresetFile(file) {
 }
 
 async function loadOrdinaryLorebookForExport(name) {
-    if (!getEligibleWorldNameSet().has(name)) {
+    if (!isOrdinaryPresetLorebook(name)) {
         return null;
     }
     const response = await fetch('/api/worldinfo/get', {
@@ -798,6 +811,7 @@ async function exportCurrentPreset() {
         formatVersion: WORLD_INFO_LOCKS_EXPORT_VERSION,
         name: preset.name,
         worldList,
+        standaloneUniverses: [...new Set([...(preset.standaloneUniverses || []), ...getPresetStandaloneUniverses(worldList)])].filter(name => worldList.includes(name)),
         worldInfoSettings: preset.worldInfoSettings === null
             ? null
             : filterWorldInfoEngineSettings(preset.worldInfoSettings),

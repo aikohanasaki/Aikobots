@@ -6555,5 +6555,10 @@
   ,"Compact Entry": "エントリを圧縮"
   ,"Compacting...": "圧縮中..."
   ,"Compaction failed.": "圧縮に失敗しました。"
-  ,"Only reasoning tokens were returned. No response text was generated.": "推論トークンのみが返されました。応答テキストは生成されませんでした。"
+  ,"Only reasoning tokens were returned. No response text was generated.": "推論トークンのみが返されました。応答テキストは生成されませんでした。",
+  "Standalone universe": "独立した世界",
+  "Allow users to select this server lorebook globally without viewing its contents.": "内容を閲覧することなく、このサーバーロアブックをグローバルに選択できるようにします。",
+  "“${0}” has been withdrawn as a standalone universe and is no longer active in your global selection.": "「${0}」は独立した世界としての公開が取り消されたため、グローバル選択では有効ではなくなりました。",
+  "Could not update standalone universe availability.": "独立した世界の利用可否を更新できませんでした。",
+  "Could not refresh lorebook availability. The preset was not applied.": "ロアブックの利用可否を更新できませんでした。プリセットは適用されませんでした。"
 }

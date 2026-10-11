@@ -26,7 +26,7 @@ import {
 import { getConfigValue, generateTimestamp, removeOldBackups } from '../util.js';
 import { getAllUserHandles, getUserDirectories } from '../users.js';
 import { getFileNameValidationFunction } from '../middleware/validateFileName.js';
-import { listLorebooksForManagement } from '../lorebook-repository.js';
+import { listLorebooksForManagement, listStandaloneUniverseNames } from '../lorebook-repository.js';
 import { preserveCharacterRepushBlacklistSettings } from '../character-repush-blacklist-settings.js';
 import { withSettingsPersonasLock } from '../settings-lock.js';
 import { isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
@@ -449,11 +449,17 @@ router.post('/get', async (request, response) => {
 
     let worldInfoItems = [];
     let world_names = [];
+    let standalone_universe_names;
     try {
         worldInfoItems = await listLorebooksForManagement(request.user) ?? [];
         world_names = worldInfoItems.map(item => item.name);
     } catch (error) {
         console.error('Failed to load lorebooks for management:', error);
+    }
+    try {
+        standalone_universe_names = listStandaloneUniverseNames();
+    } catch {
+        console.warn('[Lorebooks] Standalone universe catalog is unavailable.');
     }
 
     const themes = safeRead(() => readAndParseFromDirectory(request.user.directories.themes), [], 'themes');
@@ -466,6 +472,7 @@ router.post('/get', async (request, response) => {
         settings: settingsString,
         world_names,
         world_info_items: worldInfoItems,
+        standalone_universe_names,
         openai_settings,
         openai_setting_names,
         themes,

@@ -85,6 +85,10 @@ export function normalizeWorldInfoPreset(value) {
             ? [...new Set(value.worldList.filter(name => typeof name === 'string' && name.trim()).map(name => name.trim()))]
             : [],
     };
+    preset.standaloneUniverses = Array.isArray(value.standaloneUniverses)
+        ? [...new Set(value.standaloneUniverses.filter(name => typeof name === 'string')
+            .map(name => name.trim()).filter(name => preset.worldList.includes(name)))]
+        : [];
 
     if (Object.hasOwn(value, 'worldInfoSettings')) {
         preset.worldInfoSettings = value.worldInfoSettings === null
@@ -306,8 +310,15 @@ export function mergeWorldInfoPresetSelection(currentNames, requestedNames, elig
     const listed = listedNames instanceof Set ? listedNames : new Set(listedNames || []);
     const requested = getEligiblePresetWorldNames(requestedNames, eligible);
     const protectedNames = (Array.isArray(currentNames) ? currentNames : [])
-        .filter(name => secure.has(name) || !listed.has(name));
+        .filter(name => !eligible.has(name) && (secure.has(name) || !listed.has(name)));
     return [...new Set([...requested, ...protectedNames])];
+}
+
+/** Identifies remembered universes no longer selectable, preserving manageable/local books. */
+export function getWithdrawnUniverseNames(names, remembered, available, manageable) {
+    const known = new Set(Array.isArray(remembered) ? remembered : []);
+    const selectable = new Set([...(available || []), ...(manageable || [])]);
+    return [...new Set(names || [])].filter(name => known.has(name) && !selectable.has(name));
 }
 
 /** Renames lock and default references to a renamed preset. */
