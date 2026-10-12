@@ -5,7 +5,8 @@ import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { SETTINGS_FILE } from './constants.js';
-import { cleanupDeadLorebookHiddenReferences } from './lorebook-repository.js';
+import { cleanupDeadLorebookHiddenReferences, withLorebookManagementTransaction } from './lorebook-repository.js';
+import { readHiddenLorebookTemplates } from './hidden-lorebook-templates.js';
 import { withSettingsPersonasLock } from './settings-lock.js';
 import { getConfigValue } from './util.js';
 
@@ -72,6 +73,30 @@ function getWorldInfoContainers(settings) {
     addContainer(settings?.world_info_settings?.world_info);
     addContainer(settings?.world_info);
     return containers;
+}
+
+/** Removes legacy links only for explicit hidden-template character assignments. */
+function removeHiddenTemplateCharacterLoreReferences(settings) {
+    let characters;
+    try {
+        characters = readHiddenLorebookTemplates({ throwOnError: true }).characters;
+    } catch {
+        // Registry parse errors can contain hidden data; never propagate their payload.
+        throw new Error('Unable to read hidden template assignments for settings cleanup.');
+    }
+    let removedCount = 0;
+    for (const worldInfo of getWorldInfoContainers(settings)) {
+        if (!Array.isArray(worldInfo.charLore)) continue;
+        const remaining = worldInfo.charLore.filter(entry => {
+            if (typeof entry?.name !== 'string') return true;
+            // Match hidden-template avatar normalization, preserving dots in character names.
+            const key = entry.name.trim().replace(/\.(?:png|webp|jpe?g|gif|bmp|avif)$/i, '');
+            return !Object.hasOwn(characters, key);
+        });
+        removedCount += worldInfo.charLore.length - remaining.length;
+        worldInfo.charLore = remaining;
+    }
+    return { changed: removedCount > 0, removedCount };
 }
 
 function removeDeadLorebookWorldInfoReferences(worldInfo, deadNames) {
@@ -361,22 +386,23 @@ function writeUserSettings(directories, settings, guard) {
 }
 
 /**
- * Removes explicitly declared dead lorebook names from user settings and hidden registries.
- * This only mutates exact configured matches and does not inspect secure lorebook content.
+ * Removes dead/orphaned settings references and legacy links for hidden-template characters.
+ * Does not inspect secure lorebook content.
  * @param {import('./users.js').UserDirectoryList} directories User directories
  * @returns {Promise<{changed: boolean, removedCount: number, deadLorebookNames: string[], orphanedCharacterRemovedCount: number, orphanedCharacterSettingsRemovedCount: number, hiddenReferencesChanged: boolean}>}
  */
 export async function cleanupDeadLorebookSettingsReferences(directories) {
     const deadLorebookNames = getDeadLorebookNames();
 
-    const settingsResult = await withSettingsPersonasLock(directories, async (lock) => {
+    const settingsResult = await withLorebookManagementTransaction(() => withSettingsPersonasLock(directories, async (lock) => {
         const settings = await lock.run(() => readUserSettings(directories));
+        const hiddenCharacterResult = removeHiddenTemplateCharacterLoreReferences(settings);
         const deadLorebookResult = removeDeadLorebookSettingsReferences(settings, deadLorebookNames);
         const orphanedCharacterResult = removeOrphanedCharacterLorebookSettingsReferences(settings, directories.characters);
         const orphanedCharacterSettingsResult = removeOrphanedCharacterExtensionSettingsReferences(settings, directories.characters);
         const result = {
-            changed: deadLorebookResult.changed || orphanedCharacterResult.changed || orphanedCharacterSettingsResult.changed,
-            removedCount: deadLorebookResult.removedCount + orphanedCharacterResult.removedCount + orphanedCharacterSettingsResult.removedCount,
+            changed: hiddenCharacterResult.changed || deadLorebookResult.changed || orphanedCharacterResult.changed || orphanedCharacterSettingsResult.changed,
+            removedCount: hiddenCharacterResult.removedCount + deadLorebookResult.removedCount + orphanedCharacterResult.removedCount + orphanedCharacterSettingsResult.removedCount,
             deadLorebookNames,
             orphanedCharacterRemovedCount: orphanedCharacterResult.removedCount,
             orphanedCharacterSettingsRemovedCount: orphanedCharacterSettingsResult.removedCount,
@@ -387,7 +413,7 @@ export async function cleanupDeadLorebookSettingsReferences(directories) {
         }
 
         return result;
-    });
+    }));
     const hiddenResult = await cleanupDeadLorebookHiddenReferences(deadLorebookNames);
 
     return {
