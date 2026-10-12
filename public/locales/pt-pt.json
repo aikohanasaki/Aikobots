@@ -2001,5 +2001,17 @@
   "Allow users to select this server lorebook globally without viewing its contents.": "Permitir que os utilizadores selecionem globalmente este livro de lore do servidor sem verem o seu conteúdo.",
   "“${0}” has been withdrawn as a standalone universe and is no longer active in your global selection.": "«${0}» foi retirado como universo independente e já não está ativo na sua seleção global.",
   "Could not update standalone universe availability.": "Não foi possível atualizar a disponibilidade do universo independente.",
-  "Could not refresh lorebook availability. The preset was not applied.": "Não foi possível atualizar a disponibilidade dos livros de lore. A predefinição não foi aplicada."
+  "Could not refresh lorebook availability. The preset was not applied.": "Não foi possível atualizar a disponibilidade dos livros de lore. A predefinição não foi aplicada.",
+  "Draft ready": "Rascunho pronto",
+  "Rate limited. Waiting to retry.": "Limite de pedidos atingido. A aguardar nova tentativa.",
+  "Topical Clip queued. It will be saved automatically.": "O clip temático foi adicionado à fila. Será guardado automaticamente.",
+  "Compaction could not be saved. The entry may have changed. Review the current entry before trying again.": "Não foi possível guardar a compactação. A entrada pode ter sido alterada. Reveja a entrada atual antes de tentar novamente.",
+  "Topical Clip": "Clip temático",
+  "Compaction": "Compactação",
+  "Topical Clip entry updated.": "Entrada do clip temático atualizada.",
+  "Topical Clip saved to Memory Book.": "Clip temático guardado no Livro de Memórias.",
+  "Topical Clip generation failed.": "A geração do clip temático falhou.",
+  "Failed to save Topical Clip.": "Não foi possível guardar o clip temático.",
+  "Overwrite anyway": "Substituir na mesma",
+  "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "A entrada foi alterada desde o início da compactação. Substituir o conteúdo atual pelo seu rascunho compactado?"
 }

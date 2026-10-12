@@ -6632,5 +6632,11 @@
   "Allow users to select this server lorebook globally without viewing its contents.": "Разрешить пользователям выбирать этот серверный лорбук в глобальном списке без доступа к его содержимому.",
   "“${0}” has been withdrawn as a standalone universe and is no longer active in your global selection.": "«${0}» больше не доступен как самостоятельная вселенная и отключён в вашем глобальном выборе.",
   "Could not update standalone universe availability.": "Не удалось обновить доступность самостоятельной вселенной.",
-  "Could not refresh lorebook availability. The preset was not applied.": "Не удалось обновить доступность лорбуков. Пресет не был применён."
+  "Could not refresh lorebook availability. The preset was not applied.": "Не удалось обновить доступность лорбуков. Пресет не был применён.",
+    "Draft ready": "Черновик готов",
+    "Rate limited. Waiting to retry.": "Достигнут лимит запросов. Ожидание повторной попытки.",
+    "Topical Clip queued. It will be saved automatically.": "Тематический клип добавлен в очередь. Он будет сохранён автоматически.",
+    "Compaction could not be saved. The entry may have changed. Review the current entry before trying again.": "Не удалось сохранить результат сжатия. Возможно, запись изменилась. Проверьте текущую запись перед повторной попыткой.",
+    "Overwrite anyway": "Всё равно перезаписать",
+    "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "Запись изменилась после начала сжатия. Заменить её текущее содержимое вашим сжатым черновиком?"
 }

@@ -6617,5 +6617,11 @@
   "Allow users to select this server lorebook globally without viewing its contents.": "Autoriser les utilisateurs à sélectionner globalement ce lorebook du serveur sans consulter son contenu.",
   "“${0}” has been withdrawn as a standalone universe and is no longer active in your global selection.": "« ${0} » a été retiré des univers autonomes et n’est plus actif dans votre sélection globale.",
   "Could not update standalone universe availability.": "Impossible de mettre à jour la disponibilité de l’univers autonome.",
-  "Could not refresh lorebook availability. The preset was not applied.": "Impossible d’actualiser la disponibilité des lorebooks. Le préréglage n’a pas été appliqué."
+  "Could not refresh lorebook availability. The preset was not applied.": "Impossible d’actualiser la disponibilité des lorebooks. Le préréglage n’a pas été appliqué.",
+    "Draft ready": "Brouillon prêt",
+    "Rate limited. Waiting to retry.": "Limite de requêtes atteinte. En attente d’une nouvelle tentative.",
+    "Topical Clip queued. It will be saved automatically.": "Le clip thématique a été ajouté à la file. Il sera enregistré automatiquement.",
+    "Compaction could not be saved. The entry may have changed. Review the current entry before trying again.": "La condensation n’a pas pu être enregistrée. L’entrée a peut-être changé. Vérifiez l’entrée actuelle avant de réessayer.",
+    "Overwrite anyway": "Écraser quand même",
+    "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "L’entrée a changé depuis le début de la condensation. Remplacer son contenu actuel par votre brouillon condensé ?"
 }

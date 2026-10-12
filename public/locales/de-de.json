@@ -6557,5 +6557,11 @@
   "Allow users to select this server lorebook globally without viewing its contents.": "Benutzern erlauben, dieses Server-Lorebook global auszuwählen, ohne seinen Inhalt einzusehen.",
   "“${0}” has been withdrawn as a standalone universe and is no longer active in your global selection.": "„${0}“ wurde als eigenständiges Universum zurückgezogen und ist in deiner globalen Auswahl nicht mehr aktiv.",
   "Could not update standalone universe availability.": "Die Verfügbarkeit des eigenständigen Universums konnte nicht aktualisiert werden.",
-  "Could not refresh lorebook availability. The preset was not applied.": "Die Verfügbarkeit der Lorebooks konnte nicht aktualisiert werden. Die Voreinstellung wurde nicht angewendet."
+  "Could not refresh lorebook availability. The preset was not applied.": "Die Verfügbarkeit der Lorebooks konnte nicht aktualisiert werden. Die Voreinstellung wurde nicht angewendet.",
+    "Draft ready": "Entwurf bereit",
+    "Rate limited. Waiting to retry.": "Anfragelimit erreicht. Warten auf erneuten Versuch.",
+    "Topical Clip queued. It will be saved automatically.": "Der thematische Clip wurde eingereiht. Er wird automatisch gespeichert.",
+    "Compaction could not be saved. The entry may have changed. Review the current entry before trying again.": "Die Verdichtung konnte nicht gespeichert werden. Der Eintrag wurde möglicherweise geändert. Prüfe den aktuellen Eintrag vor einem erneuten Versuch.",
+    "Overwrite anyway": "Trotzdem überschreiben",
+    "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "Der Eintrag wurde seit Beginn der Verdichtung geändert. Den aktuellen Inhalt mit deinem verdichteten Entwurf überschreiben?"
 }

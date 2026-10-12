@@ -20,6 +20,7 @@ import { isSidePromptEntryTitle } from './stmb-sideprompts.js';
 import { escapeHtml, withGoBackButton } from './utils.js';
 import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { refreshStmbMacroCache } from './stmb-macros.js';
+import { enqueueStmbJob, getStmbJobStoreSnapshot, registerStmbJobExecutor, subscribeToStmbJobs } from './stmb-jobs.js';
 
 const MODULE_NAME = 'STMB Clips';
 const CREATE_NEW_VALUE = '__stmb_create_new_clip_entry__';
@@ -90,6 +91,84 @@ let floatingClipSelection = null;
 let floatingClipListenersBound = false;
 let floatingClipUpdateTimer = null;
 let runtime = {};
+
+/** Waits for a submitted job, including cancellation before its executor starts. */
+function queueClipJob(input) {
+    const job = enqueueStmbJob(input);
+    const completion = new Promise(resolve => {
+        const check = () => {
+            const store = getStmbJobStoreSnapshot(job.chatKey);
+            const settled = store.recentHistory.find(item => item.id === job.id);
+            if (!settled && [...store.queue, ...store.runningJobs].some(item => item.id === job.id)) return;
+            unsubscribe();
+            resolve(settled || { state: 'canceled' });
+        };
+        const unsubscribe = subscribeToStmbJobs(check);
+        check();
+    });
+    return { job, completion };
+}
+
+/** Uses content-free progress text and the queue's cancellation signal. */
+function clipJobGenerationOptions(context) {
+    return {
+        signal: context.signal,
+        onRateLimitWait: () => context.setState('generating', {
+            detail: tr('Rate limited. Waiting to retry.'),
+        }),
+    };
+}
+
+/** Generates and saves an auto-accepted clip using the captured inputs. */
+async function executeTopicalClipJob(job, context) {
+    const payload = job.payload;
+    let saving = false;
+    let normalizedDraft = '';
+    try {
+        context.signal.throwIfAborted();
+        if (getLorebookStorageForRequest(job.lorebookName) !== 'user') throw new Error();
+        context.setState('generating');
+        const draft = await requestTopicalClipDraft(payload.prompt, payload.profile, { ...clipJobGenerationOptions(context), generateData: payload.generateData });
+        context.signal.throwIfAborted();
+        normalizedDraft = normalizeTopicalClipDraftBody(draft, payload.headline);
+        if (!normalizedDraft) throw new Error();
+        saving = true;
+        context.setState('saving', { detail: '' });
+        const result = await saveTopicalClipDraft({ ...payload.saveContext, lorebookName: job.lorebookName }, normalizedDraft, { signal: context.signal });
+        context.setResult({ saved: true });
+        toastr.success(result.mode === 'update' ? tr('Topical Clip entry updated.') : tr('Topical Clip saved to Memory Book.'), 'STMB');
+    } catch (error) {
+        if (error?.code === 'STMB_CLIP_SOURCE_CHANGED' && !context.signal.aborted) {
+            void new Popup(DOMPurify.sanitize(`<h3>${escapeHtml(tr('Topical Clip'))}</h3><p>${escapeHtml(tr('Selected messages are unavailable or changed. Extract them again before generating.', 'ChatExtract_CaptureFailed'))}</p><label>${escapeHtml(tr('Draft'))}<textarea class="text_pole" rows="12" readonly>${escapeHtml(normalizedDraft)}</textarea></label>`),
+                POPUP_TYPE.TEXT, '', { wide: true, large: true, okButton: tr('Close') }).show().catch(() => {});
+        }
+        // Do not pass provider errors or source content to queue history/toasts.
+        throw new Error(saving ? tr('Failed to save Topical Clip.') : tr('Topical Clip generation failed.'));
+    }
+}
+
+/** Queues only generation; review and replacement do not occupy a queue slot. */
+async function executeCompactionJob(job, context) {
+    const payload = job.payload;
+    try {
+        context.signal.throwIfAborted();
+        if (getLorebookStorageForRequest(job.lorebookName) !== 'user') throw new Error();
+        context.setState('generating');
+        const compacted = await requestCompaction(payload.entry, payload.entryKind, payload.template, payload.profile, { ...clipJobGenerationOptions(context), generateData: payload.generateData });
+        context.signal.throwIfAborted();
+        context.setResult({ compacted });
+        context.setDetail(tr('Draft ready'));
+        // Initial callers open review after settling their loading state. Retries have no caller.
+        if (payload.reviewOnCompletion) {
+            void reviewCompactionDraft(job.lorebookName, payload, compacted);
+        }
+    } catch {
+        throw new Error(tr('Compaction failed.'));
+    }
+}
+
+registerStmbJobExecutor('topicalClip', executeTopicalClipJob);
+registerStmbJobExecutor('compaction', executeCompactionJob);
 
 export function configureStmbClipRuntime(nextRuntime = {}) {
     runtime = { ...runtime, ...nextRuntime };
@@ -1192,17 +1271,17 @@ function getCompactionEntryKindLabel(entryKind) {
     return '';
 }
 
-async function requestCompaction(entry, entryKind, template = getCompactionPromptTemplate(), profileIndex = getCompactionProfileIndex()) {
+async function requestCompaction(entry, entryKind, template, profile, options = {}) {
     const promptTemplateError = validateCompactionPromptTemplate(template);
     if (promptTemplateError) throw new Error(promptTemplateError);
     if (typeof runtime.buildGenerateData !== 'function') {
         throw new Error('STMB generation helper is not configured.');
     }
 
-    const profile = runtime.getProfile?.(profileIndex) || null;
     const prompt = buildCompactionPrompt(entry, entryKind, template);
-    const generateData = await runtime.buildGenerateData([{ role: 'user', content: prompt }], profile);
-    const response = await generateStmbText({ generateData });
+    const generateData = options.generateData || await runtime.buildGenerateData([{ role: 'user', content: prompt }], profile);
+    options.signal?.throwIfAborted();
+    const response = await generateStmbText({ generateData }, options);
     const compacted = String(response?.text || '').trim();
     if (!compacted) throw new Error(tr('Compaction returned empty content.'));
     return compacted;
@@ -1312,9 +1391,16 @@ function notifyCompactionRequestSettled(options) {
     }
 }
 
+/** Queues compaction and returns whether the user subsequently saved its reviewed draft. */
 export async function showCompactReviewPopup(lorebookName, lorebookData, entry, options = {}) {
     if (!entry || !lorebookName || !lorebookData) return false;
+    if (getLorebookStorageForRequest(lorebookName) !== 'user') {
+        toastr.error(tr('Compaction failed.'), 'STMB');
+        return false;
+    }
+    const sceneContext = buildStmbSceneContext();
     const originalContent = options.pendingContent != null ? String(options.pendingContent) : String(entry.content || '');
+    const expectedContentHash = stableHashString(String(entry.content || ''));
     const entryKind = getCompactionEntryKind(entry);
     if (!entryKind) return false;
     let profileIndex = options.profileIndex ?? getCompactionProfileIndex();
@@ -1325,16 +1411,44 @@ export async function showCompactReviewPopup(lorebookName, lorebookData, entry, 
         profileIndex = requestResult.profileIndex;
     }
 
-    let compacted = '';
+    const payload = {
+        entry: { uid: entry.uid, comment: String(entry.comment || ''), content: originalContent },
+        entryKind,
+        expectedContentHash,
+        template: getCompactionPromptTemplate(),
+        profile: structuredClone(runtime.getProfile?.(profileIndex) || null),
+        showGoBack: Boolean(options.showGoBack),
+    };
+    let settled;
     try {
-        compacted = await requestCompaction({ ...entry, content: originalContent }, entryKind, getCompactionPromptTemplate(), profileIndex);
-    } catch (error) {
+        const templateError = validateCompactionPromptTemplate(payload.template);
+        if (templateError) throw new Error(templateError);
+        payload.generateData = await runtime.buildGenerateData([{ role: 'user', content: buildCompactionPrompt(payload.entry, entryKind, payload.template) }], payload.profile);
+        settled = await queueClipJob({ type: 'compaction', lorebookName, profileIndex, sceneContext, payload }).completion;
+    } catch {
+        toastr.error(tr('Compaction failed.'), 'STMB');
+        return false;
+    } finally {
         notifyCompactionRequestSettled(options);
-        console.error(`${MODULE_NAME}: Compaction failed:`, error);
-        toastr.error(error?.message || tr('Compaction failed.'), 'STMB');
+    }
+    if (settled.state !== 'completed') return false;
+    return reviewCompactionDraft(settled.lorebookName, payload, settled.result.compacted, lorebookData);
+}
+
+/** Keeps the existing editable comparison and reports save failures without source data. */
+async function reviewCompactionDraft(lorebookName, payload, compacted, lorebookData = null) {
+    try {
+        return await showCompactionDraftPopup(lorebookName, payload, compacted, lorebookData);
+    } catch {
+        toastr.error(tr('Compaction could not be saved. The entry may have changed. Review the current entry before trying again.'), 'STMB');
         return false;
     }
-    notifyCompactionRequestSettled(options);
+}
+
+/** Displays a generated draft; only explicit confirmation replaces the original entry. */
+async function showCompactionDraftPopup(lorebookName, payload, compacted, lorebookData = null) {
+    const { entry, expectedContentHash } = payload;
+    const originalContent = String(entry.content || '');
 
     const content = DOMPurify.sanitize(`
         <h3>${escapeHtml(tr('Compaction'))}</h3>
@@ -1360,7 +1474,7 @@ export async function showCompactReviewPopup(lorebookName, lorebookData, entry, 
         okButton: tr('Replace with Compacted Version'),
         cancelButton: tr('Cancel'),
     };
-    const popup = new Popup(content, POPUP_TYPE.TEXT, '', options.showGoBack ? withGoBackButton(popupOptions) : popupOptions);
+    const popup = new Popup(content, POPUP_TYPE.TEXT, '', payload.showGoBack ? withGoBackButton(popupOptions) : popupOptions);
     const showPromise = popup.show();
     popup.dlg?.querySelector('#stmb-copy-compacted')?.addEventListener('click', async () => {
         try {
@@ -1379,7 +1493,23 @@ export async function showCompactReviewPopup(lorebookName, lorebookData, entry, 
         return false;
     }
 
-    await updateLorebookEntryByUid(lorebookName, lorebookData, entry, { content: replacement });
+    lorebookData ||= await loadWorldInfo(lorebookName);
+    if (!lorebookData || getLorebookStorageForRequest(lorebookName) !== 'user') throw new Error();
+    try {
+        await updateLorebookEntryByUid(lorebookName, lorebookData, entry, { content: replacement, expectedContentHash });
+    } catch (error) {
+        if (error?.type !== 'StmbEntryContentChanged') throw error;
+        const confirmation = new Popup(
+            DOMPurify.sanitize(`<h3>${escapeHtml(tr('Compaction'))}</h3><p>${escapeHtml(tr('The entry changed after compaction started. Overwrite its current content with your compacted draft?'))}</p>`),
+            POPUP_TYPE.CONFIRM, '', {
+                okButton: tr('Overwrite anyway'), cancelButton: tr('Cancel'), defaultResult: POPUP_RESULT.NEGATIVE,
+            },
+        );
+        if (await confirmation.show() !== POPUP_RESULT.AFFIRMATIVE) return false;
+        if (getLorebookStorageForRequest(lorebookName) !== 'user') throw new Error();
+        // Explicit overwrite waives only the content comparison; the server still checks access and UID existence under its lock.
+        await updateLorebookEntryByUid(lorebookName, lorebookData, entry, { content: replacement });
+    }
     toastr.success(tr('Entry content replaced.'), 'STMB');
     return true;
 }
@@ -1730,13 +1860,14 @@ function buildTopicalClipPrompt({ mode, topic, keywords, sourceEntries, sourceMe
     );
 }
 
-async function requestTopicalClipDraft(prompt, profile) {
+async function requestTopicalClipDraft(prompt, profile, options = {}) {
     if (typeof runtime.buildGenerateData !== 'function') {
         throw new Error('STMB generation helper is not configured.');
     }
 
-    const generateData = await runtime.buildGenerateData([{ role: 'user', content: prompt }], profile);
-    const response = await generateStmbText({ generateData });
+    const generateData = options.generateData || await runtime.buildGenerateData([{ role: 'user', content: prompt }], profile);
+    options.signal?.throwIfAborted();
+    const response = await generateStmbText({ generateData }, options);
     const draft = String(response?.text || '').trim();
     if (!draft) throw new Error(tr('Generated draft is empty.'));
     return draft;
@@ -1959,6 +2090,7 @@ async function saveTopicalClipDraft(context, draft, options = {}) {
         }
     }
 
+    options.signal?.throwIfAborted();
     if (mode === 'update' && !options.forceCreateNew) {
         const target = findEntryByStableId(freshLorebook, targetUid);
         if (!target) throw new Error(tr('Choose an entry to update.'));
@@ -2521,6 +2653,7 @@ export async function showTopicalClipPopup(options = {}) {
         renderDiagnostics(tr('Source memory selection updated.'));
     });
     const generateTopicalClipDraft = async (autoAccept = false) => {
+        const sceneContext = buildStmbSceneContext();
         if (entrySettingsEnabled.checked && entryOrderMode.value === 'manual' && !entryOrderValue.reportValidity()) return;
         const entrySettings = captureEntrySettings();
         if (entrySettings.enabled && entrySettings.position === 7 && !entrySettings.outletName) {
@@ -2621,7 +2754,7 @@ export async function showTopicalClipPopup(options = {}) {
                 const rangeInfo = await fetchStmbChatRangeInfo({
                     rangeStart: start,
                     rangeEnd: end,
-                    sceneContext: buildStmbSceneContext(),
+                    sceneContext,
                 });
                 const lastAvailable = Number(rangeInfo?.lastAvailableMessageId ?? -1);
                 if (end > lastAvailable) {
@@ -2630,7 +2763,7 @@ export async function showTopicalClipPopup(options = {}) {
                 }
                 const capture = await captureStmbSceneRange({ sceneStart: start, sceneEnd: end }, {
                     skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
-                    sceneContext: buildStmbSceneContext(),
+                    sceneContext,
                 });
                 sourceMessages = capture?.compiledScene;
             } catch {
@@ -2676,23 +2809,11 @@ export async function showTopicalClipPopup(options = {}) {
 
         if (saveButton) saveButton.disabled = true;
         try {
-            if (autoAccept) {
-                toastr.info(tr(
-                    'Topical Clip generation started. It will be saved automatically.',
-                    'STMemoryBooks_TopicalClip_AutoAcceptStarted',
-                ), 'STMB');
-                void popup.completeCancelled();
-            }
-            const draft = await requestTopicalClipDraft(prompt, profile);
-            if (requestedDraftRevision !== draftRevision) return;
             const draftHeadline = mode === 'update'
                 ? getClipHeadlineFromTitle(target.comment || makeTopicalClipHeadline(topic))
                 : makeTopicalClipHeadline(topic);
-            const normalizedDraft = normalizeTopicalClipDraftBody(draft, draftHeadline);
-            if (!normalizedDraft) throw new Error(tr('Generated draft is empty.'));
-            generationContext = {
+            const capturedContext = {
                 lorebookName: currentLorebookName,
-                lorebookData: currentLorebookData,
                 mode,
                 topic,
                 keywords,
@@ -2707,29 +2828,35 @@ export async function showTopicalClipPopup(options = {}) {
                 messageSelection,
                 profileOverrides,
             };
-            if (draftTextarea) draftTextarea.value = normalizedDraft;
             if (autoAccept) {
-                try {
-                    const result = await saveTopicalClipDraft(generationContext, normalizedDraft);
-                    const message = result?.mode === 'update'
-                        ? tr('Topical Clip entry updated.')
-                        : tr('Topical Clip saved to Memory Book.');
-                    toastr.success(message, 'STMB');
-                    return true;
-                } catch (error) {
-                    console.error(`${MODULE_NAME}: Failed to auto-save Topical Clip:`, error);
-                    toastr.error(error?.message || tr('Failed to save Topical Clip.'), 'STMB');
-                    if (error?.code === 'STMB_CLIP_SOURCE_CHANGED') {
-                        await new Popup(DOMPurify.sanitize(`<h3>${escapeHtml(tr('Topical Clip'))}</h3><p>${escapeHtml(error.message)}</p><label>${escapeHtml(tr('Draft'))}<textarea class="text_pole" rows="12" readonly>${escapeHtml(normalizedDraft)}</textarea></label>`),
-                            POPUP_TYPE.TEXT, '', { wide: true, large: true, okButton: tr('Close') }).show();
-                    }
-                    return false;
-                }
+                const generateData = await runtime.buildGenerateData([{ role: 'user', content: prompt }], profile);
+                if (requestedDraftRevision !== draftRevision) return false;
+                const queued = queueClipJob({
+                    type: 'topicalClip',
+                    lorebookName: capturedContext.lorebookName,
+                    profileIndex,
+                    sceneContext: messageSelection?.sceneContext || sceneContext,
+                    payload: { generateData, headline: draftHeadline, saveContext: capturedContext },
+                });
+                toastr.info(tr('Topical Clip queued. It will be saved automatically.'), 'STMB');
+                void popup.completeCancelled();
+                const settled = await queued.completion;
+                return settled.state === 'completed' && settled.result?.saved === true;
             }
+            const draft = await requestTopicalClipDraft(prompt, profile);
+            if (requestedDraftRevision !== draftRevision) return;
+            const normalizedDraft = normalizeTopicalClipDraftBody(draft, draftHeadline);
+            if (!normalizedDraft) throw new Error(tr('Generated draft is empty.'));
+            generationContext = { ...capturedContext, lorebookData: currentLorebookData };
+            if (draftTextarea) draftTextarea.value = normalizedDraft;
             if (saveButton) saveButton.disabled = false;
             renderDiagnostics(tr('Draft generated. Review and edit before saving.'));
         } catch (error) {
             generationContext = null;
+            if (autoAccept) {
+                toastr.error(tr('Topical Clip generation failed.'), 'STMB');
+                return false;
+            }
             console.error(`${MODULE_NAME}: Topical Clip generation failed:`, error);
             toastr.error(error?.message || tr('Topical Clip generation failed.'), 'STMB');
         }

@@ -6560,5 +6560,11 @@
   "Allow users to select this server lorebook globally without viewing its contents.": "内容を閲覧することなく、このサーバーロアブックをグローバルに選択できるようにします。",
   "“${0}” has been withdrawn as a standalone universe and is no longer active in your global selection.": "「${0}」は独立した世界としての公開が取り消されたため、グローバル選択では有効ではなくなりました。",
   "Could not update standalone universe availability.": "独立した世界の利用可否を更新できませんでした。",
-  "Could not refresh lorebook availability. The preset was not applied.": "ロアブックの利用可否を更新できませんでした。プリセットは適用されませんでした。"
+  "Could not refresh lorebook availability. The preset was not applied.": "ロアブックの利用可否を更新できませんでした。プリセットは適用されませんでした。",
+    "Draft ready": "下書きができました",
+    "Rate limited. Waiting to retry.": "リクエスト制限に達しました。再試行を待っています。",
+    "Topical Clip queued. It will be saved automatically.": "トピック別クリップをキューに追加しました。自動的に保存されます。",
+    "Compaction could not be saved. The entry may have changed. Review the current entry before trying again.": "圧縮結果を保存できませんでした。エントリが変更された可能性があります。現在のエントリを確認してから再試行してください。",
+    "Overwrite anyway": "変更を無視して上書き",
+    "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "圧縮を開始してからエントリが変更されました。現在の内容を圧縮した下書きで上書きしますか？"
 }

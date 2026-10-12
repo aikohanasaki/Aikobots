@@ -10,10 +10,12 @@ import { fileURLToPath } from 'node:url';
 
 import { chromium, firefox, webkit } from 'playwright';
 import { fingerprintLorebookEntry, verifySummarySourceFingerprints } from '../public/scripts/stmb-summary.js';
+import { normalizeStmbSettings } from '../public/scripts/stmb-core.js';
 import { resolveSystemChromiumPath } from '../scripts/browser-path.mjs';
 import { defaultOutputDirectory, hashDirectory } from '../scripts/frontend-build-lib.mjs';
 import { testLayoutSizing } from './layout-sizing-smoke.mjs';
 import { testChatExtractor } from './chat-extractor-smoke.mjs';
+import { testStmbClipJobs } from './stmb-clip-jobs-smoke.mjs';
 import { testManageChatsSorting } from './manage-chats-sort-smoke.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -779,6 +781,8 @@ try {
     const settingsPath = path.join(dataRoot, 'default-user', 'settings.json');
     const settings = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
     settings.firstRun = false;
+    settings.stmb_settings = normalizeStmbSettings(settings.stmb_settings);
+    settings.stmb_settings.profiles[settings.stmb_settings.defaultProfile].modelOverride = 'gpt-4o-mini';
     settings.extension_settings.disabledExtensions = ['tts'];
     await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 4)}\n`);
     const worldsPath = path.join(dataRoot, 'default-user', 'worlds');
@@ -838,7 +842,11 @@ try {
     await page.waitForFunction(() => Boolean(globalThis.SillyTavern?.getContext().SlashCommandParser.commands['stmb-highest']), null, { timeout: 30_000 });
 
     const requests = [...applicationRequests].sort();
-    if (process.argv.includes('--manage-chats')) {
+    if (process.argv.includes('--stmb-clips')) {
+        await testChatExtractor(page);
+        await testStmbClipJobs(page);
+        assert.deepEqual(pageErrors, [], 'Clip jobs produced browser errors.');
+    } else if (process.argv.includes('--manage-chats')) {
         await testManageChatsSorting(page);
         assert.deepEqual(pageErrors, [], 'Manage Chats sorting produced browser errors.');
     } else if (layoutsOnly) {
@@ -875,6 +883,7 @@ try {
         await testLayoutSizing(page);
         assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected layout diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
         await testChatExtractor(page);
+        await testStmbClipJobs(page);
         await testManageChatsSorting(page);
         await testChatOnlyControls(page);
         assert.deepEqual(pageErrors, [], 'Chat extraction produced browser errors.');

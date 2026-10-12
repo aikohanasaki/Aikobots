@@ -403,6 +403,9 @@ function getClientPlannerJobKind(job = {}) {
             return 'memoryAssistance';
         case 'regeneration':
             return 'regeneration';
+        case 'topicalClip':
+        case 'compaction':
+            return type;
         case 'memory':
         default:
             return 'memory';
@@ -1762,6 +1765,10 @@ function getPlannerJobLabel(job) {
             return 'Memory Assistance';
         case 'regeneration':
             return translate('Regenerate memory');
+        case 'topicalClip':
+            return translate('Topical Clip');
+        case 'compaction':
+            return translate('Compaction');
         case 'chatAutoHide':
             return 'Chat auto-hide';
         default:

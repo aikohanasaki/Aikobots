@@ -191,6 +191,7 @@ function getJobStateLabel(job = {}) {
     const state = String(job.state || '');
     const type = String(job.type || '');
 
+    if (type === 'compaction' && state === 'completed') return translate('Draft ready');
     if (state === 'saving') {
         if (type === 'memory') return 'Saving memory';
         if (type === 'sidePrompt') return 'Saving memory';
@@ -220,6 +221,8 @@ function getJobTypeLabel(type = '') {
         case 'memoryAssistance': return t`Memory Assistance`;
         case 'consolidation': return t`Consolidation`;
         case 'regeneration': return t`Regenerate memory`;
+        case 'topicalClip': return t`Topical Clip`;
+        case 'compaction': return t`Compaction`;
         case 'memory':
         default:
             return t`Memory`;

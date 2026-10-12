@@ -24,6 +24,10 @@ export function isStmbJobRetryable(job = {}) {
  */
 export function buildStmbRetryPayload(sourceJob = {}, { includeDependents = false } = {}) {
     const payload = cloneValue(sourceJob.payload) || {};
+    if (sourceJob.type === 'compaction') {
+        // A queue retry has no original popup caller to display its generated draft.
+        payload.reviewOnCompletion = true;
+    }
     if (sourceJob.type === 'consolidation' && !payload.consolidationCommit) {
         payload.consolidationNeedsReview = true;
     }
