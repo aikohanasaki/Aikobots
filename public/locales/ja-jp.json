@@ -1,4 +1,13 @@
 {
+    "Combine Clips": "クリップを統合",
+    "Select two or more Clips, including ordinary or Topical Clips.": "通常のクリップまたはトピッククリップを2つ以上選択してください。",
+    "New Topical Clip title": "新しいトピッククリップのタイトル",
+    "Disable original clips after saving": "保存後に元のクリップを無効にする",
+    "No Clips found in this Memory Book.": "このメモリーブックにクリップはありません。",
+    "Select at least two Clips.": "クリップを2つ以上選択してください。",
+    "A selected Clip changed. Reload the Memory Book and generate the draft again.": "選択したクリップが変更されました。メモリーブックを再読み込みして下書きを再生成してください。",
+    "The save could not be confirmed. Reload and review the Memory Book before trying again.": "保存を確認できませんでした。再試行する前にメモリーブックを再読み込みして確認してください。",
+    "The Clip was saved, but the view could not be refreshed. Reopen the Memory Book.": "クリップは保存されましたが、表示を更新できませんでした。メモリーブックを開き直してください。",
     "Sort by": "並べ替え基準",
     "Alphabetical": "名前順",
     "File size": "ファイルサイズ",

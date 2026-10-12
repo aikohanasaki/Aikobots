@@ -241,6 +241,11 @@ export async function createStmbEntry(payload, options = {}) {
     return signal ? postStmbWithSignal('create-entry', payload, signal) : postStmb('create-entry', payload);
 }
 
+/** Saves a combined Clip and optional source disabling in one server transaction. */
+export async function combineStmbClips(payload) {
+    return postStmb('combine-clips', payload);
+}
+
 export async function updateStmbEntryByUid(payload, options = {}) {
     const { signal = null } = options;
     return signal ? postStmbWithSignal('update-entry-by-uid', payload, signal) : postStmb('update-entry-by-uid', payload);

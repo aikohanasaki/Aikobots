@@ -1,4 +1,5 @@
 import express from 'express';
+import { areCombineSourcesCurrent, unionClipKeywords } from '../../public/scripts/stmb-combine-clips-policy.js';
 import { commitStmbConsolidation, listStmbConsolidationRecoveries, readStmbConsolidationRecovery, writeStmbConsolidationRecovery, reviewStmbConsolidationSources } from '../stmb-consolidation-commit.js';
 import { fingerprintStmbSource } from '../../public/scripts/stmb-source.js';
 import { withStmbMemoryTransaction, resolveStmbOperations } from '../stmb-operation-service.js';
@@ -1781,6 +1782,65 @@ router.post('/upsert-entry-by-title', async (request, response) => {
         });
     } catch (error) {
         return sendStmbError(response, error);
+    }
+});
+
+router.post('/combine-clips', async (request, response) => {
+    try {
+        const input = request.body;
+        // Explicit storage prevents repository fallback to a protected book.
+        if (input?.storage !== 'user' || typeof input.lorebookName !== 'string') {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'An ordinary user lorebook is required.');
+        }
+        const context = getLorebookContext(request);
+        const headline = typeof input.title === 'string' ? input.title.trim() : '';
+        const draft = typeof input.draft === 'string' ? input.draft.trim() : '';
+        if (!context || !headline || /[\u0000-\u001F\u007F]/.test(headline)
+            || headline.includes('[STMB Clip]') || headline.includes('===') || !draft
+            || typeof input.disableOriginals !== 'boolean' || !Array.isArray(input.sources)
+            || input.sources.length < 2 || input.sources.some(source => !source || typeof source.uid !== 'string')
+            || new Set(input.sources.map(source => source.uid)).size !== input.sources.length) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'Invalid Clip combination request.');
+        }
+        return await withLorebookManagementTransaction(async transaction => {
+            // Recheck reserved status under the same lock as the read and save.
+            if (!getLorebookContext(request)) throw createStmbRequestError(400, 'StmbBadRequest', 'An ordinary user lorebook is required.');
+            const { data, metadata } = await getLorebookForManagement(request.user, context.lorebookName, false, 'user');
+            if (metadata.storage !== 'user') throw createStmbRequestError(400, 'StmbBadRequest', 'An ordinary user lorebook is required.');
+            const entries = Object.values(data.entries || {});
+            const title = `${headline} [STMB Clip]`;
+            if (entries.some(entry => String(entry.comment || '').trimEnd() === title)) {
+                throw createStmbRequestError(409, 'StmbDuplicateEntryTitle', 'A Clip with this title already exists.');
+            }
+            if (!areCombineSourcesCurrent(input.sources, entries)) {
+                throw createStmbRequestError(409, 'StmbCombineSourcesChanged', 'A selected Clip changed. Generate the draft again.');
+            }
+            const byUid = new Map(entries.map(entry => [String(entry.uid), entry]));
+            const sources = input.sources.map(source => byUid.get(source.uid));
+            const keywords = unionClipKeywords(sources);
+            const entry = createLorebookEntry(data);
+            initializeLorebookEntryDefaults(entry, { vectorized: true, selective: true, order: 100, position: 0 });
+            entry.comment = title;
+            entry.content = `=== ${headline} ===\n\n${draft}\n\n=== END ${headline} ===`;
+            entry.key = keywords;
+            entry.constant = false;
+            const now = new Date().toISOString();
+            entry.data = { extensions: { aikobots: {
+                topical_clip: {
+                    version: 2, topic: headline, keywords, source_memory_book: metadata.name,
+                    last_successful_run_at: now, last_source_snapshot: [], last_message_source: null,
+                },
+                combined_clips: { version: 1, source_uids: input.sources.map(source => source.uid), combined_at: now },
+            } } };
+            if (input.disableOriginals) sources.forEach(source => { source.disable = true; });
+            await request.activeSessionOperation?.assertAllowed();
+            await transaction.save(request.user, metadata.name, data, 'user');
+            return response.send({ ok: true, lorebookName: metadata.name, storage: 'user', entry });
+        });
+    } catch (error) {
+        return sendSanitizedStmbError(response, error, {
+            logLabel: '[STMB] Clip combination failed', type: 'StmbInternalError', message: 'Failed to save combined Clip.',
+        });
     }
 });
 

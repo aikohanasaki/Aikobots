@@ -1,4 +1,13 @@
 {
+    "Combine Clips": "Combiner les clips",
+    "Select two or more Clips, including ordinary or Topical Clips.": "Sélectionnez au moins deux clips, ordinaires ou thématiques.",
+    "New Topical Clip title": "Titre du nouveau clip thématique",
+    "Disable original clips after saving": "Désactiver les clips d’origine après l’enregistrement",
+    "No Clips found in this Memory Book.": "Aucun clip trouvé dans ce livre de mémoire.",
+    "Select at least two Clips.": "Sélectionnez au moins deux clips.",
+    "A selected Clip changed. Reload the Memory Book and generate the draft again.": "Un clip sélectionné a été modifié. Rechargez le livre de mémoire et générez à nouveau le brouillon.",
+    "The save could not be confirmed. Reload and review the Memory Book before trying again.": "L’enregistrement n’a pas pu être confirmé. Rechargez et vérifiez le livre de mémoire avant de réessayer.",
+    "The Clip was saved, but the view could not be refreshed. Reopen the Memory Book.": "Le clip a été enregistré, mais l’affichage n’a pas pu être actualisé. Rouvrez le livre de mémoire.",
     "Sort by": "Trier par",
     "Alphabetical": "Ordre alphabétique",
     "File size": "Taille du fichier",

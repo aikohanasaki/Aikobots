@@ -3,7 +3,9 @@ import { DOMPurify } from '../lib.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { stableHashString } from './hashing.js';
 import { getCurrentLocale, translate } from './i18n.js';
-import { createStmbEntry, generateStmbText, updateStmbEntryByUid } from './stmb-api.js';
+import { combineStmbClips, createStmbEntry, generateStmbText, updateStmbEntryByUid } from './stmb-api.js';
+import { areCombineSourcesCurrent, buildCombineClipsPrompt, isClipEntryTitle, isClipForCombination, snapshotCombineSource, unionClipKeywords } from './stmb-combine-clips-policy.js';
+export { isClipEntryTitle } from './stmb-combine-clips-policy.js';
 import { buildTopicalClipEntryOverrides, normalizeLorebookEntrySettings, compileScene, compiledSceneToText, STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo, getStmbChatKey } from './stmb-scene.js';
 import { readSelectedChatMessages, showChatMessagePicker } from './chat-search.js';
@@ -328,10 +330,6 @@ function shouldRefreshEditor() {
 
 function estimateTokens(content) {
     return Math.ceil(String(content || '').length / 4);
-}
-
-export function isClipEntryTitle(title) {
-    return typeof title === 'string' && title.trimEnd().endsWith('[STMB Clip]');
 }
 
 export function getClipHeadlineFromTitle(title) {
@@ -2249,6 +2247,186 @@ function getTopicalClipTargetEntries(lorebookData) {
         .sort((a, b) => String(a.comment || '').localeCompare(String(b.comment || '')));
 }
 
+/** Combines ordinary or Topical Clips through a reviewed draft and one atomic save. */
+export async function showCombineClipsPopup(options = {}) {
+    const names = getSelectableLorebookNames();
+    if (!names.length) {
+        toastr.error(tr('No Memory Books were found.'), 'STMB');
+        return false;
+    }
+    const defaultName = names.includes(options.lorebookName) ? options.lorebookName : names[0];
+    let revision = 0;
+    let loadRevision = 0;
+    let closed = false;
+    let saving = false;
+    let generating = false;
+    let context = null;
+    let entries = [];
+    const controller = new AbortController();
+    const popup = new Popup(DOMPurify.sanitize(`
+        <h3>${escapeHtml(tr('Combine Clips'))}</h3>
+        <label class="world_entry_form_control">${escapeHtml(tr('Source Memory Book'))}
+            <select id="stmb-combine-book" class="text_pole">${names.map(name => `<option value="${escapeHtml(name)}"${name === defaultName ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select>
+        </label>
+        <button id="stmb-combine-reload" type="button" class="menu_button">${escapeHtml(tr('Reload'))}</button>
+        <p>${escapeHtml(tr('Select two or more Clips, including ordinary or Topical Clips.'))}</p>
+        <div id="stmb-combine-sources" class="stmb-topical-source-selector"></div>
+        <label class="world_entry_form_control">${escapeHtml(tr('New Topical Clip title'))}
+            <input id="stmb-combine-title" class="text_pole" type="text" />
+        </label>
+        <div class="world_entry_form_control"><h4>${escapeHtml(tr('Keywords'))}</h4><div id="stmb-combine-keywords" class="opacity70p"></div></div>
+        ${buildCompactionProfileControl('stmb-combine-profile', { label: tr('Generation Profile') })}
+        <button id="stmb-combine-generate" type="button" class="menu_button">${escapeHtml(tr('Generate Draft'))}</button>
+        <label class="world_entry_form_control">${escapeHtml(tr('Generated draft'))}
+            <textarea id="stmb-combine-draft" class="text_pole stmb-clip-preview" rows="14"></textarea>
+        </label>
+        <label class="checkbox_label"><input id="stmb-combine-disable" type="checkbox" checked />${escapeHtml(tr('Disable original clips after saving'))}</label>
+        <div id="stmb-combine-status" role="status" class="opacity70p"></div>
+        <button id="stmb-combine-save" type="button" class="menu_button" disabled>${escapeHtml(tr('Save Topical Clip'))}</button>
+    `), POPUP_TYPE.TEXT, '', {
+        wide: true, large: true, allowVerticalScrolling: true, okButton: false, cancelButton: tr('Close'),
+        onClosing: () => !saving,
+        onClose: () => { closed = true; revision++; controller.abort(); },
+    });
+    const showPromise = popup.show();
+    const find = id => popup.dlg.querySelector(`#stmb-combine-${id}`);
+    const book = find('book');
+    const sourceList = find('sources');
+    const title = find('title');
+    const keywords = find('keywords');
+    const draft = find('draft');
+    const generate = find('generate');
+    const save = find('save');
+    const disable = find('disable');
+    const status = find('status');
+    find('profile').setAttribute('aria-label', tr('Generation Profile'));
+    initializeCompactionProfileSelect(popup, 'stmb-combine-profile');
+    const selected = () => {
+        const ids = new Set(Array.from(sourceList.querySelectorAll('input:checked'), input => input.value));
+        return entries.filter(entry => ids.has(String(entry.uid)));
+    };
+    const clearDraft = () => {
+        revision++;
+        context = null;
+        draft.value = '';
+        status.textContent = '';
+        save.disabled = true;
+    };
+    const loadSources = async () => {
+        clearDraft();
+        const requested = ++loadRevision;
+        const name = book.value;
+        entries = [];
+        sourceList.textContent = '';
+        keywords.textContent = '';
+        try {
+            worldInfoCache.delete(name);
+            const data = await loadWorldInfo(name);
+            if (closed || requested !== loadRevision) return;
+            if (!data?.entries) throw new Error('Missing lorebook');
+            entries = getClipEntries(data).filter(isClipForCombination);
+            sourceList.innerHTML = DOMPurify.sanitize(entries.length ? entries.map(entry =>
+                `<label class="checkbox_label"><input type="checkbox" value="${escapeHtml(String(entry.uid))}" />${escapeHtml(entry.comment)}${entry.disable ? ` (${escapeHtml(tr('Disabled'))})` : ''}</label>`,
+            ).join('') : escapeHtml(tr('No Clips found in this Memory Book.')));
+        } catch {
+            if (!closed && requested === loadRevision) status.textContent = tr('Failed to load lorebook');
+        }
+    };
+    book.addEventListener('change', () => { void loadSources(); });
+    find('reload').addEventListener('click', () => { void loadSources(); });
+    sourceList.addEventListener('change', () => { clearDraft(); keywords.textContent = unionClipKeywords(selected()).join(', '); });
+    title.addEventListener('input', clearDraft);
+    draft.addEventListener('input', () => { save.disabled = saving || !context || !draft.value.trim(); });
+    generate.addEventListener('click', async () => {
+        if (generating || saving) return;
+        const sources = selected();
+        if (sources.length < 2) {
+            status.textContent = tr('Select at least two Clips.');
+            return;
+        }
+        let headline;
+        try { headline = validateClipHeadline(title.value); }
+        catch (error) { status.textContent = error.message; return; }
+        clearDraft();
+        const requested = revision;
+        const name = book.value;
+        const snapshots = sources.map(snapshotCombineSource);
+        generating = true;
+        generate.disabled = true;
+        try {
+            worldInfoCache.delete(name);
+            const fresh = await loadWorldInfo(name);
+            if (closed || requested !== revision) return;
+            if (!areCombineSourcesCurrent(snapshots, Object.values(fresh?.entries || {}))) {
+                status.textContent = tr('A selected Clip changed. Reload the Memory Book and generate the draft again.');
+                return;
+            }
+            if (getClipEntryByFinalTitle(fresh, makeClipEntryTitle(headline))) {
+                status.textContent = tr('A clip entry with this title already exists.');
+                return;
+            }
+            const prompt = buildCombineClipsPrompt(sources, headline);
+            const tokenCount = estimateTokens(prompt) + 500;
+            const threshold = Number.parseInt(getModuleSettings().tokenWarningThreshold, 10) || 50000;
+            if (tokenCount > threshold && !await confirmTopicalClipTokenException({ estimatedTokens: tokenCount, threshold, eligibleCount: entries.length, usedCount: sources.length })) return;
+            if (closed || requested !== revision) return;
+            const profileIndex = getCompactionProfileIndexFromSelect(popup, 'stmb-combine-profile');
+            setCompactionProfileIndex(profileIndex);
+            const profile = structuredClone(runtime.getProfile?.(profileIndex) || {});
+            const result = await requestTopicalClipDraft(prompt, profile, { signal: controller.signal });
+            if (closed || requested !== revision) return;
+            const body = normalizeTopicalClipDraftBody(result, headline);
+            if (!body) throw new Error('Empty draft');
+            context = { lorebookName: name, storage: 'user', title: headline, sources: snapshots };
+            draft.value = body;
+            save.disabled = false;
+            status.textContent = tr('Draft generated. Review and edit before saving.');
+        } catch {
+            if (!closed && requested === revision) status.textContent = tr('Topical Clip generation failed.');
+        } finally {
+            generating = false;
+            generate.disabled = false;
+        }
+    });
+    save.addEventListener('click', async () => {
+        if (saving || generating || !context || !draft.value.trim()) return;
+        const body = normalizeTopicalClipDraftBody(draft.value, context.title);
+        if (!body) { status.textContent = tr('Generated draft is empty.'); return; }
+        saving = true;
+        const controls = Array.from(popup.dlg.querySelectorAll('input, select, textarea, button'));
+        const disabledStates = controls.map(control => control.disabled);
+        controls.forEach(control => { control.disabled = true; });
+        let saved = false;
+        try {
+            const result = await combineStmbClips({ ...context, draft: body, disableOriginals: disable.checked });
+            if (!result?.ok || !result.entry) throw new Error('Uncertain save');
+            saved = true;
+            try {
+                worldInfoCache.delete(context.lorebookName);
+                const fresh = await loadWorldInfo(context.lorebookName);
+                await afterLorebookWrite(context.lorebookName, fresh, result.entry);
+            } catch {
+                toastr.warning(tr('The Clip was saved, but the view could not be refreshed. Reopen the Memory Book.'), 'STMB');
+            }
+        } catch (error) {
+            status.textContent = error?.type === 'StmbCombineSourcesChanged'
+                ? tr('A selected Clip changed. Reload the Memory Book and generate the draft again.')
+                : error?.type === 'StmbDuplicateEntryTitle'
+                    ? tr('A clip entry with this title already exists.')
+                    : tr('The save could not be confirmed. Reload and review the Memory Book before trying again.');
+            // Keep the text for review, but require a fresh generation after any uncertain save.
+            context = null;
+        } finally {
+            saving = false;
+            controls.forEach((control, index) => { control.disabled = disabledStates[index]; });
+            save.disabled = !context;
+        }
+        if (saved) await popup.completeAffirmative();
+    });
+    await loadSources();
+    return await showPromise === POPUP_RESULT.AFFIRMATIVE;
+}
+
 function buildTopicalClipPopupHtml(defaultLorebookName) {
     const lorebookOptions = [
         '<option></option>',
@@ -2260,6 +2438,7 @@ function buildTopicalClipPopupHtml(defaultLorebookName) {
     return DOMPurify.sanitize(`
         <h3>${escapeHtml(tr('Topical Clip'))}</h3>
         <p class="opacity70p">${escapeHtml(tr('Create or update a focused Clip-style memory entry about one topic.'))}</p>
+        <button id="stmb-combine-clips-open" type="button" class="menu_button">${escapeHtml(tr('Combine Clips'))}</button>
         <div class="stmb-topical-clip">
             <div class="world_entry_form_control">
                 <h4>${escapeHtml(tr('Source Memory Book'))}</h4>
@@ -2565,6 +2744,12 @@ export async function showTopicalClipPopup(options = {}) {
         }
     };
 
+    dlg.querySelector('#stmb-combine-clips-open').addEventListener('click', async () => {
+        if (await showCombineClipsPopup({ lorebookName: currentLorebookName })) {
+            clearDraft();
+            await loadSelectedLorebook(getSelectedLorebookName());
+        }
+    });
     modeSelect?.addEventListener('change', renderMode);
     lorebookSelect?.addEventListener('change', () => {
         void loadSelectedLorebook(getSelectedLorebookName());

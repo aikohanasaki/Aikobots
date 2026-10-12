@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { buildSidePromptHistoryRequest, SIDE_PROMPT_HISTORY_KEY } from '../../public/scripts/stmb-sideprompt-history.js';
+import { snapshotCombineSource } from '../../public/scripts/stmb-combine-clips-policy.js';
 
 const getLorebookForManagement = jest.fn();
 const saveLorebookForManagement = jest.fn();
@@ -65,6 +66,7 @@ jest.unstable_mockModule('../active-session-store.js', () => ({
 let handler;
 let syncHandler;
 let createEntryHandler;
+let combineClipsHandler;
 let updateEntryHandler;
 let upsertEntryHandler;
 let upsertBatchHandler;
@@ -74,6 +76,7 @@ beforeAll(async () => {
     handler = router.stack.find(layer => layer.route?.path === '/save-group-memory').route.stack[0].handle;
     syncHandler = router.stack.find(layer => layer.route?.path === '/sync-group-stlo').route.stack[0].handle;
     createEntryHandler = router.stack.find(layer => layer.route?.path === '/create-entry').route.stack[0].handle;
+    combineClipsHandler = router.stack.find(layer => layer.route?.path === '/combine-clips').route.stack[0].handle;
     updateEntryHandler = router.stack.find(layer => layer.route?.path === '/update-entry-by-uid').route.stack[0].handle;
     upsertEntryHandler = router.stack.find(layer => layer.route?.path === '/upsert-entry-by-title').route.stack[0].handle;
     upsertBatchHandler = router.stack.find(layer => layer.route?.path === '/upsert-entries-batch').route.stack[0].handle;
@@ -150,6 +153,111 @@ function mockLoadedLorebooks() {
     ]);
     getLorebookForManagement.mockImplementation((_user, name) => structuredClone(books.get(name)));
 }
+
+describe('Combine Clips atomic save', () => {
+    let stored;
+    let request;
+    beforeEach(() => {
+        stored = { entries: {
+            0: { uid: 0, comment: 'One [STMB Clip]', content: 'Synthetic one.', key: ['one', 'shared'], disable: false, custom: 'preserve' },
+            1: { uid: 1, comment: 'Two [STMB Clip]', content: 'Synthetic two.', key: ['shared', 'two'], keysecondary: ['exclude'], disable: true, data: { extensions: { aikobots: { topical_clip: { version: 2 } } } } },
+            2: { uid: 2, comment: 'Unrelated', content: 'Unrelated synthetic memory.', disable: false },
+        } };
+        request = makeRequest();
+        request.body = {
+            lorebookName: 'Synthetic Book', storage: 'user', title: 'Combined', draft: 'Reviewed synthetic draft.',
+            sources: [stored.entries[0], stored.entries[1]].map(snapshotCombineSource), disableOriginals: true,
+        };
+        getLorebookForManagement.mockImplementation(async () => ({ data: structuredClone(stored), metadata: { name: 'Synthetic Book', storage: 'user' } }));
+        transactionSave.mockImplementation(async (_user, _name, data) => { stored = structuredClone(data); return { name: 'Synthetic Book', storage: 'user' }; });
+    });
+
+    it.each([true, false])('creates a Topical Clip with disableOriginals=%s in a single save', async disableOriginals => {
+        request.body.disableOriginals = disableOriginals;
+        const before = structuredClone(stored);
+        const response = makeResponse();
+        await combineClipsHandler(request, response);
+        expect(response.statusCode).toBe(200);
+        expect(transactionSave).toHaveBeenCalledTimes(1);
+        expect(getLorebookForManagement).toHaveBeenCalledWith(request.user, 'Synthetic Book', false, 'user');
+        const entry = response.payload.entry;
+        expect(entry).toMatchObject({ comment: 'Combined [STMB Clip]', key: ['one', 'shared', 'two'], keysecondary: [], constant: false, vectorized: true, selective: true, disable: false });
+        expect(entry.content).toBe('=== Combined ===\n\nReviewed synthetic draft.\n\n=== END Combined ===');
+        expect(entry.data.extensions.aikobots.topical_clip).toMatchObject({ version: 2, last_source_snapshot: [], last_message_source: null });
+        expect(entry.data.extensions.aikobots.combined_clips).toMatchObject({ version: 1, source_uids: ['0', '1'] });
+        expect(stored.entries[0]).toEqual({ ...before.entries[0], disable: disableOriginals });
+        expect(stored.entries[1]).toEqual(before.entries[1]);
+        expect(stored.entries[2]).toEqual(before.entries[2]);
+    });
+
+    it.each([
+        { storage: 'secure' }, { storage: undefined }, { title: 'Bad\ntitle' }, { title: 'Bad === title' },
+        { draft: ' ' }, { disableOriginals: 'true' }, { sources: [] }, { sources: [null, null] },
+    ])('rejects malformed or protected requests before reading entries: %j', async overrides => {
+        Object.assign(request.body, overrides);
+        const response = makeResponse();
+        await combineClipsHandler(request, response);
+        expect(response.statusCode).toBe(400);
+        expect(getLorebookForManagement).not.toHaveBeenCalled();
+        expect(transactionSave).not.toHaveBeenCalled();
+    });
+
+    it('rejects reserved templates before reading entries', async () => {
+        isReservedRecommendedTemplateSource.mockReturnValue(true);
+        const response = makeResponse();
+        await combineClipsHandler(request, response);
+        expect(response.statusCode).toBe(400);
+        expect(getLorebookForManagement).not.toHaveBeenCalled();
+    });
+
+    it('rejects repeated source identities and stale sources without mutations', async () => {
+        const repeated = { ...request, body: structuredClone(request.body) };
+        repeated.body.sources[1] = repeated.body.sources[0];
+        const duplicateResponse = makeResponse();
+        await combineClipsHandler(repeated, duplicateResponse);
+        expect(duplicateResponse.statusCode).toBe(400);
+        stored.entries[0].content = 'Changed synthetic source.';
+        const before = structuredClone(stored);
+        const response = makeResponse();
+        await combineClipsHandler(request, response);
+        expect(response.statusCode).toBe(409);
+        expect(response.payload.error.type).toBe('StmbCombineSourcesChanged');
+        expect(transactionSave).not.toHaveBeenCalled();
+        expect(stored).toEqual(before);
+    });
+
+    it('serializes competing saves and rejects the duplicate title', async () => {
+        const first = makeResponse();
+        const second = makeResponse();
+        await Promise.all([combineClipsHandler(request, first), combineClipsHandler(request, second)]);
+        expect([first.statusCode, second.statusCode]).toEqual([200, 409]);
+        expect(second.payload.error.type).toBe('StmbDuplicateEntryTitle');
+        expect(transactionSave).toHaveBeenCalledTimes(1);
+        expect(Object.values(stored.entries).filter(entry => entry.comment === 'Combined [STMB Clip]')).toHaveLength(1);
+    });
+
+    it('does not persist creation or disabling when the atomic save fails', async () => {
+        const before = structuredClone(stored);
+        transactionSave.mockRejectedValue(new Error('synthetic internal detail'));
+        const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const response = makeResponse();
+            await combineClipsHandler(request, response);
+            expect(response.statusCode).toBe(500);
+            expect(JSON.stringify(response.payload)).not.toContain('synthetic internal detail');
+            expect(stored).toEqual(before);
+            expect(log).toHaveBeenCalledWith('[STMB] Clip combination failed', 'Error');
+        } finally { log.mockRestore(); }
+    });
+
+    it('rechecks the active session before committing', async () => {
+        request.activeSessionOperation.assertAllowed.mockRejectedValue(Object.assign(new Error('Inactive session'), { status: 409, type: 'InactiveSession' }));
+        const response = makeResponse();
+        await combineClipsHandler(request, response);
+        expect(response.statusCode).toBe(409);
+        expect(transactionSave).not.toHaveBeenCalled();
+    });
+});
 
 describe('Side Prompt version saves', () => {
     const template = { key: 'assess', name: 'Assess', settings: { saveAllVersions: true } };

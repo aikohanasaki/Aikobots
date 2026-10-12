@@ -1,4 +1,13 @@
 {
+    "Combine Clips": "Объединить клипы",
+    "Select two or more Clips, including ordinary or Topical Clips.": "Выберите не менее двух обычных или тематических клипов.",
+    "New Topical Clip title": "Название нового тематического клипа",
+    "Disable original clips after saving": "Отключить исходные клипы после сохранения",
+    "No Clips found in this Memory Book.": "В этой книге памяти нет клипов.",
+    "Select at least two Clips.": "Выберите не менее двух клипов.",
+    "A selected Clip changed. Reload the Memory Book and generate the draft again.": "Выбранный клип изменился. Перезагрузите книгу памяти и создайте черновик заново.",
+    "The save could not be confirmed. Reload and review the Memory Book before trying again.": "Не удалось подтвердить сохранение. Перезагрузите и проверьте книгу памяти перед повторной попыткой.",
+    "The Clip was saved, but the view could not be refreshed. Reopen the Memory Book.": "Клип сохранён, но не удалось обновить отображение. Откройте книгу памяти заново.",
     "Sort by": "Сортировать по",
     "Alphabetical": "По алфавиту",
     "File size": "Размер файла",
