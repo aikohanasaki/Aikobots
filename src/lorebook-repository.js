@@ -2178,11 +2178,11 @@ export function listLorebooksForManagement(user) {
 
 /** Fails closed instead of treating an unreadable index as a successful empty catalog. */
 function readStandaloneUniverseIndexes() {
-    return [getSecureIndexPath(), getSharedSecureIndexPath()].map(indexPath => {
+    return [[getSecureIndexPath(), normalizeSecureIndexBooks], [getSharedSecureIndexPath(), normalizeSharedSecureIndexBooks]].map(([indexPath, normalize]) => {
         if (!fs.existsSync(indexPath)) return { books: {} };
         try {
             const index = readJsonFileSync(indexPath);
-            if (index?.books && typeof index.books === 'object' && !Array.isArray(index.books)) return index;
+            if (index?.books && typeof index.books === 'object' && !Array.isArray(index.books)) return { books: normalize(index.books) };
         } catch { /* Return a content-free error below. */ }
         throw new LorebookRepositoryError('LorebookCatalogUnavailable', 'Lorebook catalog is unavailable.', 503);
     });

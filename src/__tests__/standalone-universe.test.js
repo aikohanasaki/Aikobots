@@ -116,6 +116,35 @@ it('withdraws only ordinary global use before claiming character bindings', asyn
     expect(isGlobalLorebookAllowed(viewer, singleName)).toBe(true);
 });
 
+it('blocks withdrawn legacy secure names while preserving owner access', () => {
+    fs.writeFileSync(secureIndexPath, JSON.stringify({ books: {
+        [`${singleName}.json`]: { ownerHandle: owner.profile.handle, standaloneUniverse: false },
+    } }));
+    expect(isGlobalLorebookAllowed(viewer, singleName)).toBe(false);
+    expect(isGlobalLorebookAllowed(owner, singleName)).toBe(true);
+});
+
+it('keeps the canonical designation when a legacy secure entry conflicts', () => {
+    fs.writeFileSync(secureIndexPath, JSON.stringify({ books: {
+        [singleName]: { ownerHandle: owner.profile.handle, standaloneUniverse: false },
+        [`${singleName}.json`]: { ownerHandle: owner.profile.handle, standaloneUniverse: true },
+    } }));
+    const warning = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+        expect(repo.listStandaloneUniverseNames()).toEqual([]);
+        expect(isGlobalLorebookAllowed(viewer, singleName)).toBe(false);
+    } finally {
+        warning.mockRestore();
+    }
+});
+
+it('uses shared-reader normalization when filtering withdrawn names', () => {
+    fs.writeFileSync(sharedIndexPath, JSON.stringify({ books: {
+        [` ${sharedName} `]: { owners: [owner.profile.handle], standaloneUniverse: false },
+    } }));
+    expect(isGlobalLorebookAllowed(viewer, sharedName)).toBe(false);
+});
+
 it('preserves designation on edits and clears it on demotion', async () => {
     await repo.setStandaloneUniverse(owner, singleName, true);
     await repo.saveLorebookForManagement(owner, singleName, { entries: {} }, 'secure');
