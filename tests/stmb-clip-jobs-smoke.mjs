@@ -26,6 +26,11 @@ export async function testStmbClipJobs(page) {
         await picker.getByRole('button', { name: 'Select loaded results', exact: true }).click();
         await picker.getByRole('button', { name: 'Topical Clip', exact: true }).click();
         await page.locator('#stmb-topical-clip-lorebook-select').selectOption({ label: 'Extractor Smoke' }, { force: true });
+        await page.locator('#stmb-topical-clip-edit-format').click();
+        await page.locator('#stmb-clip-template').fill('## {{TITLE}}\n{{CONTENT}}');
+        assert.ok((await page.locator('#stmb-clip-template-preview').inputValue()).includes('## Topical Clip'));
+        await page.locator('#stmb-clip-template-reset').click();
+        await page.locator('#stmb-clip-template-cancel').click();
         await page.locator('#stmb-topical-clip-topic').fill('Queue Smoke');
         await page.locator('#stmb-topical-clip-generate').click();
         await page.waitForFunction(() => document.querySelector('#stmb-topical-clip-draft')?.value === 'Synthetic necklace facts.');
@@ -90,10 +95,32 @@ export async function testStmbClipJobs(page) {
         await page.locator('#stmb-topical-clip-lorebook-select').selectOption({ label: 'Extractor Smoke' }, { force: true });
         await page.locator('#stmb-combine-clips-open').click();
         assert.equal(await page.locator('#stmb-combine-book').inputValue(), 'Extractor Smoke');
+        await page.locator('#stmb-combine-edit-prompt').click();
+        await page.locator('#stmb-clip-template').fill('Title {{TITLE}}\n{{SOURCE_CLIPS}}');
+        await page.locator('#stmb-clip-template-save').click();
+        await page.locator('#stmb-combine-edit-format').click();
+        await page.locator('#stmb-clip-template').fill('## {{TITLE}}\n{{CONTENT}}');
+        assert.ok((await page.locator('#stmb-clip-template-preview').inputValue()).includes('## Topical Clip'));
+        await page.locator('#stmb-clip-template-save').click();
+        await page.locator('#stmb-combine-entry-settings-enabled').check();
+        await page.locator('#stmb-combine-entry-position').selectOption('7');
+        await page.locator('#stmb-combine-entry-outlet').fill('Notes');
+        await page.locator('#stmb-combine-entry-order-mode').selectOption('manual');
+        await page.locator('#stmb-combine-entry-order-value').fill('17');
+        const disabledToggle = page.locator('#stmb-combine-show-disabled');
+        assert.equal(await page.locator('#stmb-combine-sources label').filter({ hasText: 'Ordinary Smoke' }).count(), 0);
+        await disabledToggle.check();
         const selectSources = async () => {
             await page.locator('#stmb-combine-sources label').filter({ hasText: 'Ordinary Smoke' }).locator('input').check();
             await page.locator('#stmb-combine-sources label').filter({ hasText: 'Queue Smoke' }).locator('input').check();
         };
+        await selectSources();
+        await disabledToggle.uncheck();
+        assert.equal(await page.locator('#stmb-combine-sources label').filter({ hasText: 'Queue Smoke' }).locator('input').isChecked(), true);
+        assert.equal(await page.locator('#stmb-combine-sources label').filter({ hasText: 'Ordinary Smoke' }).count(), 0);
+        await disabledToggle.check();
+        assert.equal(await page.locator('#stmb-combine-sources label').filter({ hasText: 'Ordinary Smoke' }).locator('input').isChecked(), false);
+        assert.ok(!(await page.locator('#stmb-combine-keywords').textContent()).includes('ordinary'));
         await selectSources();
         assert.equal(await page.locator('#stmb-combine-disable').isChecked(), true);
         assert.ok((await page.locator('#stmb-combine-keywords').textContent()).includes('ordinary'));
@@ -118,6 +145,12 @@ export async function testStmbClipJobs(page) {
             await page.locator('#stmb-combine-generate').click();
             await page.waitForFunction(() => document.querySelector('#stmb-combine-draft')?.value === 'Synthetic necklace facts.');
         };
+        await generateDraft();
+        await disabledToggle.uncheck();
+        assert.equal(await page.locator('#stmb-combine-draft').inputValue(), '');
+        assert.equal(await page.locator('#stmb-combine-save').isDisabled(), true);
+        await disabledToggle.check();
+        await selectSources();
         await generateDraft();
         await page.locator('#stmb-combine-draft').fill('Reviewed combined synthetic facts.');
         assert.equal(await page.evaluate(async uid => {
@@ -145,13 +178,18 @@ export async function testStmbClipJobs(page) {
         const combinedResponse = await combined;
         assert.equal(combinedResponse.ok(), true);
         const output = (await combinedResponse.json()).entry;
-        assert.ok(output.content.includes('Reviewed combined synthetic facts.'));
+        assert.equal(output.content, '## Combined Reviewed Smoke\nReviewed combined synthetic facts.');
+        assert.deepEqual(output.data.extensions.aikobots.clip_format, { template: '## {{TITLE}}\n{{CONTENT}}', title: 'Combined Reviewed Smoke' });
+        assert.equal(output.position, 7);
+        assert.equal(output.outletName, 'Notes');
+        assert.equal(output.order, 17);
         assert.deepEqual(output.keysecondary, []);
         assert.equal(output.data.extensions.aikobots.combined_clips.source_uids.length, 2);
         await page.locator('#stmb-combine-draft').waitFor({ state: 'detached' });
         await page.waitForFunction(() => [...document.querySelector('#stmb-topical-clip-target-select').options].some(option => option.text.includes('Combined Reviewed Smoke')));
 
         await page.locator('#stmb-combine-clips-open').click();
+        await page.locator('#stmb-combine-show-disabled').check();
         await page.locator('#stmb-combine-sources label').filter({ hasText: 'Queue Smoke' }).waitFor();
         assert.ok((await page.locator('#stmb-combine-sources label').filter({ hasText: 'Queue Smoke' }).textContent()).includes('Disabled'));
         await page.keyboard.press('Escape');

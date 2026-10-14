@@ -47,7 +47,7 @@ function tr(fallback, key = fallback) {
 
 function getClipEntries(lorebookData) {
     return Object.values(lorebookData?.entries || {})
-        .filter(entry => isClipEntryTitle(entry?.comment || ''))
+        .filter(entry => isClipEntryTitle(entry?.comment || '') && !entry.disable)
         .sort((left, right) => String(left.comment || '').localeCompare(String(right.comment || '')));
 }
 
@@ -463,7 +463,8 @@ export async function showClipReviewSuggestionsPopup(options = {}) {
         const target = container();
         if (!target) return;
         const topics = Array.isArray(metadata?.topicSuggestions) ? metadata.topicSuggestions : [];
-        const candidates = Array.isArray(metadata?.candidates) ? metadata.candidates : [];
+        const candidates = (Array.isArray(metadata?.candidates) ? metadata.candidates : [])
+            .filter(candidate => Object.values(lorebookData?.entries || {}).some(entry => String(entry?.uid) === String(candidate.uid) && !entry.disable));
         const topicRows = topics.length > 0
             ? topics.map(item => `<div class="stmb-clip-topic-row" data-topic-id="${escapeHtml(item.id)}"><label>${escapeHtml(tr('Topic', 'STMemoryBooks_TopicalClip_Topic'))}<input class="text_pole stmb-clip-topic-name" value="${escapeHtml(item.topic)}"></label><label>${escapeHtml(tr('Keywords', 'STMemoryBooks_TopicalClip_Keywords'))}<input class="text_pole stmb-clip-topic-keywords" value="${escapeHtml((item.keywords || []).join(', '))}"></label><div class="buttons_block gap10px"><button type="button" class="menu_button stmb-clip-topic-create">${escapeHtml(tr('Create this Topical Clip', 'STMemoryBooks_ClipSuggestions_Include'))}</button><button type="button" class="menu_button stmb-clip-topic-dismiss">${escapeHtml(tr('Dismiss', 'STMemoryBooks_ClipReview_Dismiss'))}</button></div></div>`).join('')
             : `<p>${escapeHtml(tr('No new topics were suggested. You can add one manually.', 'STMemoryBooks_ClipSuggestions_None'))}</p>`;

@@ -635,6 +635,9 @@ export function createDefaultStmbSettings() {
             narratorCastDrawerCollapsed: true,
             compactionPromptTemplate: STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE,
             topicalClipPromptTemplate: '',
+            topicalClipFormat: '',
+            combinedClipFormat: '',
+            combineClipsPromptTemplate: '',
             compactionProfileIndex: 0,
             memoryAssistanceMode: 'off',
             sidePromptsMaxConcurrent: 1,
@@ -975,6 +978,9 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         ...normalizeLorebookEntrySettings(moduleSettings.topicalClipEntrySettings || {}),
         enabled: moduleSettings.topicalClipEntrySettings?.enabled === true,
     };
+    for (const key of ['topicalClipFormat', 'combinedClipFormat', 'combineClipsPromptTemplate']) {
+        moduleSettings[key] = typeof moduleSettings[key] === 'string' ? moduleSettings[key] : '';
+    }
     moduleSettings.convertExistingRecursion = Boolean(moduleSettings.convertExistingRecursion);
     moduleSettings.sidePromptsMaxConcurrent = Number.isFinite(Number(moduleSettings.sidePromptsMaxConcurrent))
         ? Math.max(1, Math.min(10, Math.trunc(Number(moduleSettings.sidePromptsMaxConcurrent))))

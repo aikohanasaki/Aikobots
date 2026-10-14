@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { areCombineSourcesCurrent, buildCombineClipsPrompt, isClipForCombination, snapshotCombineSource, unionClipKeywords } from '../public/scripts/stmb-combine-clips-policy.js';
+import { areCombineSourcesCurrent, buildCombineClipsPrompt, isClipForCombination, snapshotCombineSource, unionClipKeywords, visibleCombineClipSelection } from '../public/scripts/stmb-combine-clips-policy.js';
 
 const clips = () => [
     { uid: 0, comment: 'First [STMB Clip]', content: 'Synthetic first fact.', key: [' topic ', 'shared', ''], disable: false },
@@ -43,4 +43,14 @@ test('combination rejects changed source fields, duplicate identities, and missi
     const unrelated = structuredClone(sources);
     unrelated[0].order = 123;
     assert.equal(areCombineSourcesCurrent(snapshots, unrelated), true);
+});
+
+test('visibility toggles retain visible selections and drop hidden disabled selections', () => {
+    const sources = clips();
+    const shown = visibleCombineClipSelection(sources, ['0', '1'], true);
+    assert.deepEqual(shown.checked, ['0', '1']);
+    const hidden = visibleCombineClipSelection(sources, shown.checked, false);
+    assert.deepEqual(hidden.checked, ['0']);
+    assert.deepEqual(unionClipKeywords(hidden.visible.filter(entry => hidden.checked.includes(String(entry.uid)))), ['topic', 'shared']);
+    assert.deepEqual(visibleCombineClipSelection(sources, hidden.checked, true).checked, ['0']);
 });

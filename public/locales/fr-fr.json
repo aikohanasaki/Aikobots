@@ -6632,5 +6632,17 @@
     "Topical Clip queued. It will be saved automatically.": "Le clip thématique a été ajouté à la file. Il sera enregistré automatiquement.",
     "Compaction could not be saved. The entry may have changed. Review the current entry before trying again.": "La condensation n’a pas pu être enregistrée. L’entrée a peut-être changé. Vérifiez l’entrée actuelle avant de réessayer.",
     "Overwrite anyway": "Écraser quand même",
-    "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "L’entrée a changé depuis le début de la condensation. Remplacer son contenu actuel par votre brouillon condensé ?"
+    "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "L’entrée a changé depuis le début de la condensation. Remplacer son contenu actuel par votre brouillon condensé ?",
+    "STMemoryBooks_TopicalClip_EditFormat": "Modifier le format thématique",
+    "STMemoryBooks_TopicalClip_DisabledTargetHelp": "L’enregistrement activera le clip désactivé.",
+    "STMemoryBooks_CombineClips_EditFormat": "Modifier le format combiné",
+    "STMemoryBooks_CombineClips_EditPrompt": "Modifier le prompt de combinaison",
+    "STMemoryBooks_CombineClips_PromptHelp": "Utilisez {{SOURCE_CLIPS}} une seule fois. {{TITLE}} est facultatif.",
+    "STMemoryBooks_CombineClips_PromptRequired": "Le prompt de combinaison doit contenir {{SOURCE_CLIPS}} une seule fois.",
+    "STMemoryBooks_Clip_FormatHelp": "Utilisez {{CONTENT}} une seule fois. {{TITLE}} est facultatif.",
+    "STMemoryBooks_Clip_FormatRequired": "Le format doit contenir {{CONTENT}} une seule fois.",
+    "STMemoryBooks_Clip_FormatPreview": "Aperçu",
+    "STMemoryBooks_Clip_EntryChoice": "Créer une nouvelle entrée ou mettre à jour une entrée existante",
+    "STMemoryBooks_Clip_ShowDisabled": "Afficher les clips désactivés",
+    "STMemoryBooks_ClipReview_TargetDisabled": "Ce clip est désactivé. Activez-le puis relancez Memory Assistance."
 }

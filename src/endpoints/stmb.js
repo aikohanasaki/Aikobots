@@ -1,5 +1,6 @@
 import express from 'express';
 import { areCombineSourcesCurrent, unionClipKeywords } from '../../public/scripts/stmb-combine-clips-policy.js';
+import { DEFAULT_CLIP_FORMAT, readFormattedClip, renderClipFormat, validateClipFormat, withClipFormatData, withoutClipFormatData } from '../../public/scripts/stmb-clip-format-policy.js';
 import { commitStmbConsolidation, listStmbConsolidationRecoveries, readStmbConsolidationRecovery, writeStmbConsolidationRecovery, reviewStmbConsolidationSources } from '../stmb-consolidation-commit.js';
 import { fingerprintStmbSource } from '../../public/scripts/stmb-source.js';
 import { withStmbMemoryTransaction, resolveStmbOperations } from '../stmb-operation-service.js';
@@ -1795,13 +1796,24 @@ router.post('/combine-clips', async (request, response) => {
         const context = getLorebookContext(request);
         const headline = typeof input.title === 'string' ? input.title.trim() : '';
         const draft = typeof input.draft === 'string' ? input.draft.trim() : '';
+        const format = input.format === undefined ? DEFAULT_CLIP_FORMAT : input.format;
+        const placement = input.entrySettings;
         if (!context || !headline || /[\u0000-\u001F\u007F]/.test(headline)
             || headline.includes('[STMB Clip]') || headline.includes('===') || !draft
             || typeof input.disableOriginals !== 'boolean' || !Array.isArray(input.sources)
             || input.sources.length < 2 || input.sources.some(source => !source || typeof source.uid !== 'string')
-            || new Set(input.sources.map(source => source.uid)).size !== input.sources.length) {
+            || new Set(input.sources.map(source => source.uid)).size !== input.sources.length
+            || (placement !== undefined && (placement === null || typeof placement !== 'object' || Array.isArray(placement)
+                || typeof placement.enabled !== 'boolean' || (placement.enabled && (
+                ![0, 1, 2, 3, 5, 6, 7].includes(placement.position)
+                || !['auto', 'manual', 'reverse'].includes(placement.orderMode)
+                || (placement.position === 7 && !String(placement.outletName || '').trim())
+                || (placement.orderMode === 'manual' && (!Number.isInteger(placement.orderValue) || placement.orderValue < 0 || placement.orderValue > 9999))
+            ))))) {
             throw createStmbRequestError(400, 'StmbBadRequest', 'Invalid Clip combination request.');
         }
+        try { validateClipFormat(format); }
+        catch { throw createStmbRequestError(400, 'StmbBadRequest', 'Invalid Clip format.'); }
         return await withLorebookManagementTransaction(async transaction => {
             // Recheck reserved status under the same lock as the read and save.
             if (!getLorebookContext(request)) throw createStmbRequestError(400, 'StmbBadRequest', 'An ordinary user lorebook is required.');
@@ -1821,9 +1833,15 @@ router.post('/combine-clips', async (request, response) => {
             const entry = createLorebookEntry(data);
             initializeLorebookEntryDefaults(entry, { vectorized: true, selective: true, order: 100, position: 0 });
             entry.comment = title;
-            entry.content = `=== ${headline} ===\n\n${draft}\n\n=== END ${headline} ===`;
+            entry.content = renderClipFormat(format, headline, draft);
             entry.key = keywords;
             entry.constant = false;
+            if (placement?.enabled) {
+                entry.position = placement.position;
+                entry.outletName = placement.position === 7 ? String(placement.outletName).trim() : '';
+                if (placement.orderMode === 'manual') entry.order = placement.orderValue;
+                if (placement.orderMode === 'reverse') entry.order = 9999;
+            }
             const now = new Date().toISOString();
             entry.data = { extensions: { aikobots: {
                 topical_clip: {
@@ -1832,6 +1850,7 @@ router.post('/combine-clips', async (request, response) => {
                 },
                 combined_clips: { version: 1, source_uids: input.sources.map(source => source.uid), combined_at: now },
             } } };
+            if (input.format !== undefined) entry.data = withClipFormatData(entry.data, format, headline);
             if (input.disableOriginals) sources.forEach(source => { source.disable = true; });
             await request.activeSessionOperation?.assertAllowed();
             await transaction.save(request.user, metadata.name, data, 'user');
@@ -1902,7 +1921,6 @@ router.post('/create-entry', async (request, response) => {
             for (const [key, value] of Object.entries(entryOverrides)) {
                 entry[key] = value;
             }
-
             await request.activeSessionOperation?.assertAllowed();
             const savedMetadata = await transaction.save(request.user, metadata.name, lorebookData, metadata.storage);
             return response.send({
@@ -1932,6 +1950,8 @@ router.post('/update-entry-by-uid', async (request, response) => {
         ? ''
         : String(request.body.expectedTitle || '');
     const expectedClipType = String(request.body?.expectedClipType || '').trim();
+    const expectedDisabled = request.body?.expectedDisabled;
+    const clipFormat = request.body?.clipFormat;
     const metadataUpdates = request.body?.metadataUpdates || {};
     const entryOverrides = request.body?.entryOverrides || {};
     const invalidUpdate = getInvalidLorebookEntryUpdate({ metadataUpdates, entryOverrides });
@@ -1972,6 +1992,19 @@ router.post('/update-entry-by-uid', async (request, response) => {
         });
     }
 
+    if (expectedDisabled !== undefined && typeof expectedDisabled !== 'boolean') {
+        return response.status(400).send({ error: { type: 'StmbBadRequest', message: 'expectedDisabled must be a boolean.' } });
+    }
+    if (clipFormat !== undefined && clipFormat !== null
+        && (typeof clipFormat !== 'object' || Array.isArray(clipFormat)
+            || typeof clipFormat.template !== 'string' || typeof clipFormat.title !== 'string')) {
+        return response.status(400).send({ error: { type: 'StmbBadRequest', message: 'Invalid Clip format metadata.' } });
+    }
+    if (clipFormat?.template) {
+        try { validateClipFormat(clipFormat.template); }
+        catch { return response.status(400).send({ error: { type: 'StmbBadRequest', message: 'Invalid Clip format.' } }); }
+    }
+
     try {
         return await withLorebookManagementTransaction(async transaction => {
             const { data: lorebookData, metadata } = await getLorebookForManagement(
@@ -1990,6 +2023,14 @@ router.post('/update-entry-by-uid', async (request, response) => {
                         message: 'Lorebook entry was not found.',
                     },
                 });
+            }
+
+            if ((expectedDisabled !== undefined && Boolean(entry.disable) !== expectedDisabled)
+                || (expectedDisabled === undefined && entry.disable && entryOverrides.disable === false)) {
+                return response.status(409).send({ error: {
+                    type: 'StmbEntryDisabledChanged', code: 'TOPICAL_CLIP_TARGET_CHANGED',
+                    message: 'Clip activation changed after draft generation.',
+                } });
             }
 
             if (expectedContentHash && stableHashString(String(entry.content || '')) !== expectedContentHash) {
@@ -2033,6 +2074,16 @@ router.post('/update-entry-by-uid', async (request, response) => {
             }
             for (const [key, value] of Object.entries(entryOverrides)) {
                 entry[key] = value;
+            }
+            if (clipFormat === null) entry.data = withoutClipFormatData(entry.data);
+            else if (clipFormat !== undefined) {
+                entry.data = withClipFormatData(entry.data, clipFormat.template, clipFormat.title);
+                if (!readFormattedClip(entry)) {
+                    return response.status(400).send({ error: { type: 'StmbBadRequest', message: 'Clip format does not match content.' } });
+                }
+            }
+            if (hasContent && entry.data?.extensions?.aikobots?.clip_format && !readFormattedClip(entry)) {
+                entry.data = withoutClipFormatData(entry.data);
             }
 
             await request.activeSessionOperation?.assertAllowed();

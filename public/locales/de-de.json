@@ -6572,5 +6572,17 @@
     "Topical Clip queued. It will be saved automatically.": "Der thematische Clip wurde eingereiht. Er wird automatisch gespeichert.",
     "Compaction could not be saved. The entry may have changed. Review the current entry before trying again.": "Die Verdichtung konnte nicht gespeichert werden. Der Eintrag wurde möglicherweise geändert. Prüfe den aktuellen Eintrag vor einem erneuten Versuch.",
     "Overwrite anyway": "Trotzdem überschreiben",
-    "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "Der Eintrag wurde seit Beginn der Verdichtung geändert. Den aktuellen Inhalt mit deinem verdichteten Entwurf überschreiben?"
+    "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "Der Eintrag wurde seit Beginn der Verdichtung geändert. Den aktuellen Inhalt mit deinem verdichteten Entwurf überschreiben?",
+    "STMemoryBooks_TopicalClip_EditFormat": "Themen-Clip-Format bearbeiten",
+    "STMemoryBooks_TopicalClip_DisabledTargetHelp": "Beim Speichern wird ein deaktivierter Clip aktiviert.",
+    "STMemoryBooks_CombineClips_EditFormat": "Format für zusammengeführte Clips bearbeiten",
+    "STMemoryBooks_CombineClips_EditPrompt": "Prompt zum Zusammenführen bearbeiten",
+    "STMemoryBooks_CombineClips_PromptHelp": "{{SOURCE_CLIPS}} genau einmal verwenden. {{TITLE}} ist optional.",
+    "STMemoryBooks_CombineClips_PromptRequired": "Der Prompt zum Zusammenführen muss {{SOURCE_CLIPS}} genau einmal enthalten.",
+    "STMemoryBooks_Clip_FormatHelp": "{{CONTENT}} genau einmal verwenden. {{TITLE}} ist optional.",
+    "STMemoryBooks_Clip_FormatRequired": "Das Format muss {{CONTENT}} genau einmal enthalten.",
+    "STMemoryBooks_Clip_FormatPreview": "Vorschau",
+    "STMemoryBooks_Clip_EntryChoice": "Neuen Eintrag erstellen oder vorhandenen Eintrag aktualisieren",
+    "STMemoryBooks_Clip_ShowDisabled": "Deaktivierte Clips anzeigen",
+    "STMemoryBooks_ClipReview_TargetDisabled": "Dieser Clip ist deaktiviert. Aktiviere ihn und starte Memory Assistance erneut."
 }

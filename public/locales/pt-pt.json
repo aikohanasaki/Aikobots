@@ -2022,5 +2022,17 @@
   "Topical Clip generation failed.": "A geração do clip temático falhou.",
   "Failed to save Topical Clip.": "Não foi possível guardar o clip temático.",
   "Overwrite anyway": "Substituir na mesma",
-  "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "A entrada foi alterada desde o início da compactação. Substituir o conteúdo atual pelo seu rascunho compactado?"
+  "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "A entrada foi alterada desde o início da compactação. Substituir o conteúdo atual pelo seu rascunho compactado?",
+    "STMemoryBooks_TopicalClip_EditFormat": "Editar formato do Clip Temático",
+    "STMemoryBooks_TopicalClip_DisabledTargetHelp": "Salvar ativará o Clip desativado.",
+    "STMemoryBooks_CombineClips_EditFormat": "Editar formato combinado",
+    "STMemoryBooks_CombineClips_EditPrompt": "Editar prompt de combinação de Clips",
+    "STMemoryBooks_CombineClips_PromptHelp": "Use {{SOURCE_CLIPS}} exatamente uma vez. {{TITLE}} é opcional.",
+    "STMemoryBooks_CombineClips_PromptRequired": "O prompt de combinação deve conter {{SOURCE_CLIPS}} exatamente uma vez.",
+    "STMemoryBooks_Clip_FormatHelp": "Use {{CONTENT}} exatamente uma vez. {{TITLE}} é opcional.",
+    "STMemoryBooks_Clip_FormatRequired": "O formato deve conter {{CONTENT}} exatamente uma vez.",
+    "STMemoryBooks_Clip_FormatPreview": "Prévia",
+    "STMemoryBooks_Clip_EntryChoice": "Criar nova entrada ou atualizar entrada existente",
+    "STMemoryBooks_Clip_ShowDisabled": "Mostrar Clips desativados",
+    "STMemoryBooks_ClipReview_TargetDisabled": "Este Clip está desativado. Ative-o e execute Memory Assistance novamente."
 }

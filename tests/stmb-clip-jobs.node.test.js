@@ -256,6 +256,7 @@ test('ordinary Generate stays in its editor; Auto-Accept closes only after enque
     const generateSource = source.slice(start, end).replace('const generateTopicalClipDraft =', 'globalThis.generate =');
     for (const outcome of ['manual', 'saved', 'failed', 'canceled', 'enqueue-failed']) {
         let queued = 0;
+        let formatPreference = 'Synthetic format';
         let closed = 0;
         let directRequests = 0;
         let resolveJob;
@@ -263,9 +264,13 @@ test('ordinary Generate stays in its editor; Auto-Accept closes only after enque
         const sandbox = vm.createContext({
             structuredClone, tr: text => text,
             buildStmbSceneContext: () => ({ chatId: 'Original' }),
+            getClipFormat: () => formatPreference, getClipFormatKind: () => 'topical',
             entrySettingsEnabled: { checked: false }, captureEntrySettings: () => ({ enabled: false }),
             getCompactionProfileIndexFromSelect: () => 0, setCompactionProfileIndex() {},
-            runtime: { getProfile: () => ({}), buildGenerateData: async () => ({ model: 'Captured model' }) }, buildTopicalClipEntryOverrides: () => ({}),
+            runtime: { getProfile: () => ({}), buildGenerateData: async () => {
+                formatPreference = 'Changed after generation started';
+                return { model: 'Captured model' };
+            } }, buildTopicalClipEntryOverrides: () => ({}),
             getSelectedLorebookName: () => 'Book', currentLorebookName: 'Book', currentLorebookData: { entries: {} },
             getMode: () => 'create', draftRevision: 0,
             topicInput: { value: 'Topic' }, keywordsInput: { value: 'Topic' }, parseKeywords: () => ['Topic'],
@@ -280,6 +285,7 @@ test('ordinary Generate stays in its editor; Auto-Accept closes only after enque
                 assert.equal(closed, 0);
                 assert.equal(input.type, 'topicalClip');
                 assert.equal(input.payload.saveContext.lorebookData, undefined);
+                assert.equal(input.payload.saveContext.format, 'Synthetic format');
                 assert.equal(input.payload.generateData.model, 'Captured model');
                 assert.equal(input.sceneContext.chatId, 'Original');
                 if (outcome === 'enqueue-failed') throw new Error('Synthetic queue failure');

@@ -66,6 +66,12 @@ async function testAdditionalParameters(page) {
 
 /** Exercises the actual STMB change listener, keyboard toggles, and saved settings payload. */
 async function testStmbSettingsControls(page) {
+    const closeAndWait = async () => {
+        const dialog = page.locator('dialog[open]').last();
+        const id = await dialog.getAttribute('data-id');
+        await page.keyboard.press('Escape');
+        await page.locator(`dialog[data-id="${id}"]`).waitFor({ state: 'detached' });
+    };
     await page.locator('#stmb-menu-item').evaluate(element => element.click());
     await page.locator('#stmb-settings-open-automatic-settings').click();
     await page.locator('#stmb-settings-auto-summary-trigger-mode').selectOption('tokens');
@@ -88,13 +94,13 @@ async function testStmbSettingsControls(page) {
     assert.equal(settings.useSeparateGroupSidePrompts, false);
     await threshold.fill('-1');
     await threshold.press('Tab');
-    await page.keyboard.press('Escape');
-    await page.keyboard.press('Escape');
+    await closeAndWait();
+    await closeAndWait();
     await page.locator('#stmb-menu-item').evaluate(element => element.click());
     await page.locator('#stmb-settings-open-automatic-settings').click();
     assert.equal(await page.locator('#stmb-settings-auto-summary-token-threshold').inputValue(), '5555');
-    await page.keyboard.press('Escape');
-    await page.keyboard.press('Escape');
+    await closeAndWait();
+    await closeAndWait();
 
     await page.locator('#stmb-menu-item').evaluate(element => element.click());
     await page.locator('#stmb-settings-open-sideprompt-manager').click();
@@ -118,13 +124,13 @@ async function testStmbSettingsControls(page) {
     const prompt = Object.values(savedPromptResponse.request().postDataJSON().document.prompts).find(item => item.name === 'Versioned Test');
     assert.equal(prompt.settings.saveAllVersions, true);
     await saveAll.waitFor({ state: 'detached' });
-    await page.keyboard.press('Escape');
+    await closeAndWait();
     await versioning.waitFor({ state: 'detached' });
     await page.locator('#stmb-settings-open-sideprompt-manager').click();
     assert.equal(await page.locator('#stmb-sp-versioning-enabled').isChecked(), true);
-    await page.keyboard.press('Escape');
+    await closeAndWait();
     await versioning.waitFor({ state: 'detached' });
-    await page.keyboard.press('Escape');
+    await closeAndWait();
 }
 
 function getAvailablePort() {
@@ -663,7 +669,7 @@ async function testWorldInfoPresetSelectionUi(page) {
         await route.fulfill({ json: { ...catalog, standalone_universe_names: universeAvailable ? [universeName] : [] } });
     };
     await page.route('**/api/worldinfo/list', catalogHandler);
-    await page.locator('#world_info_locks_restore').evaluate(button => button.click());
+    await page.evaluate(() => globalThis.SillyTavern.getContext().updateWorldInfoList());
     await page.locator('#world_info option').filter({ hasText: universeName }).waitFor({ state: 'attached' });
     assert.equal(await page.locator('#world_editor_select option').filter({ hasText: universeName }).count(), 0, 'Public universes must not enter the editor selector.');
     const worldSelect = page.locator('#world_info');

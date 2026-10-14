@@ -6647,5 +6647,17 @@
     "Topical Clip queued. It will be saved automatically.": "Тематический клип добавлен в очередь. Он будет сохранён автоматически.",
     "Compaction could not be saved. The entry may have changed. Review the current entry before trying again.": "Не удалось сохранить результат сжатия. Возможно, запись изменилась. Проверьте текущую запись перед повторной попыткой.",
     "Overwrite anyway": "Всё равно перезаписать",
-    "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "Запись изменилась после начала сжатия. Заменить её текущее содержимое вашим сжатым черновиком?"
+    "The entry changed after compaction started. Overwrite its current content with your compacted draft?": "Запись изменилась после начала сжатия. Заменить её текущее содержимое вашим сжатым черновиком?",
+    "STMemoryBooks_TopicalClip_EditFormat": "Редактировать формат тематического клипа",
+    "STMemoryBooks_TopicalClip_DisabledTargetHelp": "При сохранении отключённый клип будет включён.",
+    "STMemoryBooks_CombineClips_EditFormat": "Редактировать формат объединённого клипа",
+    "STMemoryBooks_CombineClips_EditPrompt": "Редактировать запрос объединения клипов",
+    "STMemoryBooks_CombineClips_PromptHelp": "Используйте {{SOURCE_CLIPS}} ровно один раз. {{TITLE}} необязателен.",
+    "STMemoryBooks_CombineClips_PromptRequired": "Запрос объединения должен содержать {{SOURCE_CLIPS}} ровно один раз.",
+    "STMemoryBooks_Clip_FormatHelp": "Используйте {{CONTENT}} ровно один раз. {{TITLE}} необязателен.",
+    "STMemoryBooks_Clip_FormatRequired": "Формат должен содержать {{CONTENT}} ровно один раз.",
+    "STMemoryBooks_Clip_FormatPreview": "Предпросмотр",
+    "STMemoryBooks_Clip_EntryChoice": "Создать новую запись или обновить существующую",
+    "STMemoryBooks_Clip_ShowDisabled": "Показать отключённые клипы",
+    "STMemoryBooks_ClipReview_TargetDisabled": "Этот клип отключён. Включите его и снова запустите Memory Assistance."
 }

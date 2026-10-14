@@ -190,6 +190,26 @@ describe('Combine Clips atomic save', () => {
         expect(stored.entries[2]).toEqual(before.entries[2]);
     });
 
+    it('renders a custom format and placement in the atomic save', async () => {
+        request.body.format = '## {{TITLE}}\n{{CONTENT}}';
+        request.body.title = 'Price $&';
+        request.body.entrySettings = { enabled: true, position: 7, outletName: 'Notes', orderMode: 'manual', orderValue: 17 };
+        const response = makeResponse();
+        await combineClipsHandler(request, response);
+        expect(response.statusCode).toBe(200);
+        expect(response.payload.entry).toMatchObject({ position: 7, outletName: 'Notes', order: 17 });
+        expect(response.payload.entry.content).toBe('## Price $&\nReviewed synthetic draft.');
+        expect(response.payload.entry.data.extensions.aikobots.clip_format).toEqual({ template: request.body.format, title: 'Price $&' });
+    });
+
+    it.each([{ format: '{{TITLE}}' }, { entrySettings: { enabled: true, position: 7, outletName: '', orderMode: 'auto' } }])('rejects invalid format or placement before reading', async value => {
+        Object.assign(request.body, value);
+        const response = makeResponse();
+        await combineClipsHandler(request, response);
+        expect(response.statusCode).toBe(400);
+        expect(getLorebookForManagement).not.toHaveBeenCalled();
+    });
+
     it.each([
         { storage: 'secure' }, { storage: undefined }, { title: 'Bad\ntitle' }, { title: 'Bad === title' },
         { draft: ' ' }, { disableOriginals: 'true' }, { sources: [] }, { sources: [null, null] },
@@ -356,6 +376,42 @@ function makeNarratorRequest() {
 }
 
 describe('STMB multi-lorebook group route', () => {
+    it('preserves matching Clip format metadata and clears it after an unrelated content replacement', async () => {
+        const format = '## {{TITLE}}\n{{CONTENT}}';
+        const entry = { uid: 1, comment: 'Topic [STMB Clip]', content: '## Topic\nOriginal', data: { extensions: { aikobots: { clip_format: { template: format, title: 'Topic' }, topical_clip: { version: 2 } } } } };
+        getLorebookForManagement.mockImplementation(async () => ({ data: { entries: { 1: structuredClone(entry) } }, metadata: { name: 'Book', storage: 'user' } }));
+        transactionSave.mockResolvedValue({ name: 'Book', storage: 'user' });
+        const request = makeRequest({ body: { lorebookName: 'Book', storage: 'user', uid: 1, content: '## Topic\nUpdated', clipFormat: { template: format, title: 'Topic' } } });
+        const formatted = makeResponse();
+        await updateEntryHandler(request, formatted);
+        expect(formatted.statusCode).toBe(200);
+        expect(formatted.payload.entry.data.extensions.aikobots.clip_format.title).toBe('Topic');
+        request.body.content = 'Compacted without wrapper';
+        delete request.body.clipFormat;
+        const compacted = makeResponse();
+        await updateEntryHandler(request, compacted);
+        expect(compacted.statusCode).toBe(200);
+        expect(compacted.payload.entry.data.extensions.aikobots.clip_format).toBeUndefined();
+        expect(compacted.payload.entry.data.extensions.aikobots.topical_clip.version).toBe(2);
+    });
+    it('rejects disabled-state changes before Topical Clip updates', async () => {
+        const entry = { uid: 1, comment: 'Topic [STMB Clip]', content: 'Original', disable: true, data: { extensions: { aikobots: { topical_clip: { version: 2 } } } } };
+        getLorebookForManagement.mockResolvedValue({ data: { entries: { 1: structuredClone(entry) } }, metadata: { name: 'Book', storage: 'user' } });
+        const request = makeRequest({ body: { lorebookName: 'Book', storage: 'user', uid: 1, content: 'Replacement', expectedDisabled: false, entryOverrides: { disable: false } } });
+        const response = makeResponse();
+        await updateEntryHandler(request, response);
+        expect(response.statusCode).toBe(409);
+        expect(response.payload.error.type).toBe('StmbEntryDisabledChanged');
+        expect(transactionSave).not.toHaveBeenCalled();
+        delete request.body.expectedDisabled;
+        const legacy = makeResponse();
+        await updateEntryHandler(request, legacy);
+        expect(legacy.statusCode).toBe(409);
+        request.body.expectedDisabled = true;
+        const explicit = makeResponse();
+        await updateEntryHandler(request, explicit);
+        expect(explicit.statusCode).toBe(200);
+    });
     it.each(['create', 'update'])('validates and persists Clip placement on %s', async mode => {
         const existing = { uid: 1, comment: 'Old Clip', content: 'Original ordinary content', order: 100, position: 1, key: ['topic'] };
         getLorebookForManagement.mockResolvedValue({ data: { entries: mode === 'update' ? { 1: structuredClone(existing) } : {} }, metadata: { name: 'Book', storage: 'user' } });
