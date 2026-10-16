@@ -15,6 +15,58 @@ function browserFunction(source, start, end, name, context) {
     return vm.runInNewContext(source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start))).replace(/^export /gm, '') + `\n${name}`, context);
 }
 
+test('preset caching confirmation stops a stale application without overwriting the newer preset', async () => {
+    for (const confirmed of [0, 1]) {
+        let selected = 'First';
+        let resolveConfirmation;
+        let saves = 0;
+        const applications = [];
+        const completed = [];
+        const settings = { automatic_prompt_cache: false };
+        const context = {
+            structuredClone, oai_settings: settings,
+            openai_settings: [
+                { automatic_prompt_cache: true, automatic_prompt_cache_ttl: '1h' },
+                { automatic_prompt_cache: false, automatic_prompt_cache_ttl: '5m' },
+            ],
+            openai_setting_names: { First: 0, Second: 1 },
+            settingsToUpdate: {
+                automatic_prompt_cache: ['#cache', 'automatic_prompt_cache', true, false],
+                automatic_prompt_cache_ttl: ['#ttl', 'automatic_prompt_cache_ttl', false, false],
+            },
+            $: () => ({ find: () => ({ text: () => selected }), prop() { return this; }, val() { return this; }, trigger() { return this; } }),
+            event_types: { OAI_PRESET_CHANGED_BEFORE: 'before', PRESET_CHANGED: 'changed' },
+            eventSource: { emit(type, payload) {
+                if (type === 'before') return { finally(callback) {
+                    const application = callback();
+                    applications.push(application);
+                    return application;
+                } };
+                if (type === 'changed') completed.push(payload.name);
+                return Promise.resolve();
+            } },
+            Popup: { show: { confirm: () => new Promise(resolve => { resolveConfirmation = resolve; }) } },
+            POPUP_RESULT: { AFFIRMATIVE: 1 }, t: strings => strings.join(''),
+            claudeServerCachingEnabled: false, saveOpenAIPreset() {},
+            resetAutomaticCacheComparisons() {}, updateAutomaticCacheControls() {},
+            saveSettingsDebounced() { saves++; },
+        };
+        const apply = browserFunction(openaiSource, 'function onSettingsPresetChange()', '\nfunction getMaxContextOpenAI', 'onSettingsPresetChange', context);
+        apply();
+        assert.equal(typeof resolveConfirmation, 'function');
+        selected = 'Second';
+        apply();
+        await applications[1];
+        resolveConfirmation(confirmed);
+        await applications[0];
+        assert.equal(settings.preset_settings_openai, 'Second');
+        assert.equal(settings.automatic_prompt_cache, false);
+        assert.equal(settings.automatic_prompt_cache_ttl, '5m');
+        assert.deepEqual(completed, ['Second']);
+        assert.equal(saves, 1);
+    }
+});
+
 test('provider parameters survive JSON round trips without inheriting legacy custom values', () => {
     const settings = { custom_include_body: 'legacy: true' };
     setAdditionalParameters(settings, 'openai', { custom_include_body: 'temperature: 0.3' });

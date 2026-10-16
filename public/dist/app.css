@@ -11381,7 +11381,7 @@ p.stmb-help-drawer-copy {
 }
 
 #automatic_prompt_cache_block[hidden] {
-    display: none;
+    display: none !important;
 }
 
 #automatic_prompt_cache:not(:checked) ~ #automatic_prompt_cache_supported,

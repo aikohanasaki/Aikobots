@@ -5304,6 +5304,7 @@ function onSettingsPresetChange() {
                         : t`5-minute cache writes cost 1.25 times the regular input price.`;
                     const confirmed = await Popup.show.confirm(t`Enable prompt caching?`,
                         t`Caching may cost more if your prompt changes often or the cache expires before your next message.` + ' ' + lifetime);
+                    if (oai_settings.preset_settings_openai !== presetName) return;
                     if (confirmed !== POPUP_RESULT.AFFIRMATIVE) continue;
                 }
                 if (isCheckbox) {
