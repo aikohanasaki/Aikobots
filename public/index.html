@@ -298,6 +298,23 @@
                                         </div>
                                     </div>
                                 </div>
+                                <div id="automatic_prompt_cache_block" class="range-block" data-source="claude,openrouter,electronhub" hidden>
+                                    <label id="automatic_prompt_cache_label" for="automatic_prompt_cache" class="checkbox_label flexWrap widthFreeExpand">
+                                        <input id="automatic_prompt_cache" type="checkbox" />
+                                        <span data-i18n="Optimize for caching">Optimize for caching</span>
+                                        <span id="automatic_prompt_cache_supported" data-cc-toggle="false">
+                                            <i class="icon-supported fa-solid fa-circle-check" title="Supported by the current model" data-i18n="[title]Supported by the current model"></i>
+                                            <i class="icon-unsupported fa-solid fa-circle-exclamation" title="Unsupported by the current model" data-i18n="[title]Unsupported by the current model"></i>
+                                        </span>
+                                    </label>
+                                    <div class="wide100p">
+                                        <label for="automatic_prompt_cache_ttl" data-i18n="Cache lifetime">Cache lifetime</label>
+                                        <select id="automatic_prompt_cache_ttl" class="text_pole">
+                                            <option value="5m" data-i18n="5 minutes (writes cost 1.25× regular input)">5 minutes (writes cost 1.25× regular input)</option>
+                                            <option value="1h" data-i18n="1 hour (writes cost 2× regular input)">1 hour (writes cost 2× regular input)</option>
+                                        </select>
+                                    </div>
+                                </div>
                                 <div class="range-block" data-source="openai,openrouter,mistralai,custom,cohere,groq,electronhub,navy,zanity,nanogpt,xai,pollinations,aimlapi,makersuite,vertexai,azure_openai">
                                     <div class="range-block-title justifyLeft" data-i18n="Seed">
                                         Seed
@@ -365,6 +382,17 @@
                                             <span data-i18n="enable_functions_desc_1">Allows using </span><a href="https://platform.openai.com/docs/guides/function-calling" target="_blank" data-i18n="enable_functions_desc_2">function tools</a>.
                                             <span data-i18n="enable_functions_desc_3">Can be utilized by various extensions to provide additional functionality.</span>
                                             <strong data-i18n="enable_functions_desc_4">Not supported when Prompt Post-Processing with "no tools" is used!</strong>
+                                        </div>
+                                    </div>
+                                    <div class="range-block" data-source="makersuite">
+                                        <div class="flex-container oneline-dropdown">
+                                            <label for="gemini_service_tier" data-i18n="Gemini Service Tier">Gemini Service Tier</label>
+                                            <select id="gemini_service_tier">
+                                                <option value="" data-i18n="Default">Default</option>
+                                                <option value="standard" data-i18n="gemini_service_tier_standard">Standard</option>
+                                                <option value="flex" data-i18n="gemini_service_tier_flex">Flex</option>
+                                                <option value="priority" data-i18n="gemini_service_tier_priority">Priority</option>
+                                            </select>
                                         </div>
                                     </div>
                                     <div class="range-block" data-source="openai,aimlapi,openrouter,mistralai,makersuite,vertexai,claude,custom,xai,pollinations,moonshot,cohere,cometapi,nanogpt,electronhub,navy,zanity,azure_openai,zai,siliconflow">

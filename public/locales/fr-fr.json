@@ -1,4 +1,8 @@
 {
+    "Gemini Service Tier": "Niveau de service Gemini",
+    "gemini_service_tier_standard": "Standard",
+    "gemini_service_tier_flex": "Flex",
+    "gemini_service_tier_priority": "Prioritaire",
     "Combine Clips": "Combiner les clips",
     "Select two or more Clips, including ordinary or Topical Clips.": "Sélectionnez au moins deux clips, ordinaires ou thématiques.",
     "New Topical Clip title": "Titre du nouveau clip thématique",
@@ -6644,5 +6648,19 @@
     "STMemoryBooks_Clip_FormatPreview": "Aperçu",
     "STMemoryBooks_Clip_EntryChoice": "Créer une nouvelle entrée ou mettre à jour une entrée existante",
     "STMemoryBooks_Clip_ShowDisabled": "Afficher les clips désactivés",
-    "STMemoryBooks_ClipReview_TargetDisabled": "Ce clip est désactivé. Activez-le puis relancez Memory Assistance."
+    "STMemoryBooks_ClipReview_TargetDisabled": "Ce clip est désactivé. Activez-le puis relancez Memory Assistance.",
+    "Optimize for caching": "Optimiser la mise en cache",
+    "Cache lifetime": "Durée du cache",
+    "5 minutes (writes cost 1.25× regular input)": "5 minutes (écritures à 1,25 fois le tarif d'entrée normal)",
+    "1 hour (writes cost 2× regular input)": "1 heure (écritures à 2 fois le tarif d'entrée normal)",
+    "The selected model is ineligible for automatic caching.": "Le modèle sélectionné ne prend pas en charge la mise en cache automatique.",
+    "Enable prompt caching?": "Activer la mise en cache des prompts ?",
+    "Caching may cost more if your prompt changes often or the cache expires before your next message.": "La mise en cache peut coûter plus cher si votre prompt change souvent ou si le cache expire avant votre prochain message.",
+    "5-minute cache writes cost 1.25 times the regular input price.": "Les écritures dans le cache de 5 minutes coûtent 1,25 fois le tarif d'entrée normal.",
+    "1-hour cache writes cost twice the regular input price.": "Les écritures dans le cache d'une heure coûtent deux fois le tarif d'entrée normal.",
+    "Caching warning": "Avertissement sur le cache",
+    "Little of your recent prompts was reused. Repeated cache writes may increase your costs. Turn off Optimize for caching?": "Une faible partie de vos prompts récents a été réutilisée. Les écritures répétées dans le cache peuvent augmenter vos coûts. Désactiver l'optimisation du cache ?",
+    "Caching appears to have increased the input cost of your recent replies. Turn off Optimize for caching?": "La mise en cache semble avoir augmenté le coût d'entrée de vos réponses récentes. Désactiver l'optimisation du cache ?",
+    "Turn off caching": "Désactiver le cache",
+    "Keep it on": "Le laisser activé"
 }

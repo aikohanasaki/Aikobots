@@ -3,6 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
     extractPromptCacheUsage,
     extractPromptCacheUsageFromSseEvent,
+    getAutomaticClaudeCacheTTL,
     normalizePromptCacheUsage,
 } from '../prompt-cache-usage.js';
 
@@ -37,5 +38,16 @@ describe('prompt cache usage', () => {
             scope: 'request',
         });
         expect(extractPromptCacheUsageFromSseEvent('data: [DONE]')).toBeNull();
+    });
+
+    it('allows automatic caching only for eligible Claude requests when server caching is off', () => {
+        const body = { automatic_prompt_cache: true, automatic_prompt_cache_ttl: '5m', model: 'claude-sonnet-4-6', chat_completion_source: 'claude' };
+        expect(getAutomaticClaudeCacheTTL(body, false)).toBe('5m');
+        expect(getAutomaticClaudeCacheTTL({ ...body, automatic_prompt_cache_ttl: '1h', model: 'anthropic/claude-sonnet-4-6', chat_completion_source: 'openrouter' }, false)).toBe('1h');
+        expect(getAutomaticClaudeCacheTTL({ ...body, chat_completion_source: 'electronhub' }, false)).toBe('5m');
+        expect(getAutomaticClaudeCacheTTL(body, true)).toBeNull();
+        expect(getAutomaticClaudeCacheTTL({ ...body, automatic_prompt_cache: false }, false)).toBeNull();
+        expect(getAutomaticClaudeCacheTTL({ ...body, model: 'gpt-5' }, false)).toBeNull();
+        expect(getAutomaticClaudeCacheTTL({ ...body, automatic_prompt_cache_ttl: '2h' }, false)).toBeNull();
     });
 });

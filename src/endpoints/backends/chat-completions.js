@@ -59,6 +59,7 @@ import { withDirectoryLock } from '../../file-system-lock.js';
 import {
     extractPromptCacheUsage,
     extractPromptCacheUsageFromSseEvent,
+    getAutomaticClaudeCacheTTL,
     normalizePromptCacheUsage,
 } from '../../prompt-cache-usage.js';
 import { prepareEntriesForScan, resolveSortedEntriesPayload } from '../worldinfo.js';
@@ -1117,6 +1118,7 @@ async function sendClaudeRequest(request) {
     const apiKey = request.body.reverse_proxy ? request.body.proxy_password : readRequestSecret(request, SECRET_KEYS.CLAUDE);
     const divider = '-'.repeat(process.stdout.columns);
     const enableSystemPromptCache = getConfigValue('claude.enableSystemPromptCache', false, 'boolean');
+    const automaticCacheTTL = getAutomaticClaudeCacheTTL(request.body, enableSystemPromptCache);
     let cachingAtDepth = getConfigValue('claude.cachingAtDepth', -1, 'number');
     // Disabled if not an integer or negative
     if (!Number.isInteger(cachingAtDepth) || cachingAtDepth < 0) {
@@ -1180,6 +1182,7 @@ async function sendClaudeRequest(request) {
             stream: request.body.stream,
             ...policy.body,
         };
+        if (automaticCacheTTL) requestBody.cache_control = { type: 'ephemeral', ...(automaticCacheTTL === '1h' ? { ttl: '1h' } : {}) };
         delete requestBody.jsonTool;
         if (useSystemPrompt) {
             if (enableSystemPromptCache && Array.isArray(convertedPrompt.systemPrompt) && convertedPrompt.systemPrompt.length) {
@@ -1215,7 +1218,7 @@ async function sendClaudeRequest(request) {
             requestBody.tools = [...webSearchTool, ...(requestBody.tools || [])];
         }
 
-        if (cachingAtDepth !== -1) {
+        if (cachingAtDepth !== -1 && !automaticCacheTTL) {
             cachingAtDepthForClaude(convertedPrompt.messages, cachingAtDepth, cacheTTL);
         }
 
@@ -1260,6 +1263,18 @@ async function sendClaudeRequest(request) {
                 stop_reason: generateResponseJson.stop_reason,
                 model: generateResponseJson.model,
             };
+            if (automaticCacheTTL && generateResponseJson.usage) {
+                const usage = generateResponseJson.usage;
+                reply.usage = {
+                    input_tokens: usage.input_tokens,
+                    cache_read_input_tokens: usage.cache_read_input_tokens,
+                    cache_creation_input_tokens: usage.cache_creation_input_tokens,
+                    cache_creation: usage.cache_creation && {
+                        ephemeral_5m_input_tokens: usage.cache_creation.ephemeral_5m_input_tokens,
+                        ephemeral_1h_input_tokens: usage.cache_creation.ephemeral_1h_input_tokens,
+                    },
+                };
+            }
             return createProviderJsonResult(reply, { cacheUsage: extractPromptCacheUsage(generateResponseJson) });
         }
     } catch (error) {
@@ -1275,6 +1290,10 @@ async function sendClaudeRequest(request) {
 async function sendMakerSuiteRequest(request) {
     const useVertexAi = request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.VERTEXAI;
     const apiName = useVertexAi ? 'Google Vertex AI' : 'Google AI Studio';
+    const serviceTier = request.body.service_tier;
+    if (!useVertexAi && serviceTier !== undefined && serviceTier !== '' && !['standard', 'flex', 'priority'].includes(serviceTier)) {
+        return createProviderJsonResult({ error: true, message: 'Invalid Gemini service tier.' }, { status: 400, ok: false });
+    }
     let apiUrl;
     let apiKey;
 
@@ -1408,6 +1427,10 @@ async function sendMakerSuiteRequest(request) {
             safetySettings: safetySettings,
             generationConfig: generationConfig,
         };
+
+        if (!useVertexAi && serviceTier) {
+            body.service_tier = serviceTier;
+        }
 
         if (useSystemPrompt && Array.isArray(prompt.system_instruction.parts) && prompt.system_instruction.parts.length) {
             body.systemInstruction = prompt.system_instruction;
@@ -2122,6 +2145,8 @@ async function sendElectronHubRequest(request) {
             'stream_options': request.body.stream ? { include_usage: true } : undefined,
             ...bodyParams,
         };
+        const automaticCacheTTL = getAutomaticClaudeCacheTTL(request.body, getConfigValue('claude.enableSystemPromptCache', false, 'boolean'));
+        if (automaticCacheTTL) requestBody.cache_control = { type: 'ephemeral', ...(automaticCacheTTL === '1h' ? { ttl: '1h' } : {}) };
 
         const config = applyAdditionalParameters(request.body, {
             method: 'POST',
@@ -4108,12 +4133,14 @@ export async function handleChatCompletionsGenerate(request, response) {
             }
 
             const cachingAtDepth = getConfigValue('claude.cachingAtDepth', -1, 'number');
+            const automaticCacheTTL = getAutomaticClaudeCacheTTL(request.body, getConfigValue('claude.enableSystemPromptCache', false, 'boolean'));
+            if (automaticCacheTTL) bodyParams.cache_control = { type: 'ephemeral', ...(automaticCacheTTL === '1h' ? { ttl: '1h' } : {}) };
             const isClaude3or4 = /anthropic\/claude-(3|opus-4|sonnet-4|haiku-4)/.test(request.body.model);
             const cacheTTL = getConfigValue('claude.extendedTTL', false, 'boolean') ? '1h' : '5m';
             if (Array.isArray(request.body.messages)) {
                 embedOpenRouterMedia(request.body.messages);
                 addOpenRouterSignatures(request.body.messages, request.body.model);
-                if (Number.isInteger(cachingAtDepth) && cachingAtDepth >= 0 && isClaude3or4) {
+                if (!automaticCacheTTL && Number.isInteger(cachingAtDepth) && cachingAtDepth >= 0 && isClaude3or4) {
                     cachingAtDepthForOpenRouterClaude(request.body.messages, cachingAtDepth, cacheTTL);
                 }
             }

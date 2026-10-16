@@ -1017,6 +1017,7 @@ Core feature styling belongs to the smart theme in `public/style.css`. Custom la
 
 | Surface | Required behavior |
 |---|---|
+| Automatic prompt caching | Use the smart theme checkbox and select styles; dim ineligible models with `.automatic-prompt-cache-ineligible` and explain eligibility on label hover |
 | Recommended Chat Setup | Readable searchable `#recommended_chat_setup_lorebook` and `#recommended_chat_setup_side_prompts` inside `#recommended_chat_setup_configuration`; disabled controls; full-width `#recommended_chat_setup_button` above Creator's Notes; mobile editor flow |
 | Memory Books main popup and Active Cast | Separate preferences/automatic-memory sub-popups; group binding grids and cast manager stack below 600px; movable cast drawer stays viewport-limited with its existing collapse state |
 | Memory Books regeneration | `.stmb-regenerate-entry` remains hidden unless the renderer makes it eligible; `.stmb-regeneration-columns` shows original/replacement side by side and stacks below 600px; `.stmb-regeneration-content` scrolls/resizes within the popup; disabled actions stay disabled |

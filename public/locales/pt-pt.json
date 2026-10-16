@@ -1,4 +1,8 @@
 {
+    "Gemini Service Tier": "Nível de serviço Gemini",
+    "gemini_service_tier_standard": "Padrão",
+    "gemini_service_tier_flex": "Flex",
+    "gemini_service_tier_priority": "Prioridade",
     "Combine Clips": "Combinar clipes",
     "Select two or more Clips, including ordinary or Topical Clips.": "Selecione dois ou mais clipes comuns ou temáticos.",
     "New Topical Clip title": "Título do novo clipe temático",
@@ -2034,5 +2038,19 @@
     "STMemoryBooks_Clip_FormatPreview": "Prévia",
     "STMemoryBooks_Clip_EntryChoice": "Criar nova entrada ou atualizar entrada existente",
     "STMemoryBooks_Clip_ShowDisabled": "Mostrar Clips desativados",
-    "STMemoryBooks_ClipReview_TargetDisabled": "Este Clip está desativado. Ative-o e execute Memory Assistance novamente."
+    "STMemoryBooks_ClipReview_TargetDisabled": "Este Clip está desativado. Ative-o e execute Memory Assistance novamente.",
+    "Optimize for caching": "Otimizar para cache",
+    "Cache lifetime": "Duração da cache",
+    "5 minutes (writes cost 1.25× regular input)": "5 minutos (escritas custam 1,25 vezes o preço normal da entrada)",
+    "1 hour (writes cost 2× regular input)": "1 hora (escritas custam o dobro do preço normal da entrada)",
+    "The selected model is ineligible for automatic caching.": "O modelo selecionado não é elegível para cache automática.",
+    "Enable prompt caching?": "Ativar a cache de prompts?",
+    "Caching may cost more if your prompt changes often or the cache expires before your next message.": "A cache pode custar mais se o prompt mudar frequentemente ou se a cache expirar antes da próxima mensagem.",
+    "5-minute cache writes cost 1.25 times the regular input price.": "As escritas na cache de 5 minutos custam 1,25 vezes o preço normal da entrada.",
+    "1-hour cache writes cost twice the regular input price.": "As escritas na cache de 1 hora custam o dobro do preço normal da entrada.",
+    "Caching warning": "Aviso sobre a cache",
+    "Little of your recent prompts was reused. Repeated cache writes may increase your costs. Turn off Optimize for caching?": "Pouco dos seus prompts recentes foi reutilizado. Escritas repetidas na cache podem aumentar os custos. Desativar a otimização da cache?",
+    "Caching appears to have increased the input cost of your recent replies. Turn off Optimize for caching?": "A cache parece ter aumentado o custo de entrada das respostas recentes. Desativar a otimização da cache?",
+    "Turn off caching": "Desativar a cache",
+    "Keep it on": "Manter ativada"
 }

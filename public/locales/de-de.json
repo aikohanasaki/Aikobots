@@ -1,4 +1,8 @@
 {
+    "Gemini Service Tier": "Gemini-Dienststufe",
+    "gemini_service_tier_standard": "Standard",
+    "gemini_service_tier_flex": "Flex",
+    "gemini_service_tier_priority": "Priorität",
     "Combine Clips": "Clips zusammenführen",
     "Select two or more Clips, including ordinary or Topical Clips.": "Wähle mindestens zwei gewöhnliche oder thematische Clips aus.",
     "New Topical Clip title": "Titel des neuen thematischen Clips",
@@ -6584,5 +6588,19 @@
     "STMemoryBooks_Clip_FormatPreview": "Vorschau",
     "STMemoryBooks_Clip_EntryChoice": "Neuen Eintrag erstellen oder vorhandenen Eintrag aktualisieren",
     "STMemoryBooks_Clip_ShowDisabled": "Deaktivierte Clips anzeigen",
-    "STMemoryBooks_ClipReview_TargetDisabled": "Dieser Clip ist deaktiviert. Aktiviere ihn und starte Memory Assistance erneut."
+    "STMemoryBooks_ClipReview_TargetDisabled": "Dieser Clip ist deaktiviert. Aktiviere ihn und starte Memory Assistance erneut.",
+    "Optimize for caching": "Für Caching optimieren",
+    "Cache lifetime": "Cache-Dauer",
+    "5 minutes (writes cost 1.25× regular input)": "5 Minuten (Schreibvorgänge kosten das 1,25-Fache normaler Eingaben)",
+    "1 hour (writes cost 2× regular input)": "1 Stunde (Schreibvorgänge kosten das Doppelte normaler Eingaben)",
+    "The selected model is ineligible for automatic caching.": "Das ausgewählte Modell ist für automatisches Caching nicht geeignet.",
+    "Enable prompt caching?": "Prompt-Caching aktivieren?",
+    "Caching may cost more if your prompt changes often or the cache expires before your next message.": "Caching kann mehr kosten, wenn sich dein Prompt oft ändert oder der Cache vor deiner nächsten Nachricht abläuft.",
+    "5-minute cache writes cost 1.25 times the regular input price.": "Cache-Schreibvorgänge für 5 Minuten kosten das 1,25-Fache des normalen Eingabepreises.",
+    "1-hour cache writes cost twice the regular input price.": "Cache-Schreibvorgänge für 1 Stunde kosten das Doppelte des normalen Eingabepreises.",
+    "Caching warning": "Caching-Warnung",
+    "Little of your recent prompts was reused. Repeated cache writes may increase your costs. Turn off Optimize for caching?": "Von deinen letzten Prompts wurde wenig wiederverwendet. Wiederholte Cache-Schreibvorgänge können deine Kosten erhöhen. „Für Caching optimieren“ ausschalten?",
+    "Caching appears to have increased the input cost of your recent replies. Turn off Optimize for caching?": "Caching scheint die Eingabekosten deiner letzten Antworten erhöht zu haben. „Für Caching optimieren“ ausschalten?",
+    "Turn off caching": "Caching ausschalten",
+    "Keep it on": "Eingeschaltet lassen"
 }

@@ -1,4 +1,8 @@
 {
+    "Gemini Service Tier": "Уровень обслуживания Gemini",
+    "gemini_service_tier_standard": "Стандартный",
+    "gemini_service_tier_flex": "Flex",
+    "gemini_service_tier_priority": "Приоритетный",
     "Combine Clips": "Объединить клипы",
     "Select two or more Clips, including ordinary or Topical Clips.": "Выберите не менее двух обычных или тематических клипов.",
     "New Topical Clip title": "Название нового тематического клипа",
@@ -6659,5 +6663,19 @@
     "STMemoryBooks_Clip_FormatPreview": "Предпросмотр",
     "STMemoryBooks_Clip_EntryChoice": "Создать новую запись или обновить существующую",
     "STMemoryBooks_Clip_ShowDisabled": "Показать отключённые клипы",
-    "STMemoryBooks_ClipReview_TargetDisabled": "Этот клип отключён. Включите его и снова запустите Memory Assistance."
+    "STMemoryBooks_ClipReview_TargetDisabled": "Этот клип отключён. Включите его и снова запустите Memory Assistance.",
+    "Optimize for caching": "Оптимизировать для кеширования",
+    "Cache lifetime": "Срок хранения кеша",
+    "5 minutes (writes cost 1.25× regular input)": "5 минут (запись стоит в 1,25 раза дороже обычного ввода)",
+    "1 hour (writes cost 2× regular input)": "1 час (запись стоит в 2 раза дороже обычного ввода)",
+    "The selected model is ineligible for automatic caching.": "Выбранная модель не поддерживает автоматическое кеширование.",
+    "Enable prompt caching?": "Включить кеширование промптов?",
+    "Caching may cost more if your prompt changes often or the cache expires before your next message.": "Кеширование может стоить дороже, если промпт часто меняется или кеш истекает до следующего сообщения.",
+    "5-minute cache writes cost 1.25 times the regular input price.": "Запись в кеш на 5 минут стоит в 1,25 раза дороже обычного ввода.",
+    "1-hour cache writes cost twice the regular input price.": "Запись в кеш на 1 час стоит вдвое дороже обычного ввода.",
+    "Caching warning": "Предупреждение о кеше",
+    "Little of your recent prompts was reused. Repeated cache writes may increase your costs. Turn off Optimize for caching?": "Повторно использована лишь малая часть последних промптов. Повторные записи в кеш могут увеличить расходы. Отключить оптимизацию кеширования?",
+    "Caching appears to have increased the input cost of your recent replies. Turn off Optimize for caching?": "Похоже, кеширование увеличило стоимость ввода для последних ответов. Отключить оптимизацию кеширования?",
+    "Turn off caching": "Отключить кеширование",
+    "Keep it on": "Оставить включённым"
 }

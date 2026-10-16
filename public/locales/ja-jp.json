@@ -1,4 +1,8 @@
 {
+    "Gemini Service Tier": "Gemini サービス階層",
+    "gemini_service_tier_standard": "標準",
+    "gemini_service_tier_flex": "Flex",
+    "gemini_service_tier_priority": "優先",
     "Combine Clips": "クリップを統合",
     "Select two or more Clips, including ordinary or Topical Clips.": "通常のクリップまたはトピッククリップを2つ以上選択してください。",
     "New Topical Clip title": "新しいトピッククリップのタイトル",
@@ -6587,5 +6591,19 @@
     "STMemoryBooks_Clip_FormatPreview": "プレビュー",
     "STMemoryBooks_Clip_EntryChoice": "新しいエントリーを作成するか、既存のエントリーを更新する",
     "STMemoryBooks_Clip_ShowDisabled": "無効なクリップを表示",
-    "STMemoryBooks_ClipReview_TargetDisabled": "このクリップは無効です。有効にしてからMemory Assistanceを再実行してください。"
+    "STMemoryBooks_ClipReview_TargetDisabled": "このクリップは無効です。有効にしてからMemory Assistanceを再実行してください。",
+    "Optimize for caching": "キャッシュ向けに最適化",
+    "Cache lifetime": "キャッシュの有効期間",
+    "5 minutes (writes cost 1.25× regular input)": "5分（書き込みは通常の入力料金の1.25倍）",
+    "1 hour (writes cost 2× regular input)": "1時間（書き込みは通常の入力料金の2倍）",
+    "The selected model is ineligible for automatic caching.": "選択したモデルは自動キャッシュに対応していません。",
+    "Enable prompt caching?": "プロンプトキャッシュを有効にしますか？",
+    "Caching may cost more if your prompt changes often or the cache expires before your next message.": "プロンプトが頻繁に変わる場合や、次のメッセージまでにキャッシュが期限切れになる場合は、費用が増えることがあります。",
+    "5-minute cache writes cost 1.25 times the regular input price.": "5分間のキャッシュ書き込みは通常の入力料金の1.25倍です。",
+    "1-hour cache writes cost twice the regular input price.": "1時間のキャッシュ書き込みは通常の入力料金の2倍です。",
+    "Caching warning": "キャッシュに関する警告",
+    "Little of your recent prompts was reused. Repeated cache writes may increase your costs. Turn off Optimize for caching?": "最近のプロンプトはほとんど再利用されていません。キャッシュへの書き込みが続くと費用が増える可能性があります。キャッシュ最適化をオフにしますか？",
+    "Caching appears to have increased the input cost of your recent replies. Turn off Optimize for caching?": "キャッシュにより最近の応答の入力費用が増えた可能性があります。キャッシュ最適化をオフにしますか？",
+    "Turn off caching": "キャッシュをオフにする",
+    "Keep it on": "オンのままにする"
 }

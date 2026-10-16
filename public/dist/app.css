@@ -11376,6 +11376,27 @@ p.stmb-help-drawer-copy {
         flex-basis: auto;
     }
 }
+.automatic-prompt-cache-ineligible {
+    opacity: 0.55;
+}
+
+#automatic_prompt_cache_block[hidden] {
+    display: none;
+}
+
+#automatic_prompt_cache:not(:checked) ~ #automatic_prompt_cache_supported,
+#automatic_prompt_cache_supported[data-cc-toggle="false"] > .icon-supported,
+#automatic_prompt_cache_supported[data-cc-toggle="true"] > .icon-unsupported {
+    display: none;
+}
+
+#automatic_prompt_cache_supported[data-cc-toggle="true"] > .icon-supported {
+    color: var(--SmartThemeGreenColor);
+}
+
+#automatic_prompt_cache_supported[data-cc-toggle="false"] > .icon-unsupported {
+    color: var(--SmartThemeQuoteColor);
+}
 
 /* css/st-tailwind.css */
 .text_warning {

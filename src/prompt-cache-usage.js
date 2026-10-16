@@ -69,3 +69,18 @@ export function extractPromptCacheUsageFromSseEvent(eventBlock) {
         return null;
     }
 }
+
+/** Validates a requested automatic cache lifetime against the server switch and Claude model source. */
+export function getAutomaticClaudeCacheTTL(body, serverCachingEnabled) {
+    if (serverCachingEnabled || body?.automatic_prompt_cache !== true) return null;
+    const model = String(body.model || '');
+    const source = body.chat_completion_source;
+    const eligible = source === 'claude'
+        ? /^claude-[\w.-]+$/i.test(model)
+        : source === 'openrouter'
+            ? /^~?anthropic\/claude-[\w.-]+$/i.test(model)
+            : source === 'electronhub' && /^(?:anthropic\/)?claude-[\w.-]+$/i.test(model);
+    return eligible && ['5m', '1h'].includes(body.automatic_prompt_cache_ttl)
+        ? body.automatic_prompt_cache_ttl
+        : null;
+}

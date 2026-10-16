@@ -97,6 +97,34 @@ it('preserves the existing CometAPI disablement', async () => {
     expect(response.statusCode).toBe(503);
 });
 
+it.each([false, true])('passes Gemini service tiers at the top level (stream=%s)', async stream => {
+    fetchMock.mockImplementation(async () => success(stream));
+    for (const tier of ['standard', 'flex', 'priority', '', undefined]) {
+        const response = await run('makersuite', stream, { service_tier: tier });
+        const body = JSON.parse(fetchMock.mock.calls.at(-1)[1].body);
+        if (tier) expect(body.service_tier).toBe(tier);
+        else expect(body).not.toHaveProperty('service_tier');
+        expect(body.generationConfig).not.toHaveProperty('service_tier');
+        expect(response.statusCode).toBe(200);
+    }
+});
+
+it('rejects invalid Gemini service tiers without echoing input or contacting the provider', async () => {
+    for (const tier of ['invalid-tier', null, {}, ['priority']]) {
+        const response = await run('makersuite', false, { service_tier: tier });
+        expect(response.statusCode).toBe(400);
+        expect(response.body.error.message).toBe('Invalid Gemini service tier.');
+        expect(JSON.stringify(response.body)).not.toContain('invalid-tier');
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it('does not pass the AI Studio service tier to Vertex AI', async () => {
+    fetchMock.mockImplementation(async () => success(false));
+    await run('vertexai', false, { service_tier: 'priority' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).not.toHaveProperty('service_tier');
+});
+
 it('retains overrides and headers through structured-output fallback', async () => {
     fetchMock.mockResolvedValueOnce(new nodeFetch.Response(JSON.stringify({ error: { message: 'response_format json_schema not supported' } }), { status: 400 }))
         .mockImplementation(async () => success(false));
