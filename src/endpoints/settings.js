@@ -482,7 +482,6 @@ router.post('/get', async (request, response) => {
         enable_extensions: ENABLE_EXTENSIONS,
         enable_extensions_auto_update: ENABLE_EXTENSIONS_AUTO_UPDATE,
         enable_accounts: ENABLE_ACCOUNTS,
-        claude_server_caching_enabled: getConfigValue('claude.enableSystemPromptCache', false, 'boolean'),
     });
 });
 

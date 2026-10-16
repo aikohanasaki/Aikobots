@@ -4,6 +4,7 @@ import {
     extractPromptCacheUsage,
     extractPromptCacheUsageFromSseEvent,
     getAutomaticClaudeCacheTTL,
+    getClaudeCacheMode,
     normalizePromptCacheUsage,
 } from '../prompt-cache-usage.js';
 
@@ -49,5 +50,18 @@ describe('prompt cache usage', () => {
         expect(getAutomaticClaudeCacheTTL({ ...body, automatic_prompt_cache: false }, false)).toBeNull();
         expect(getAutomaticClaudeCacheTTL({ ...body, model: 'gpt-5' }, false)).toBeNull();
         expect(getAutomaticClaudeCacheTTL({ ...body, automatic_prompt_cache_ttl: '2h' }, false)).toBeNull();
+    });
+
+    it('keeps legacy server behavior and validates explicit choices across server settings', () => {
+        const body = { model: 'claude-sonnet-4-6', chat_completion_source: 'claude', automatic_prompt_cache_ttl: '5m' };
+        for (const serverEnabled of [false, true]) {
+            expect(getClaudeCacheMode(body, serverEnabled)).toEqual({ mode: 'inherit' });
+            expect(getClaudeCacheMode({ ...body, automatic_prompt_cache_mode: 'inherit' }, serverEnabled)).toEqual({ mode: 'inherit' });
+            expect(getClaudeCacheMode({ ...body, automatic_prompt_cache_mode: 'off' }, serverEnabled)).toEqual({ mode: 'off' });
+            expect(getAutomaticClaudeCacheTTL({ ...body, automatic_prompt_cache_mode: 'automatic' }, serverEnabled)).toBe('5m');
+            expect(getAutomaticClaudeCacheTTL({ ...body, automatic_prompt_cache_mode: 'automatic', automatic_prompt_cache_ttl: '1h' }, serverEnabled)).toBe('1h');
+            expect(getClaudeCacheMode({ ...body, automatic_prompt_cache_mode: 'invalid' }, serverEnabled).error).toBe('Invalid Claude cache mode.');
+            expect(getClaudeCacheMode({ ...body, automatic_prompt_cache_mode: 'automatic', automatic_prompt_cache_ttl: '2h' }, serverEnabled).error).toBe('Invalid Claude cache lifetime.');
+        }
     });
 });

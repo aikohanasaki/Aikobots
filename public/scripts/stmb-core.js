@@ -503,6 +503,7 @@ export function createDefaultStmbProfile() {
         groupPreset: 'group',
         characterPreset: 'char',
         skipStructuredOutput: false,
+        skipCaching: true,
         streaming: false,
         connectionProfileId: '',
         connectionProfileName: '',
@@ -718,6 +719,7 @@ function sanitizeProfile(rawProfile) {
             ? profile.characterPreset.trim()
             : (typeof profile.charPreset === 'string' && profile.charPreset.trim() ? profile.charPreset.trim() : fallback.characterPreset),
         skipStructuredOutput: Boolean(profile.skipStructuredOutput),
+        skipCaching: profile.skipCaching !== false,
         streaming: Boolean(profile.streaming),
         connectionProfileId,
         connectionProfileName: typeof profile.connectionProfileName === 'string' ? profile.connectionProfileName.trim() : '',
@@ -1314,9 +1316,15 @@ export function applyStmbProfileToGenerateData(generateData, profile, providerDe
     return next;
 }
 
-/**
- * Applies an STMB profile's central, current-ST, or legacy connection to request data.
- */
+/** Applies a profile's cache preference after its effective connection is selected. */
+function applyStmbCachePreference(generateData, profile) {
+    if (profile?.skipCaching === false) return generateData;
+    const request = Object.create(Object.getPrototypeOf(generateData), Object.getOwnPropertyDescriptors(generateData));
+    request.automatic_prompt_cache_mode = 'off';
+    return request;
+}
+
+/** Applies an STMB profile's central, current-ST, or legacy connection to request data. */
 export function applyStmbProfileConnection(generateData, profile, options = {}) {
     const {
         applyConnectionProfileSnapshot,
@@ -1339,7 +1347,7 @@ export function applyStmbProfileConnection(generateData, profile, options = {}) 
         }
         const snapshot = profile.connectionSnapshot
             || createConnectionProfileRequestSnapshot?.(profile.connectionProfileId, overrides);
-        return applyConnectionProfileSnapshot(requestData, snapshot, overrides);
+        return applyStmbCachePreference(applyConnectionProfileSnapshot(requestData, snapshot, overrides), profile);
     }
 
     if (String(profile?.connection?.api || '') === 'current_st') {
@@ -1347,14 +1355,19 @@ export function applyStmbProfileConnection(generateData, profile, options = {}) 
         if (!model) {
             throw new Error(translate('Enter a model ID or select a connection profile with a saved model ID.'));
         }
-        return {
+        return applyStmbCachePreference({
             ...requestData,
             model,
             temperature: profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined
                 ? profile.temperatureOverride
                 : generateData.temperature,
-        };
+        }, profile);
     }
+
+    // Independent legacy profiles have no selected completion preset.
+    requestData.automatic_prompt_cache_mode = 'inherit';
+    requestData.automatic_prompt_cache_ttl = '5m';
+    delete requestData.service_tier;
 
     const legacyProfile = {
         ...profile,
@@ -1366,7 +1379,7 @@ export function applyStmbProfileConnection(generateData, profile, options = {}) 
                 : profile?.connection?.temperature,
         },
     };
-    return applyStmbProfileToGenerateData(requestData, legacyProfile, providerDefaults);
+    return applyStmbCachePreference(applyStmbProfileToGenerateData(requestData, legacyProfile, providerDefaults), profile);
 }
 
 export function applyStmbMaxTokensToGenerateData(generateData, stmbMaxTokens) {

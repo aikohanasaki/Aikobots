@@ -1,5 +1,7 @@
 # Native SQLite Chat Architecture
 
+STMB connection snapshots may contain optional `providerOptions` for Claude cache mode/lifetime and Gemini service tier. Older snapshots without these fields resolve to server-default caching, a five-minute lifetime, and no explicit Gemini tier before applying the Memory Books profile. The profile's `skipCaching` defaults to true when absent, including in older queued jobs; an explicit false preserves the selected connection's cache mode. No database migration or job rewrite is needed.
+
 This document records Aikobots’ native SQLite storage decisions, the current transitional mutation model, and the target mutation contract.
 
 `AGENTS.md` is the governing project directive. This file must not be treated as proof that every current mutation path already satisfies the target architecture. Claims in this document must remain consistent with verified code and tests.

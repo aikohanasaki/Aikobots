@@ -7,6 +7,7 @@ import { applyAdditionalParameters } from '../src/endpoints/backends/chat-comple
 import { mergeConnectionProfilePayloadOverrides } from '../public/scripts/connection-profile-request-policy.js';
 import { applyStmbProfileConnection } from '../public/scripts/stmb-core.js';
 import { applyStmbRequestTransport } from '../public/scripts/stmb-request-transport.js';
+import { getClaudeCacheMode } from '../src/prompt-cache-usage.js';
 
 const openaiSource = fs.readFileSync(new URL('../public/scripts/openai.js', import.meta.url), 'utf8');
 
@@ -15,24 +16,22 @@ function browserFunction(source, start, end, name, context) {
     return vm.runInNewContext(source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start))).replace(/^export /gm, '') + `\n${name}`, context);
 }
 
-test('preset caching confirmation stops a stale application without overwriting the newer preset', async () => {
-    for (const confirmed of [0, 1]) {
+test('saved presets apply cache mode and subsequent settings without confirmation', async () => {
+    for (const legacy of [false, true]) {
         let selected = 'First';
-        let resolveConfirmation;
         let saves = 0;
         const applications = [];
         const completed = [];
-        const settings = { automatic_prompt_cache: false };
+        const settings = { automatic_prompt_cache_mode: 'inherit', reasoning_effort: 'low' };
         const context = {
             structuredClone, oai_settings: settings,
             openai_settings: [
-                { automatic_prompt_cache: true, automatic_prompt_cache_ttl: '1h' },
-                { automatic_prompt_cache: false, automatic_prompt_cache_ttl: '5m' },
+                { automatic_prompt_cache: true, ...(legacy ? {} : { automatic_prompt_cache_mode: 'automatic' }), reasoning_effort: 'high' },
             ],
-            openai_setting_names: { First: 0, Second: 1 },
+            openai_setting_names: { First: 0 },
             settingsToUpdate: {
-                automatic_prompt_cache: ['#cache', 'automatic_prompt_cache', true, false],
-                automatic_prompt_cache_ttl: ['#ttl', 'automatic_prompt_cache_ttl', false, false],
+                automatic_prompt_cache_mode: ['#cache', 'automatic_prompt_cache_mode', false, false],
+                reasoning_effort: ['#reasoning', 'reasoning_effort', false, false],
             },
             $: () => ({ find: () => ({ text: () => selected }), prop() { return this; }, val() { return this; }, trigger() { return this; } }),
             event_types: { OAI_PRESET_CHANGED_BEFORE: 'before', PRESET_CHANGED: 'changed' },
@@ -45,26 +44,39 @@ test('preset caching confirmation stops a stale application without overwriting 
                 if (type === 'changed') completed.push(payload.name);
                 return Promise.resolve();
             } },
-            Popup: { show: { confirm: () => new Promise(resolve => { resolveConfirmation = resolve; }) } },
-            POPUP_RESULT: { AFFIRMATIVE: 1 }, t: strings => strings.join(''),
-            claudeServerCachingEnabled: false, saveOpenAIPreset() {},
+            Popup: { show: { confirm: () => assert.fail('preset must not ask for confirmation') } },
+            saveOpenAIPreset() {},
             resetAutomaticCacheComparisons() {}, updateAutomaticCacheControls() {},
             saveSettingsDebounced() { saves++; },
         };
         const apply = browserFunction(openaiSource, 'function onSettingsPresetChange()', '\nfunction getMaxContextOpenAI', 'onSettingsPresetChange', context);
         apply();
-        assert.equal(typeof resolveConfirmation, 'function');
-        selected = 'Second';
-        apply();
-        await applications[1];
-        resolveConfirmation(confirmed);
+        assert.equal(settings.automatic_prompt_cache_mode, 'automatic');
+        assert.equal(settings.reasoning_effort, 'high');
         await applications[0];
-        assert.equal(settings.preset_settings_openai, 'Second');
-        assert.equal(settings.automatic_prompt_cache, false);
-        assert.equal(settings.automatic_prompt_cache_ttl, '5m');
-        assert.deepEqual(completed, ['Second']);
+        assert.deepEqual(completed, ['First']);
         assert.equal(saves, 1);
     }
+});
+
+test('accepting a cache cost warning persists Off and suppresses automatic caching', async () => {
+    const settings = { automatic_prompt_cache_mode: 'automatic', automatic_prompt_cache_ttl: '1h', chat_completion_source: 'claude' };
+    let selected;
+    let saves = 0;
+    const context = {
+        oai_settings: settings,
+        getCurrentPromptInspectionChatScope: () => 'synthetic-chat', getChatCompletionModel: () => 'claude-sonnet-4-6',
+        Popup: { show: { confirm: async () => 1 } }, POPUP_RESULT: { AFFIRMATIVE: 1 },
+        t: strings => strings.join(''),
+        $: () => ({ val(value) { selected = value; return this; } }),
+        resetAutomaticCacheComparisons() {}, updateAutomaticCacheControls() {}, saveSettingsDebounced() { saves++; },
+    };
+    const warn = browserFunction(openaiSource, 'async function showAutomaticCacheWarning(', '\nexport function initOpenAI', 'showAutomaticCacheWarning', context);
+    await warn('cost', { chatScope: 'synthetic-chat', provider: 'claude', model: 'claude-sonnet-4-6', ttl: '1h' });
+    assert.equal(settings.automatic_prompt_cache_mode, 'off');
+    assert.equal(selected, 'off');
+    assert.equal(saves, 1);
+    assert.equal(getClaudeCacheMode({ ...settings, model: 'claude-sonnet-4-6' }, true).mode, 'off');
 });
 
 test('provider parameters survive JSON round trips without inheriting legacy custom values', () => {
@@ -139,6 +151,7 @@ test('empty and malformed YAML preserve existing requests; invalid headers do no
 
 test('completion preset save/load preserves independent parameter maps without aliasing', async () => {
     const settings = { preset_settings_openai: 'Example' };
+    const applications = [];
     setAdditionalParameters(settings, 'openai', { custom_include_body: 'example: true' });
     let saved;
     const context = {
@@ -149,7 +162,9 @@ test('completion preset save/load preserves independent parameter maps without a
             return { ok: true, json: async () => ({ name: 'Example' }) };
         },
         $: () => ({ prop() { return this; }, trigger() { return this; }, find: () => ({ text: () => 'Example' }) }),
-        eventSource: { emit: async () => {} }, event_types: {}, saveSettingsDebounced() {},
+        eventSource: { emit: () => ({ finally(callback) { const application = callback(); applications.push(application); return application; } }) },
+        event_types: {}, saveSettingsDebounced() {},
+        resetAutomaticCacheComparisons() {}, updateAutomaticCacheControls() {},
         settingsToUpdate: { additional_parameters: ['', 'additional_parameters', false, true] },
     };
     context.saveOpenAIPreset = browserFunction(openaiSource, 'async function saveOpenAIPreset(', '\nfunction onLogitBiasPresetChange', 'saveOpenAIPreset', context);
@@ -159,14 +174,17 @@ test('completion preset save/load preserves independent parameter maps without a
     context.openai_settings[0] = saved;
     setAdditionalParameters(settings, 'openai', {});
     await apply();
+    await applications.at(-1);
     assert.equal(getAdditionalParameters(settings, 'openai').custom_include_body, 'example: true');
     settings.additional_parameters.openai.custom_include_body = 'changed: true';
     assert.equal(saved.additional_parameters.openai.custom_include_body, 'example: true');
     context.openai_settings[0] = {};
     await apply();
+    await applications.at(-1);
     assert.equal(getAdditionalParameters(settings, 'openai').custom_include_body, 'changed: true');
     context.openai_settings[0] = { additional_parameters: {} };
     await apply();
+    await applications.at(-1);
     assert.equal(getAdditionalParameters(settings, 'openai').custom_include_body, '');
 });
 
@@ -241,6 +259,30 @@ test('connection profile capture and request snapshots isolate background reques
             }
         }
     }
+});
+
+test('STMB saved profile options override active settings and older snapshots use server defaults', () => {
+    const source = fs.readFileSync(new URL('../public/scripts/connection-profile-request.js', import.meta.url), 'utf8');
+    const preset = { automatic_prompt_cache_mode: 'automatic', automatic_prompt_cache_ttl: '1h', gemini_service_tier: 'flex' };
+    const getOptions = browserFunction(source, 'function getPresetProviderOptions(', '\nfunction copyRequestOverrides', 'getPresetProviderOptions', {
+        getPresetManager: () => ({ getCompletionPresetByName: () => preset }), ChatCompletionService: { TYPE: 'openai' }, Object,
+    });
+    const apply = browserFunction(source, 'export function applyConnectionProfileSnapshot(', '\n/**', 'applyConnectionProfileSnapshot', {
+        structuredClone, resolveRequestModel: value => value, resolveConnectionProfileTemperature: value => value,
+        proxies: [], mergeConnectionProfilePayloadOverrides,
+    });
+    const active = { automatic_prompt_cache_mode: 'off', automatic_prompt_cache_ttl: '5m', service_tier: 'priority' };
+    const snapshot = { source: 'makersuite', model: 'synthetic-gemini', requestOverrides: {}, providerOptions: getOptions('Saved') };
+    const selected = apply(active, snapshot);
+    assert.equal(selected.automatic_prompt_cache_mode, 'automatic');
+    assert.equal(selected.automatic_prompt_cache_ttl, '1h');
+    assert.equal(selected.service_tier, 'flex');
+    assert.equal(apply(active, { ...snapshot, source: 'vertexai' }).service_tier, undefined);
+    const older = apply(active, { ...snapshot, providerOptions: undefined });
+    assert.equal(older.automatic_prompt_cache_mode, 'inherit');
+    assert.equal(older.automatic_prompt_cache_ttl, '5m');
+    assert.equal(older.service_tier, undefined);
+    assert.equal(applyStmbRequestTransport(selected).service_tier, 'flex');
 });
 
 test('preset export retains parameters only when sensitive connection settings are included', async () => {

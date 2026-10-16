@@ -59,6 +59,7 @@ import { withDirectoryLock } from '../../file-system-lock.js';
 import {
     extractPromptCacheUsage,
     extractPromptCacheUsageFromSseEvent,
+    getClaudeCacheMode,
     getAutomaticClaudeCacheTTL,
     normalizePromptCacheUsage,
 } from '../../prompt-cache-usage.js';
@@ -1118,6 +1119,7 @@ async function sendClaudeRequest(request) {
     const apiKey = request.body.reverse_proxy ? request.body.proxy_password : readRequestSecret(request, SECRET_KEYS.CLAUDE);
     const divider = '-'.repeat(process.stdout.columns);
     const enableSystemPromptCache = getConfigValue('claude.enableSystemPromptCache', false, 'boolean');
+    const cacheMode = getClaudeCacheMode(request.body, enableSystemPromptCache).mode;
     const automaticCacheTTL = getAutomaticClaudeCacheTTL(request.body, enableSystemPromptCache);
     let cachingAtDepth = getConfigValue('claude.cachingAtDepth', -1, 'number');
     // Disabled if not an integer or negative
@@ -1185,7 +1187,7 @@ async function sendClaudeRequest(request) {
         if (automaticCacheTTL) requestBody.cache_control = { type: 'ephemeral', ...(automaticCacheTTL === '1h' ? { ttl: '1h' } : {}) };
         delete requestBody.jsonTool;
         if (useSystemPrompt) {
-            if (enableSystemPromptCache && Array.isArray(convertedPrompt.systemPrompt) && convertedPrompt.systemPrompt.length) {
+            if (cacheMode === 'inherit' && enableSystemPromptCache && Array.isArray(convertedPrompt.systemPrompt) && convertedPrompt.systemPrompt.length) {
                 convertedPrompt.systemPrompt[convertedPrompt.systemPrompt.length - 1]['cache_control'] = { type: 'ephemeral', ttl: cacheTTL };
             }
 
@@ -1200,7 +1202,7 @@ async function sendClaudeRequest(request) {
                 .map(tool => tool.function)
                 .map(fn => ({ name: fn.name, description: fn.description, input_schema: flattenSchema(fn.parameters, request.body.chat_completion_source) }));
 
-            if (enableSystemPromptCache && requestBody.tools.length) {
+            if (cacheMode === 'inherit' && enableSystemPromptCache && requestBody.tools.length) {
                 requestBody.tools[requestBody.tools.length - 1]['cache_control'] = { type: 'ephemeral', ttl: cacheTTL };
             }
         }
@@ -1218,7 +1220,7 @@ async function sendClaudeRequest(request) {
             requestBody.tools = [...webSearchTool, ...(requestBody.tools || [])];
         }
 
-        if (cachingAtDepth !== -1 && !automaticCacheTTL) {
+        if (cacheMode === 'inherit' && cachingAtDepth !== -1) {
             cachingAtDepthForClaude(convertedPrompt.messages, cachingAtDepth, cacheTTL);
         }
 
@@ -3884,6 +3886,10 @@ router.post('/bias', async function (request, response) {
 
 export async function handleChatCompletionsGenerate(request, response) {
     if (!request.body) return response.status(400).send({ error: true });
+    if (['claude', 'openrouter', 'electronhub'].includes(request.body.chat_completion_source)) {
+        const cachePolicy = getClaudeCacheMode(request.body, getConfigValue('claude.enableSystemPromptCache', false, 'boolean'));
+        if (cachePolicy.error) return response.status(400).send({ error: { message: cachePolicy.error } });
+    }
 
     let heartbeat = null;
     const cleanup = () => {
@@ -4140,7 +4146,8 @@ export async function handleChatCompletionsGenerate(request, response) {
             if (Array.isArray(request.body.messages)) {
                 embedOpenRouterMedia(request.body.messages);
                 addOpenRouterSignatures(request.body.messages, request.body.model);
-                if (!automaticCacheTTL && Number.isInteger(cachingAtDepth) && cachingAtDepth >= 0 && isClaude3or4) {
+                if (getClaudeCacheMode(request.body, getConfigValue('claude.enableSystemPromptCache', false, 'boolean')).mode === 'inherit'
+                    && Number.isInteger(cachingAtDepth) && cachingAtDepth >= 0 && isClaude3or4) {
                     cachingAtDepthForOpenRouterClaude(request.body.messages, cachingAtDepth, cacheTTL);
                 }
             }

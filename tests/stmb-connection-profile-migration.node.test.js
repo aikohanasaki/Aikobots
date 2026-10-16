@@ -79,6 +79,21 @@ test('memory profile streaming is opt-in and survives settings normalization', (
     assert.equal(settings.profiles[1].streaming, true);
 });
 
+test('new and existing memory profiles skip caching unless explicitly unchecked', () => {
+    assert.equal(createDefaultStmbProfile().skipCaching, true);
+    const settings = normalizeStmbSettings({
+        profiles: [
+            createDefaultStmbProfile(),
+            { name: 'Older', connection: { api: 'current_st' } },
+            { name: 'Opted in', skipCaching: false, connection: { api: 'current_st' } },
+        ],
+    });
+    assert.equal(settings.profiles[0].skipCaching, true);
+    assert.equal(settings.profiles[1].skipCaching, true);
+    assert.equal(settings.profiles[2].skipCaching, false);
+    assert.equal(normalizeStmbSettings(settings).profiles[2].skipCaching, false);
+});
+
 test('connection profile summaries show effective details and identify overrides', () => {
     const summary = resolveStmbProfileConnectionSummary({
         connectionProfileId: 'connection-1',

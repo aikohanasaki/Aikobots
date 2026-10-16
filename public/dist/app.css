@@ -11380,11 +11380,6 @@ p.stmb-help-drawer-copy {
     opacity: 0.55;
 }
 
-#automatic_prompt_cache_block[hidden] {
-    display: none !important;
-}
-
-#automatic_prompt_cache:not(:checked) ~ #automatic_prompt_cache_supported,
 #automatic_prompt_cache_supported[data-cc-toggle="false"] > .icon-supported,
 #automatic_prompt_cache_supported[data-cc-toggle="true"] > .icon-unsupported {
     display: none;

@@ -70,9 +70,23 @@ export function extractPromptCacheUsageFromSseEvent(eventBlock) {
     }
 }
 
-/** Validates a requested automatic cache lifetime against the server switch and Claude model source. */
+/** Resolves an explicit cache choice while preserving requests from older clients. */
+export function getClaudeCacheMode(body, serverCachingEnabled) {
+    const mode = body?.automatic_prompt_cache_mode;
+    if (mode !== undefined) {
+        if (!['inherit', 'automatic', 'off'].includes(mode)) return { error: 'Invalid Claude cache mode.' };
+        if (mode === 'automatic' && !['5m', '1h'].includes(body.automatic_prompt_cache_ttl)) {
+            return { error: 'Invalid Claude cache lifetime.' };
+        }
+        return { mode };
+    }
+    return { mode: !serverCachingEnabled && body?.automatic_prompt_cache === true
+        && ['5m', '1h'].includes(body.automatic_prompt_cache_ttl) ? 'automatic' : 'inherit' };
+}
+
+/** Validates a requested automatic cache lifetime against the Claude model source. */
 export function getAutomaticClaudeCacheTTL(body, serverCachingEnabled) {
-    if (serverCachingEnabled || body?.automatic_prompt_cache !== true) return null;
+    if (getClaudeCacheMode(body, serverCachingEnabled).mode !== 'automatic') return null;
     const model = String(body.model || '');
     const source = body.chat_completion_source;
     const eligible = source === 'claude'

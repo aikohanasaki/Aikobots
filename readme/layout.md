@@ -1,5 +1,7 @@
 # Aikobots standalone CSS layout authoring manual
 
+The built-in Claude caching control is a native select (`#automatic_prompt_cache_mode`) with Server default, Automatic, and Off choices. Its cache-lifetime select is active only for Automatic; the existing smart-theme supported/unsupported colors style model eligibility.
+
 This is a complete authoring reference for a person or AI assistant creating an uploaded Aikobots layout. You can copy this entire document into an AI conversation or attach it as a file. Repository access, the other documentation files, and knowledge of SillyTavern are not prerequisites. Source links are optional references for maintainers.
 
 A layout is one CSS file applied to the existing Aikobots interface. It controls arrangement, spacing, typography, and theme-aware surfaces. Aikobots supplies the HTML, controls, state, and shared structural styles. The built-in layouts perform the same job; the complete examples below show how to use that existing system without inventing a second interface.

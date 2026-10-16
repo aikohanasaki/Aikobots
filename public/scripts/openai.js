@@ -107,7 +107,6 @@ let lastServerAssemblyPromptContext = null;
 let lastServerAssemblyDebugDump = null;
 let lastPromptInspectionSnapshotKey = null;
 let lastPromptInspectionSnapshotChatScope = null;
-let claudeServerCachingEnabled = true;
 
 function createOpenAIResponseMetadataId() {
     nextOpenAIResponseMetadataId += 1;
@@ -688,7 +687,7 @@ export const settingsToUpdate = {
     vertexai_express_project_id: ['#vertexai_express_project_id', 'vertexai_express_project_id', false, true],
     squash_system_messages: ['#squash_system_messages', 'squash_system_messages', true, false],
     image_inlining: ['#openai_image_inlining', 'image_inlining', true, false],
-    automatic_prompt_cache: ['#automatic_prompt_cache', 'automatic_prompt_cache', true, false],
+    automatic_prompt_cache_mode: ['#automatic_prompt_cache_mode', 'automatic_prompt_cache_mode', false, false],
     automatic_prompt_cache_ttl: ['#automatic_prompt_cache_ttl', 'automatic_prompt_cache_ttl', false, false],
     gemini_service_tier: ['#gemini_service_tier', 'gemini_service_tier', false, false],
     inline_image_quality: ['#openai_inline_image_quality', 'inline_image_quality', false, false],
@@ -798,6 +797,7 @@ const default_settings = {
     squash_system_messages: false,
     image_inlining: true,
     automatic_prompt_cache: false,
+    automatic_prompt_cache_mode: 'inherit',
     automatic_prompt_cache_ttl: '5m',
     gemini_service_tier: '',
     inline_image_quality: 'auto',
@@ -2768,8 +2768,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
         'verbosity': isClaude ? undefined : getVerbosity(),
         'enable_web_search': Boolean(oai_settings.enable_web_search),
         'request_images': Boolean(oai_settings.request_images),
-        'automatic_prompt_cache': !claudeServerCachingEnabled && Boolean(oai_settings.automatic_prompt_cache)
-            && isAutomaticCacheModelEligible(oai_settings.chat_completion_source, model),
+        'automatic_prompt_cache_mode': oai_settings.automatic_prompt_cache_mode,
         'automatic_prompt_cache_ttl': oai_settings.automatic_prompt_cache_ttl,
         'custom_prompt_post_processing': getEffectivePromptPostProcessing(),
     };
@@ -3083,7 +3082,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
         } = await buildOpenAIGenerateData(type, messages, { jsonSchema }));
     }
 
-    const cacheComparison = !resumedGeneration && type !== 'quiet' && generate_data?.automatic_prompt_cache
+    const cacheComparison = !resumedGeneration && type !== 'quiet' && generate_data?.automatic_prompt_cache_mode === 'automatic'
         ? createAutomaticCacheComparison({
             requestId,
             chatScope: getCurrentPromptInspectionChatScope(),
@@ -4436,7 +4435,6 @@ export class ChatCompletion {
  * @param {ChatCompletionSettings} settings Saved settings from backend
  */
 function loadOpenAISettings(data, settings) {
-    claudeServerCachingEnabled = data.claude_server_caching_enabled !== false;
     openai_setting_names = data.openai_setting_names;
     openai_settings = data.openai_settings;
     openai_settings.forEach(function (item, i) {
@@ -4473,6 +4471,10 @@ function loadOpenAISettings(data, settings) {
         }
     }
 
+    if (!settings.automatic_prompt_cache_mode) {
+        settings.automatic_prompt_cache_mode = settings.automatic_prompt_cache === true ? 'automatic' : 'inherit';
+    }
+    settings.automatic_prompt_cache = settings.automatic_prompt_cache_mode === 'automatic';
     for (const key of Object.keys(default_settings)) {
         oai_settings[key] = settings[key] ?? default_settings[key];
         const settingToUpdate = Object.values(settingsToUpdate).find(([_, k]) => k === key);
@@ -4824,6 +4826,7 @@ async function saveOpenAIPreset(name, settings, triggerUi = true) {
         squash_system_messages: settings.squash_system_messages,
         image_inlining: settings.image_inlining,
         automatic_prompt_cache: settings.automatic_prompt_cache,
+        automatic_prompt_cache_mode: settings.automatic_prompt_cache_mode,
         automatic_prompt_cache_ttl: settings.automatic_prompt_cache_ttl,
         gemini_service_tier: settings.gemini_service_tier,
         inline_image_quality: settings.inline_image_quality,
@@ -5256,6 +5259,9 @@ function onSettingsPresetChange() {
     oai_settings.preset_settings_openai = presetName;
 
     const preset = structuredClone(openai_settings[openai_setting_names[oai_settings.preset_settings_openai]]);
+    if (!preset.automatic_prompt_cache_mode) {
+        preset.automatic_prompt_cache_mode = preset.automatic_prompt_cache === true ? 'automatic' : 'inherit';
+    }
 
     // Migrate old settings
     if (preset.names_in_completion === true && preset.names_behavior === undefined) {
@@ -5298,15 +5304,6 @@ function onSettingsPresetChange() {
             }
 
             if (preset[key] !== undefined) {
-                if (key === 'automatic_prompt_cache' && preset[key] && !oai_settings.automatic_prompt_cache && !claudeServerCachingEnabled) {
-                    const lifetime = preset.automatic_prompt_cache_ttl === '1h'
-                        ? t`1-hour cache writes cost twice the regular input price.`
-                        : t`5-minute cache writes cost 1.25 times the regular input price.`;
-                    const confirmed = await Popup.show.confirm(t`Enable prompt caching?`,
-                        t`Caching may cost more if your prompt changes often or the cache expires before your next message.` + ' ' + lifetime);
-                    if (oai_settings.preset_settings_openai !== presetName) return;
-                    if (confirmed !== POPUP_RESULT.AFFIRMATIVE) continue;
-                }
                 if (isCheckbox) {
                     updateCheckbox(selector, preset[key]);
                 } else {
@@ -5315,6 +5312,7 @@ function onSettingsPresetChange() {
                 oai_settings[setting] = preset[key];
             }
         }
+        oai_settings.automatic_prompt_cache = oai_settings.automatic_prompt_cache_mode === 'automatic';
 
         $('#openai_logit_bias_preset').trigger('change');
 
@@ -6991,19 +6989,18 @@ function isAutomaticCacheModelEligible(source, model) {
 function updateAutomaticCacheControls() {
     const block = document.getElementById('automatic_prompt_cache_block');
     if (!block) return;
-    block.hidden = claudeServerCachingEnabled;
-    const eligible = !claudeServerCachingEnabled && isAutomaticCacheModelEligible(oai_settings.chat_completion_source, getChatCompletionModel());
+    const eligible = isAutomaticCacheModelEligible(oai_settings.chat_completion_source, getChatCompletionModel());
     const reason = t`The selected model is ineligible for automatic caching.`;
-    $('#automatic_prompt_cache').prop('disabled', !eligible);
+    $('#automatic_prompt_cache_mode').prop('disabled', !eligible);
     $('#automatic_prompt_cache_label').attr('title', eligible ? '' : reason).attr('aria-disabled', String(!eligible));
     $('#automatic_prompt_cache_supported').attr('data-cc-toggle', String(eligible));
-    $('#automatic_prompt_cache_ttl').prop('disabled', !eligible);
+    $('#automatic_prompt_cache_ttl').prop('disabled', !eligible || oai_settings.automatic_prompt_cache_mode !== 'automatic');
     block.classList.toggle('automatic-prompt-cache-ineligible', !eligible);
 }
 
 /** Offers to stop caching when completed requests indicate low reuse or higher input cost. */
 async function showAutomaticCacheWarning(kind, context) {
-    if (!oai_settings.automatic_prompt_cache || claudeServerCachingEnabled
+    if (oai_settings.automatic_prompt_cache_mode !== 'automatic'
         || getCurrentPromptInspectionChatScope() !== context.chatScope
         || oai_settings.chat_completion_source !== context.provider
         || getChatCompletionModel() !== context.model
@@ -7014,13 +7011,14 @@ async function showAutomaticCacheWarning(kind, context) {
     const result = await Popup.show.confirm(t`Caching warning`, message, {
         okButton: t`Turn off caching`, cancelButton: t`Keep it on`,
     });
-    if (result === POPUP_RESULT.AFFIRMATIVE && oai_settings.automatic_prompt_cache
+    if (result === POPUP_RESULT.AFFIRMATIVE && oai_settings.automatic_prompt_cache_mode === 'automatic'
         && getCurrentPromptInspectionChatScope() === context.chatScope
         && oai_settings.chat_completion_source === context.provider
         && getChatCompletionModel() === context.model
         && oai_settings.automatic_prompt_cache_ttl === context.ttl) {
+        oai_settings.automatic_prompt_cache_mode = 'off';
         oai_settings.automatic_prompt_cache = false;
-        $('#automatic_prompt_cache').prop('checked', false);
+        $('#automatic_prompt_cache_mode').val('off');
         resetAutomaticCacheComparisons();
         updateAutomaticCacheControls();
         saveSettingsDebounced();
@@ -7327,24 +7325,27 @@ export function initOpenAI() {
         saveSettingsDebounced();
     });
 
-    $('#automatic_prompt_cache').on('change', async function () {
-        const requested = Boolean(this.checked);
+    $('#automatic_prompt_cache_mode').on('change', async function () {
+        const requested = this.value;
+        const previous = oai_settings.automatic_prompt_cache_mode;
         const source = oai_settings.chat_completion_source;
         const model = getChatCompletionModel();
         const ttl = oai_settings.automatic_prompt_cache_ttl;
-        this.checked = Boolean(oai_settings.automatic_prompt_cache);
-        if (requested) {
+        this.value = oai_settings.automatic_prompt_cache_mode;
+        if (requested === 'automatic') {
             const lifetime = oai_settings.automatic_prompt_cache_ttl === '1h'
                 ? t`1-hour cache writes cost twice the regular input price.`
                 : t`5-minute cache writes cost 1.25 times the regular input price.`;
             const confirmed = await Popup.show.confirm(t`Enable prompt caching?`,
                 t`Caching may cost more if your prompt changes often or the cache expires before your next message.` + ' ' + lifetime);
-            if (confirmed !== POPUP_RESULT.AFFIRMATIVE || $('#automatic_prompt_cache').prop('disabled')
+            if (confirmed !== POPUP_RESULT.AFFIRMATIVE || oai_settings.automatic_prompt_cache_mode !== previous
+                || $('#automatic_prompt_cache_mode').prop('disabled')
                 || oai_settings.chat_completion_source !== source || getChatCompletionModel() !== model
                 || oai_settings.automatic_prompt_cache_ttl !== ttl) return;
         }
-        oai_settings.automatic_prompt_cache = requested;
-        this.checked = requested;
+        oai_settings.automatic_prompt_cache_mode = requested;
+        oai_settings.automatic_prompt_cache = requested === 'automatic';
+        this.value = requested;
         resetAutomaticCacheComparisons();
         updateAutomaticCacheControls();
         saveSettingsDebounced();

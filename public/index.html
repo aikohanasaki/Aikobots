@@ -298,15 +298,19 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div id="automatic_prompt_cache_block" class="range-block" data-source="claude,openrouter,electronhub" hidden>
-                                    <label id="automatic_prompt_cache_label" for="automatic_prompt_cache" class="checkbox_label flexWrap widthFreeExpand">
-                                        <input id="automatic_prompt_cache" type="checkbox" />
-                                        <span data-i18n="Optimize for caching">Optimize for caching</span>
+                                <div id="automatic_prompt_cache_block" class="range-block" data-source="claude,openrouter,electronhub">
+                                    <label id="automatic_prompt_cache_label" for="automatic_prompt_cache_mode" class="flexWrap widthFreeExpand">
+                                        <span data-i18n="Claude caching">Claude caching</span>
                                         <span id="automatic_prompt_cache_supported" data-cc-toggle="false">
                                             <i class="icon-supported fa-solid fa-circle-check" title="Supported by the current model" data-i18n="[title]Supported by the current model"></i>
                                             <i class="icon-unsupported fa-solid fa-circle-exclamation" title="Unsupported by the current model" data-i18n="[title]Unsupported by the current model"></i>
                                         </span>
                                     </label>
+                                    <select id="automatic_prompt_cache_mode" class="text_pole" aria-labelledby="automatic_prompt_cache_label">
+                                        <option value="inherit" data-i18n="Server default">Server default</option>
+                                        <option value="automatic" data-i18n="Automatic">Automatic</option>
+                                        <option value="off" data-i18n="Off">Off</option>
+                                    </select>
                                     <div class="wide100p">
                                         <label for="automatic_prompt_cache_ttl" data-i18n="Cache lifetime">Cache lifetime</label>
                                         <select id="automatic_prompt_cache_ttl" class="text_pole">

@@ -64,6 +64,17 @@ function getPresetTemperature(presetName) {
     return Number.isFinite(temperature) && temperature >= 0 ? temperature : undefined;
 }
 
+/** Captures only the cache and Gemini choices belonging to this profile's preset. */
+function getPresetProviderOptions(presetName) {
+    const preset = presetName ? getPresetManager(ChatCompletionService.TYPE)?.getCompletionPresetByName(presetName) : null;
+    return Object.freeze({
+        automatic_prompt_cache_mode: preset?.automatic_prompt_cache_mode
+            ?? (preset?.automatic_prompt_cache === true ? 'automatic' : 'inherit'),
+        automatic_prompt_cache_ttl: preset?.automatic_prompt_cache_ttl ?? '5m',
+        gemini_service_tier: preset?.gemini_service_tier ?? '',
+    });
+}
+
 function copyRequestOverrides(profile, provider) {
     const source = profile?.['request-overrides'];
     if (!source || typeof source !== 'object' || Array.isArray(source)) {
@@ -100,6 +111,7 @@ export function createConnectionProfileRequestSnapshot(profileId, overrides = {}
         proxyUrl: String(proxy?.url || ''),
         promptPostProcessing: String(profile['prompt-post-processing'] || ''),
         requestOverrides: Object.freeze(copyRequestOverrides(profile, apiMap.source)),
+        providerOptions: getPresetProviderOptions(profile.preset),
     });
 }
 
@@ -132,12 +144,17 @@ export function applyConnectionProfileSnapshot(generateData, snapshot, overrides
         throw new Error(t`Proxy preset '${snapshot.proxyName}' not found`);
     }
 
+    const providerOptions = snapshot.providerOptions ?? {};
+    const source = snapshot.source;
     return mergeConnectionProfilePayloadOverrides({
         ...generateData,
         ...structuredClone(snapshot.requestOverrides || {}),
-        chat_completion_source: snapshot.source,
+        chat_completion_source: source,
         model,
         temperature,
+        automatic_prompt_cache_mode: providerOptions.automatic_prompt_cache_mode ?? 'inherit',
+        automatic_prompt_cache_ttl: providerOptions.automatic_prompt_cache_ttl ?? '5m',
+        service_tier: source === 'makersuite' ? providerOptions.gemini_service_tier || undefined : undefined,
         custom_url: snapshot.apiUrl || undefined,
         reverse_proxy: snapshot.proxyUrl || undefined,
         proxy_password: proxy?.password || undefined,

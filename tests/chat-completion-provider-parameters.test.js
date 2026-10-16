@@ -125,6 +125,24 @@ it('does not pass the AI Studio service tier to Vertex AI', async () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).not.toHaveProperty('service_tier');
 });
 
+it.each([
+    ['claude', 'claude-sonnet-4-6'],
+    ['openrouter', 'anthropic/claude-sonnet-4-6'],
+    ['electronhub', 'claude-sonnet-4-6'],
+])('%s applies explicit automatic caching and rejects invalid modes', async (source, model) => {
+    fetchMock.mockImplementation(async () => success(false));
+    await run(source, false, { model, automatic_prompt_cache_mode: 'automatic', automatic_prompt_cache_ttl: '1h' });
+    expect(JSON.parse(fetchMock.mock.calls.at(-1)[1].body).cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
+    await run(source, false, { model, automatic_prompt_cache_mode: 'off' });
+    expect(JSON.parse(fetchMock.mock.calls.at(-1)[1].body)).not.toHaveProperty('cache_control');
+    const calls = fetchMock.mock.calls.length;
+    const invalid = await run(source, false, { model, automatic_prompt_cache_mode: 'invalid' });
+    expect(invalid.statusCode).toBe(400);
+    const invalidTtl = await run(source, false, { model, automatic_prompt_cache_mode: 'automatic', automatic_prompt_cache_ttl: '2h' });
+    expect(invalidTtl.statusCode).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+});
+
 it('retains overrides and headers through structured-output fallback', async () => {
     fetchMock.mockResolvedValueOnce(new nodeFetch.Response(JSON.stringify({ error: { message: 'response_format json_schema not supported' } }), { status: 400 }))
         .mockImplementation(async () => success(false));
