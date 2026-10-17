@@ -20,7 +20,7 @@ Some Aikobots implementation work may have involved AI-assisted coding tools und
 
 Aikobots adds Memory Books workflows for long-running roleplay and structured memory management. This includes Aikobots-specific prompt behavior, memory organization patterns, and supporting UI/workflow conventions.
 
-Current code includes STMB scene capture, memory generation, summary/consolidation tiers, Topical Clips, SidePrompts, tracker/scoreboard-style side prompt behavior, queued Memory Books jobs, processed-message boundary controls, catch-up commands for long chats, profile-specific provider settings, and lorebook order defaults for auto-created memory books. Later v5 work adds message-range-aware Memory Assistance suggestions, background Topical Clip generation and auto-accept, stricter dependent-job serialization, raw provider-error display in the job UI, and locale-matched AI Reference Manual downloads.
+Current code includes STMB scene capture, memory generation, summary/consolidation tiers, Topical Clips, SidePrompts, tracker/scoreboard-style side prompt behavior, queued Memory Books jobs, processed-message boundary controls, catch-up commands for long chats, profile-specific provider settings, and lorebook order defaults for auto-created memory books. Later v5 work adds message-range-aware Memory Assistance suggestions, background Topical Clip generation and auto-accept, stricter dependent-job serialization, raw provider-error display in the job UI, and locale-matched AI Reference Manual downloads. v6 adds queued Topical Clip and compaction jobs, reviewed Combine Clips generation, per-workflow Clip formatting and placement, and transactional saving that can disable combined source Clips.
 
 ### 2. Lorebook Ordering / STLO
 
@@ -59,6 +59,8 @@ Current code also stores effective hidden lorebook bindings in server-side regis
 Aikobots integrates the World Info Locks preset bar as core client code. The implementation is derived from SillyTavern-WorldInfoPresets by Len Anderson and the WorldInfoLocks fork by Aiko Hanasaki. It preserves the legacy `extension_settings.worldInfoPresets` and `chat_metadata.worldInfoPresetLock` formats for compatibility while loading independently of the extension subsystem.
 
 Core preset activation manages only ordinary user lorebooks. Secure and hidden selections remain active and are excluded from preset exports, logs, and bundled lorebook data.
+
+v6 permits secure and shared secure lorebook owners to publish names for standalone universe selection. The public catalog exposes names only; entry access remains server-side. Withdrawn selections are refreshed in the client and blocked during server-side global resolution for ordinary users.
 
 ### 6. Character Protection and Admin Push Workflows
 
@@ -150,7 +152,7 @@ Aikobots v4 moves more STMB persistence through server endpoints that reuse lore
 
 ### 19. Recent Chats, Character Catalog, and Saved Lorebook Sorting
 
-Aikobots v4 adds Recent Chats using explicit SQLite activity metadata with a legacy timestamp fallback. It also adds a welcome-screen character Catalog backed by the server-managed published-character index and safe retrieval routes.
+Aikobots v4 adds Recent Chats using explicit SQLite activity metadata with a legacy timestamp fallback. v6 adds chat-management sorting by last message time, name, size, or message count. The character Catalog is backed by the server-managed published-character index and safe retrieval routes.
 
 Lorebook sort order can now be saved per lorebook through a normalized client/server path, while temporary search sorting remains a UI-only mode.
 

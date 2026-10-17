@@ -9,6 +9,9 @@ Aikobots 6.0.0 focuses on stabilization, refactors for efficiency and easier cod
 * **More reliable persistence:** refine Memory Books pending actions, queued consolidation source validation, and rollback handling; keep lorebook editor initialization read-only.
 * **Retained partial replies:** save useful streamed text after terminal generation errors, including unfinished sentences. When reasoning stripping leaves no answer, display a localized explanation. Existing chat/swipe validation remains authoritative.
 * **Small workflow improvements:** add memory reminders and a lorebook entry compaction shortcut, expose additional provider parameters across connections, clarify lorebook ordering labels, and maintain supported UI translations.
+* **Standalone universes:** let owners publish the names of secure or shared secure lorebooks for global opt-in without exposing entries. Selection and World Info Locks refresh the name catalog, and server-side resolution blocks withdrawn selections for ordinary users.
+* **Memory Books Clip workflows:** queue Topical Clip generation and entry compaction, and add reviewed Combine Clips generation for ordinary user Memory Books. Clip formats and insertion settings can be chosen for new Topical and combined entries; combined saves can disable their source Clips under the shared lorebook transaction.
+* **Chat and provider refinements:** add chat-management sorting by last message time, name, size, or message count; expose Gemini service tier and Claude cache controls; and default Memory Books profiles to skipping provider caching unless explicitly configured otherwise.
 
 ## Attribution and continuity
 
