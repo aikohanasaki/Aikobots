@@ -6681,5 +6681,6 @@
     "Little of your recent prompts was reused. Repeated cache writes may increase your costs. Turn off Optimize for caching?": "Повторно использована лишь малая часть последних промптов. Повторные записи в кеш могут увеличить расходы. Отключить оптимизацию кеширования?",
     "Caching appears to have increased the input cost of your recent replies. Turn off Optimize for caching?": "Похоже, кеширование увеличило стоимость ввода для последних ответов. Отключить оптимизацию кеширования?",
     "Turn off caching": "Отключить кеширование",
-    "Keep it on": "Оставить включённым"
+    "Keep it on": "Оставить включённым",
+    "STMemoryBooks_TopicalClip_IncludeHiddenMessages": "Также использовать скрытые сообщения"
 }

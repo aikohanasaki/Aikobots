@@ -1,4 +1,4 @@
-import { CHAT_SAVE_RESULT, chat_metadata, flushDebouncedChatSave, getRequestHeaders, getFirstDisplayedMessageId, getLastDisplayedMessageId, saveSettingsDebounced } from '../script.js';
+import { CHAT_SAVE_RESULT, chat_metadata, flushDebouncedChatSave, getRequestHeaders, saveSettingsDebounced } from '../script.js';
 import { DOMPurify } from '../lib.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { stableHashString } from './hashing.js';
@@ -7,7 +7,7 @@ import { combineStmbClips, createStmbEntry, generateStmbText, updateStmbEntryByU
 import { areCombineSourcesCurrent, buildCombineClipsPrompt, DEFAULT_COMBINE_CLIPS_PROMPT, isClipEntryTitle, isClipForCombination, snapshotCombineSource, unionClipKeywords, validateCombineClipsPrompt, visibleCombineClipSelection } from './stmb-combine-clips-policy.js';
 import { DEFAULT_CLIP_FORMAT, getClipFormatKind, readFormattedClip, renderClipFormat, validateClipFormat, withClipFormatData } from './stmb-clip-format-policy.js';
 export { isClipEntryTitle } from './stmb-combine-clips-policy.js';
-import { buildTopicalClipEntryOverrides, normalizeLorebookEntrySettings, compileScene, compiledSceneToText, STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
+import { buildTopicalClipEntryOverrides, getTopicalClipDefaultRange, normalizeLorebookEntrySettings, compileScene, compiledSceneToText, STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo, getStmbChatKey } from './stmb-scene.js';
 import { readSelectedChatMessages, showChatMessagePicker } from './chat-search.js';
 import { eventSource, event_types } from './events.js';
@@ -227,7 +227,7 @@ export async function openChatMessageExtractor({ query = '', initialSelection = 
 }
 
 /** Captures exactly the selected identities, rejecting changed sources before generation. */
-async function captureExtractedMessages(selection) {
+async function captureExtractedMessages(selection, includeHiddenMessages = false) {
     if (!selection?.messages?.length) throw new Error('No selected messages');
     const sceneContext = selection.sceneContext;
     await prepareChatExtraction(sceneContext);
@@ -238,7 +238,7 @@ async function captureExtractedMessages(selection) {
     const compiledScene = compileScene(sparse, {
         ...sceneContext, sceneStart: messages[0].index, sceneEnd: messages.at(-1).index,
         stmbPromptTarget: sceneContext.isGroupChat ? 'group' : 'character',
-    }, { messageIndices: messages.map(message => message.index), skipSystemMessages: false, groupParticipants: sceneContext.groupParticipants });
+    }, { messageIndices: messages.map(message => message.index), skipSystemMessages: !includeHiddenMessages, groupParticipants: sceneContext.groupParticipants });
     return {
         compiledScene,
         messageSource: { mode: 'selection', chat_id: sceneContext.chatId, chat_ref: sceneContext.chatRef,
@@ -2157,7 +2157,7 @@ async function saveTopicalClipDraft(context, draft, options = {}) {
 
     if (context.messageSelection) {
         try {
-            await captureExtractedMessages(context.messageSelection);
+            await captureExtractedMessages(context.messageSelection, context.includeHiddenMessages === true);
         } catch {
             throw Object.assign(new Error(tr('Selected messages are unavailable or changed. Extract them again before generating.', 'ChatExtract_CaptureFailed')), { code: 'STMB_CLIP_SOURCE_CHANGED' });
         }
@@ -2611,6 +2611,7 @@ function buildTopicalClipPopupHtml(defaultLorebookName) {
                 <h4>${escapeHtml(tr('Sources', 'STMemoryBooks_TopicalClip_SourceTypes'))}</h4>
                 <label class="checkbox_label"><input id="stmb-topical-clip-include-memories" type="checkbox" checked> <span>${escapeHtml(tr('Include saved Memories', 'STMemoryBooks_TopicalClip_IncludeMemories'))}</span></label>
                 <label class="checkbox_label"><input id="stmb-topical-clip-include-messages" type="checkbox"> <span>${escapeHtml(tr('Include chat messages', 'STMemoryBooks_TopicalClip_IncludeMessages'))}</span></label>
+                <label class="checkbox_label"><input id="stmb-topical-clip-include-hidden-messages" type="checkbox"${getModuleSettings().topicalClipIncludeHiddenMessages ? ' checked' : ''}> <span>${escapeHtml(tr('Include hidden messages', 'STMemoryBooks_TopicalClip_IncludeHiddenMessages'))}</span></label>
                 <button id="stmb-topical-clip-extract" type="button" class="menu_button">${escapeHtml(tr('Extract…', 'ChatExtract_Open'))}</button>
                 <select id="stmb-topical-clip-message-mode" class="text_pole" aria-label="${escapeHtml(tr('Message sources', 'ChatExtract_SourceMode'))}" hidden>
                     <option value="range">${escapeHtml(tr('Message range'))}</option>
@@ -2703,6 +2704,7 @@ export async function showTopicalClipPopup(options = {}) {
     const rebuildInput = dlg?.querySelector('#stmb-topical-clip-rebuild-all');
     const includeMemoriesInput = dlg?.querySelector('#stmb-topical-clip-include-memories');
     const includeMessagesInput = dlg?.querySelector('#stmb-topical-clip-include-messages');
+    const includeHiddenMessagesInput = dlg?.querySelector('#stmb-topical-clip-include-hidden-messages');
     const messageRange = dlg?.querySelector('#stmb-topical-clip-message-range');
     const messageMode = dlg?.querySelector('#stmb-topical-clip-message-mode');
     const selectedMessagePanel = dlg?.querySelector('#stmb-topical-clip-selected-messages');
@@ -2758,17 +2760,11 @@ export async function showTopicalClipPopup(options = {}) {
         && options.sceneStart <= options.sceneEnd
         ? { sceneStart: options.sceneStart, sceneEnd: options.sceneEnd }
         : null;
-    const firstDisplayedMessageId = getFirstDisplayedMessageId();
-    const lastDisplayedMessageId = getLastDisplayedMessageId();
-    const displayedMessageRange = Number.isInteger(firstDisplayedMessageId)
-        && Number.isInteger(lastDisplayedMessageId)
-        && firstDisplayedMessageId >= 0
-        && firstDisplayedMessageId <= lastDisplayedMessageId
-        ? { sceneStart: firstDisplayedMessageId, sceneEnd: lastDisplayedMessageId }
-        : null;
-    const initialMessageRange = suggestedMessageRange || displayedMessageRange;
-    if (messageStartInput && initialMessageRange) messageStartInput.value = String(initialMessageRange.sceneStart);
-    if (messageEndInput && initialMessageRange) messageEndInput.value = String(initialMessageRange.sceneEnd);
+    const sceneMarkers = runtime.getSceneMarkers?.();
+    const highestProcessed = runtime.getHighestProcessedMessageId?.();
+    const initialRange = getTopicalClipDefaultRange(suggestedMessageRange, sceneMarkers, highestProcessed);
+    if (messageStartInput) messageStartInput.value = String(initialRange.sceneStart);
+    if (messageEndInput && initialRange.sceneEnd !== null) messageEndInput.value = String(initialRange.sceneEnd);
 
     const getMode = () => modeSelect?.value || 'create';
     const getSelectedLorebookName = () => {
@@ -2826,6 +2822,7 @@ export async function showTopicalClipPopup(options = {}) {
         const updateMode = getMode() === 'update';
         if (rebuildRow) rebuildRow.hidden = !updateMode || !includeMemoriesInput?.checked;
         if (messageRange) messageRange.hidden = !includeMessagesInput?.checked || messageMode.value === 'selection';
+        includeHiddenMessagesInput.disabled = !includeMessagesInput?.checked;
         messageMode.hidden = !includeMessagesInput?.checked;
         selectedMessagePanel.hidden = !includeMessagesInput?.checked || messageMode.value !== 'selection';
         selectionCount.textContent = tr('Selected messages: {{count}}', 'ChatExtract_SelectedCount').replace('{{count}}', String(selectedMessages?.messages?.length || 0));
@@ -2907,6 +2904,11 @@ export async function showTopicalClipPopup(options = {}) {
         clearDraft();
         renderSourceVisibility();
         renderDiagnostics();
+    });
+    includeHiddenMessagesInput?.addEventListener('change', () => {
+        getModuleSettings().topicalClipIncludeHiddenMessages = includeHiddenMessagesInput.checked;
+        persistSettings();
+        clearDraft();
     });
     messageStartInput?.addEventListener('input', clearDraft);
     messageMode.addEventListener('change', () => { clearDraft(); renderSourceVisibility(); });
@@ -3009,6 +3011,7 @@ export async function showTopicalClipPopup(options = {}) {
         }
         const includeMemories = Boolean(includeMemoriesInput?.checked);
         const includeMessages = Boolean(includeMessagesInput?.checked);
+        const includeHiddenMessages = includeHiddenMessagesInput?.checked === true;
         if (!includeMemories && !includeMessages) {
             toastr.error(tr('Select saved Memories, chat messages, or both.', 'STMemoryBooks_TopicalClip_NoSourceTypes'), 'STMB');
             return;
@@ -3050,7 +3053,7 @@ export async function showTopicalClipPopup(options = {}) {
             ? structuredClone(selectedMessages) : null;
         if (includeMessages && messageMode.value === 'selection') {
             try {
-                const capture = await captureExtractedMessages(messageSelection);
+                const capture = await captureExtractedMessages(messageSelection, includeHiddenMessages);
                 sourceMessages = capture.compiledScene;
                 messageSource = capture.messageSource;
             } catch {
@@ -3078,7 +3081,7 @@ export async function showTopicalClipPopup(options = {}) {
                     return;
                 }
                 const capture = await captureStmbSceneRange({ sceneStart: start, sceneEnd: end }, {
-                    skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
+                    skipSystemMessages: !includeHiddenMessages,
                     sceneContext,
                 });
                 sourceMessages = capture?.compiledScene;
@@ -3144,6 +3147,7 @@ export async function showTopicalClipPopup(options = {}) {
                         : (getTopicalClipMetadata(target)?.last_source_snapshot || []),
                 messageSource,
                 messageSelection,
+                includeHiddenMessages,
                 profileOverrides,
             };
             if (autoAccept) {
@@ -3247,11 +3251,14 @@ export async function showTopicalClipPopup(options = {}) {
 
     try {
         // An extracted selection already has authoritative identities; don't flush a separate range capture.
+        const endWasEmpty = messageEndInput?.value === '';
         const rangeInfo = selectedMessages ? null : await fetchStmbChatRangeInfo({ sceneContext: buildStmbSceneContext() });
         const lastAvailable = Number(rangeInfo?.lastAvailableMessageId ?? -1);
         if (lastAvailable >= 0) {
             messageStartInput?.setAttribute('max', String(lastAvailable));
             messageEndInput?.setAttribute('max', String(lastAvailable));
+            const defaultEnd = getTopicalClipDefaultRange(suggestedMessageRange, sceneMarkers, highestProcessed, lastAvailable).sceneEnd;
+            if (endWasEmpty && messageEndInput?.value === '' && defaultEnd !== null) messageEndInput.value = String(defaultEnd);
         }
     } catch {
         // Range validation will retry when chat messages are selected.

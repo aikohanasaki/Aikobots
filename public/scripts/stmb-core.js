@@ -76,6 +76,18 @@ export const STMB_DEFAULT_TITLE_FORMATS = Object.freeze([
     '[000] - {{title}}',
 ]);
 
+/** Chooses Topical Clip range defaults without reading only the rendered chat window. */
+export function getTopicalClipDefaultRange(explicitRange, markers = {}, highestProcessed = null, lastAvailable = null) {
+    if (Number.isInteger(explicitRange?.sceneStart) && Number.isInteger(explicitRange?.sceneEnd)
+        && explicitRange.sceneStart >= 0 && explicitRange.sceneStart <= explicitRange.sceneEnd) return explicitRange;
+    return {
+        sceneStart: Number.isInteger(markers.sceneStart) && markers.sceneStart >= 0 ? markers.sceneStart
+            : Number.isInteger(highestProcessed) && highestProcessed >= 0 ? highestProcessed : 0,
+        sceneEnd: Number.isInteger(markers.sceneEnd) && markers.sceneEnd >= 0 ? markers.sceneEnd
+            : Number.isInteger(lastAvailable) && lastAvailable >= 0 ? lastAvailable : null,
+    };
+}
+
 /** Resolves a UI locale to an available Memory Books AI Reference Manual locale. */
 export function resolveStmbAIReferenceManualLocale(locale) {
     const normalizedLocale = String(locale || 'en').trim().replaceAll('_', '-').toLowerCase();
@@ -597,6 +609,7 @@ export function createDefaultStmbSettings() {
             showMemoryPreviews: false,
             showNotifications: true,
             unhideBeforeMemory: false,
+            topicalClipIncludeHiddenMessages: false,
             refreshEditor: true,
             maxTokens: STMB_DEFAULT_MAX_TOKENS,
             tokenWarningThreshold: 50000,
@@ -953,6 +966,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         ? Math.max(0, Math.min(7, Math.trunc(Number(moduleSettings.defaultMemoryCount))))
         : defaults.moduleSettings.defaultMemoryCount;
     moduleSettings.showConsolidationPreviews = Boolean(moduleSettings.showConsolidationPreviews);
+    moduleSettings.topicalClipIncludeHiddenMessages = moduleSettings.topicalClipIncludeHiddenMessages === true;
     moduleSettings.autoAcceptGroupParticipants = Boolean(moduleSettings.autoAcceptGroupParticipants);
     moduleSettings.unhiddenEntriesCount = moduleSettings.unhiddenEntriesCount === undefined || moduleSettings.unhiddenEntriesCount === null
         ? defaults.moduleSettings.unhiddenEntriesCount

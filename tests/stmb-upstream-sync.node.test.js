@@ -2,10 +2,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+    getTopicalClipDefaultRange,
     getStmbGroupParticipantConfirmationPolicy,
     getStmbProviderTruncationCode,
     normalizeStmbSettings,
 } from '../public/scripts/stmb-core.js';
+
+test('Topical Clip range defaults honor explicit range, scene markers, and inclusive processed boundary', () => {
+    assert.deepEqual(getTopicalClipDefaultRange({ sceneStart: 3, sceneEnd: 9 }, { sceneStart: 1, sceneEnd: 12 }, 2, 20), { sceneStart: 3, sceneEnd: 9 });
+    assert.deepEqual(getTopicalClipDefaultRange(null, { sceneStart: 1, sceneEnd: 12 }, 2, 20), { sceneStart: 1, sceneEnd: 12 });
+    assert.deepEqual(getTopicalClipDefaultRange(null, {}, 0, 20), { sceneStart: 0, sceneEnd: 20 });
+    assert.deepEqual(getTopicalClipDefaultRange(null, {}, null, -1), { sceneStart: 0, sceneEnd: null });
+});
+
+test('Topical Clip hidden-message preference is independent and defaults off', () => {
+    assert.equal(normalizeStmbSettings({ moduleSettings: { unhideBeforeMemory: true } }).moduleSettings.topicalClipIncludeHiddenMessages, false);
+    assert.equal(normalizeStmbSettings({ moduleSettings: { topicalClipIncludeHiddenMessages: true } }).moduleSettings.topicalClipIncludeHiddenMessages, true);
+});
 
 test('auto-summary intervals accept five messages but reject lower persisted values', () => {
     assert.equal(normalizeStmbSettings({ moduleSettings: { autoSummaryInterval: 5 } }).moduleSettings.autoSummaryInterval, 5);

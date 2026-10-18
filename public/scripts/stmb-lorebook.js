@@ -1,4 +1,5 @@
 import {
+    CHAT_SAVE_RESULT,
     chat_metadata,
     getCurrentChatId,
     name1,
@@ -75,6 +76,9 @@ export async function suggestStmbLorebookName(template) {
 }
 
 async function autoCreateAndBindLorebook(lorebookNameTemplate, lorebookOrderDefaults = null) {
+    const originalChatId = getCurrentChatId();
+    const originalMetadata = chat_metadata;
+    const originalContext = getContext();
     const generatedName = await generateAutoLorebookName(lorebookNameTemplate);
     const created = lorebookOrderDefaults
         ? await createNewWorldInfo(generatedName, { initialData: applyStloDefaultsToLorebook({ entries: {} }, lorebookOrderDefaults) })
@@ -83,8 +87,23 @@ async function autoCreateAndBindLorebook(lorebookNameTemplate, lorebookOrderDefa
         throw new Error(`Failed to create lorebook "${generatedName}"`);
     }
 
+    const currentBeforeSave = getContext();
+    if (getCurrentChatId() !== originalChatId || chat_metadata !== originalMetadata
+        || currentBeforeSave.characterId !== originalContext.characterId
+        || currentBeforeSave.groupId !== originalContext.groupId) {
+        throw new Error('Chat changed before Memory Book binding could be saved.');
+    }
+
     chat_metadata[METADATA_KEY] = generatedName;
-    await saveMetadata();
+    const saved = await saveMetadata();
+    if (saved !== CHAT_SAVE_RESULT.SAVED) throw new Error('Memory Book binding could not be saved.');
+    const currentContext = getContext();
+    if (getCurrentChatId() === originalChatId && chat_metadata === originalMetadata
+        && currentContext.characterId === originalContext.characterId
+        && currentContext.groupId === originalContext.groupId
+        && chat_metadata[METADATA_KEY] === generatedName) {
+        document.querySelectorAll('.chat_lorebook_button').forEach(button => button.classList.add('world_set'));
+    }
     return generatedName;
 }
 

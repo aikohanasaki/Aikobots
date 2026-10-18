@@ -8554,6 +8554,8 @@ function configureClipRuntime() {
         },
         ensureLorebookName,
         getDefaultLorebookName: resolveLorebookName,
+        getSceneMarkers,
+        getHighestProcessedMessageId,
         getProfile: getCompactionProfileForRuntime,
         buildGenerateData: async (messages, profile) => buildStmbGenerateData(messages, profile),
     });

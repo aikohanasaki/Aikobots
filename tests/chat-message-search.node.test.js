@@ -105,3 +105,15 @@ test('explicit scene selection preserves hidden sources, numbering and chronolog
     assert.deepEqual(compileScene(messages, { sceneStart: 0, sceneEnd: 2 }).messages.map(message => message.id), [1, 2]);
     assert.throws(() => compileScene(messages, { sceneStart: 0, sceneEnd: 2 }, { messageIndices: [3] }));
 });
+
+test('Topical Clip source compilation excludes hidden messages unless selected and preserves source messages', () => {
+    const messages = [{ mes: 'hidden', is_system: true }, { mes: 'visible' }];
+    const before = structuredClone(messages);
+    for (const messageIndices of [undefined, [0, 1]]) {
+        const options = messageIndices ? { messageIndices } : {};
+        assert.deepEqual(compileScene(messages, { sceneStart: 0, sceneEnd: 1 }, { ...options, skipSystemMessages: true }).messages.map(message => message.id), [1]);
+        assert.deepEqual(compileScene(messages, { sceneStart: 0, sceneEnd: 1 }, { ...options, skipSystemMessages: false }).messages.map(message => message.id), [0, 1]);
+    }
+    assert.deepEqual(messages, before);
+    assert.throws(() => compileScene([messages[0]], { sceneStart: 0, sceneEnd: 0 }, { skipSystemMessages: true }), /No visible messages/);
+});

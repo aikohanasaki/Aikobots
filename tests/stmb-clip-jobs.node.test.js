@@ -274,7 +274,7 @@ test('ordinary Generate stays in its editor; Auto-Accept closes only after enque
             getSelectedLorebookName: () => 'Book', currentLorebookName: 'Book', currentLorebookData: { entries: {} },
             getMode: () => 'create', draftRevision: 0,
             topicInput: { value: 'Topic' }, keywordsInput: { value: 'Topic' }, parseKeywords: () => ['Topic'],
-            includeMemoriesInput: { checked: true }, includeMessagesInput: { checked: false },
+            includeMemoriesInput: { checked: true }, includeMessagesInput: { checked: false }, includeHiddenMessagesInput: { checked: false },
             validateTopicalClipPromptTemplate: () => null, getTopicalClipPromptTemplate: () => 'Prompt',
             getTopicalSourceEntries: () => [{ uid: 1 }], rebuildInput: { checked: false }, selectedSourceMemoryKeys: null,
             buildTopicalClipPrompt: () => 'Prompt', estimateTokens: () => 1, getModuleSettings: () => ({}),
@@ -286,6 +286,7 @@ test('ordinary Generate stays in its editor; Auto-Accept closes only after enque
                 assert.equal(input.type, 'topicalClip');
                 assert.equal(input.payload.saveContext.lorebookData, undefined);
                 assert.equal(input.payload.saveContext.format, 'Synthetic format');
+                assert.equal(input.payload.saveContext.includeHiddenMessages, false);
                 assert.equal(input.payload.generateData.model, 'Captured model');
                 assert.equal(input.sceneContext.chatId, 'Original');
                 if (outcome === 'enqueue-failed') throw new Error('Synthetic queue failure');

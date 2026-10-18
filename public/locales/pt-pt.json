@@ -1722,6 +1722,7 @@
   ,"STMemoryBooks_TopicalClip_SourceTypes": "Fontes"
   ,"STMemoryBooks_TopicalClip_IncludeMemories": "Incluir Memórias salvas"
   ,"STMemoryBooks_TopicalClip_IncludeMessages": "Incluir mensagens do chat"
+  ,"STMemoryBooks_TopicalClip_IncludeHiddenMessages": "Incluir também mensagens ocultas"
   ,"STMemoryBooks_TopicalClip_GenerateAutoAccept": "Gerar e aceitar automaticamente"
   ,"STMemoryBooks_TopicalClip_AutoAcceptStarted": "A geração do Clip Temático foi iniciada. Ele será salvo automaticamente."
   ,"STMemoryBooks_TopicalClip_MessageStart": "ID da mensagem inicial"
