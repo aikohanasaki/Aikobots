@@ -80,12 +80,16 @@ export const STMB_DEFAULT_TITLE_FORMATS = Object.freeze([
 export function getTopicalClipDefaultRange(explicitRange, markers = {}, highestProcessed = null, lastAvailable = null) {
     if (Number.isInteger(explicitRange?.sceneStart) && Number.isInteger(explicitRange?.sceneEnd)
         && explicitRange.sceneStart >= 0 && explicitRange.sceneStart <= explicitRange.sceneEnd) return explicitRange;
-    return {
+    const range = {
         sceneStart: Number.isInteger(markers.sceneStart) && markers.sceneStart >= 0 ? markers.sceneStart
             : Number.isInteger(highestProcessed) && highestProcessed >= 0 ? highestProcessed : 0,
         sceneEnd: Number.isInteger(markers.sceneEnd) && markers.sceneEnd >= 0 ? markers.sceneEnd
             : Number.isInteger(lastAvailable) && lastAvailable >= 0 ? lastAvailable : null,
     };
+    if (range.sceneEnd !== null && range.sceneStart > range.sceneEnd) {
+        range.sceneStart = 0;
+    }
+    return range;
 }
 
 /** Resolves a UI locale to an available Memory Books AI Reference Manual locale. */

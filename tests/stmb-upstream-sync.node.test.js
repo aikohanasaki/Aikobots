@@ -15,6 +15,13 @@ test('Topical Clip range defaults honor explicit range, scene markers, and inclu
     assert.deepEqual(getTopicalClipDefaultRange(null, {}, null, -1), { sceneStart: 0, sceneEnd: null });
 });
 
+test('Topical Clip conflicting defaults fall back to the beginning through the selected end', () => {
+    assert.deepEqual(getTopicalClipDefaultRange(null, { sceneStart: null, sceneEnd: 7 }, 15), { sceneStart: 0, sceneEnd: 7 });
+    assert.deepEqual(getTopicalClipDefaultRange(null, { sceneStart: 15, sceneEnd: 7 }, null, 20), { sceneStart: 0, sceneEnd: 7 });
+    assert.deepEqual(getTopicalClipDefaultRange(null, {}, 15, 7), { sceneStart: 0, sceneEnd: 7 });
+    assert.deepEqual(getTopicalClipDefaultRange(null, {}, 15), { sceneStart: 15, sceneEnd: null });
+});
+
 test('Topical Clip hidden-message preference is independent and defaults off', () => {
     assert.equal(normalizeStmbSettings({ moduleSettings: { unhideBeforeMemory: true } }).moduleSettings.topicalClipIncludeHiddenMessages, false);
     assert.equal(normalizeStmbSettings({ moduleSettings: { topicalClipIncludeHiddenMessages: true } }).moduleSettings.topicalClipIncludeHiddenMessages, true);

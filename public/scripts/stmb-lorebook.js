@@ -94,9 +94,20 @@ async function autoCreateAndBindLorebook(lorebookNameTemplate, lorebookOrderDefa
         throw new Error('Chat changed before Memory Book binding could be saved.');
     }
 
-    chat_metadata[METADATA_KEY] = generatedName;
-    const saved = await saveMetadata();
-    if (saved !== CHAT_SAVE_RESULT.SAVED) throw new Error('Memory Book binding could not be saved.');
+    const hadBinding = Object.hasOwn(originalMetadata, METADATA_KEY);
+    const previousBinding = originalMetadata[METADATA_KEY];
+    originalMetadata[METADATA_KEY] = generatedName;
+    try {
+        const saved = await saveMetadata();
+        if (saved !== CHAT_SAVE_RESULT.SAVED) throw new Error('Memory Book binding could not be saved.');
+    } catch (error) {
+        // Restore only our pending binding, without touching a newer selection or another chat.
+        if (originalMetadata[METADATA_KEY] === generatedName) {
+            if (hadBinding) originalMetadata[METADATA_KEY] = previousBinding;
+            else delete originalMetadata[METADATA_KEY];
+        }
+        throw error;
+    }
     const currentContext = getContext();
     if (getCurrentChatId() === originalChatId && chat_metadata === originalMetadata
         && currentContext.characterId === originalContext.characterId
