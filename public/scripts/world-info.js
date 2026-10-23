@@ -1508,6 +1508,8 @@ const FLOATING_BOOK_STORAGE_KEYS = Object.freeze({
     messages: 'world_info_floating_book_messages',
     drag: 'world_info_floating_book_drag',
     position: 'world_info_floating_book_pos',
+    rememberGroups: 'world_info_floating_book_remember_groups',
+    groupStates: 'world_info_floating_book_group_states',
 });
 
 const FLOATING_BOOK_DEFAULT_SETTINGS = Object.freeze({
@@ -1515,6 +1517,7 @@ const FLOATING_BOOK_DEFAULT_SETTINGS = Object.freeze({
     order: true,
     messages: true,
     drag: true,
+    rememberGroups: false,
 });
 
 const FLOATING_BOOK_HIDDEN_GROUP_NAME = 'Hidden Secure Entries';
@@ -1553,6 +1556,30 @@ function readFloatingBookBool(key, fallback) {
 
 function writeFloatingBookBool(key, value) {
     accountStorage.setItem(key, value ? 'true' : 'false');
+}
+
+/** Restores only boolean group states from account preferences. */
+function readFloatingBookGroupStates() {
+    try {
+        const saved = JSON.parse(accountStorage.getItem(FLOATING_BOOK_STORAGE_KEYS.groupStates) || '{}');
+        if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return new Map();
+        return new Map(Object.entries(saved).filter(([, value]) => typeof value === 'boolean'));
+    } catch {
+        return new Map();
+    }
+}
+
+/** Applies remembered group state without persisting initialization toggle events. */
+function bindFloatingBookGroupState(drawer, name, controller) {
+    drawer.open = !controller.settings.rememberGroups || (controller.groupStates.get(name) ?? true);
+    let previousOpen = drawer.open;
+    drawer.addEventListener('toggle', () => {
+        if (!drawer.isConnected || drawer.open === previousOpen) return;
+        previousOpen = drawer.open;
+        if (!controller.settings.rememberGroups) return;
+        controller.groupStates.set(name, drawer.open);
+        accountStorage.setItem(FLOATING_BOOK_STORAGE_KEYS.groupStates, JSON.stringify(Object.fromEntries(controller.groupStates)));
+    });
 }
 
 function getFloatingBookDeviceProfile() {
@@ -1641,6 +1668,7 @@ function getFloatingBookSettings() {
         order: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.order, FLOATING_BOOK_DEFAULT_SETTINGS.order),
         messages: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.messages, FLOATING_BOOK_DEFAULT_SETTINGS.messages),
         drag: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.drag, FLOATING_BOOK_DEFAULT_SETTINGS.drag),
+        rememberGroups: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.rememberGroups, FLOATING_BOOK_DEFAULT_SETTINGS.rememberGroups),
     };
 }
 
@@ -2313,6 +2341,7 @@ function buildFloatingBookEntryRows(snapshot, settings) {
         return {
             type: 'entry',
             hidden,
+            uid: hidden ? null : entry?.uid,
             title: getFloatingBookEntryTitle(entry),
             strategyType: hidden ? '' : getFloatingBookStrategyType(entry),
             keywordText: hidden ? '' : getWorldInfoReportKeywordText(entry).replace(/^\s*/, ''),
@@ -2465,6 +2494,7 @@ function createWorldInfoFloatingBookController() {
         panel,
         configPanel,
         settings: getFloatingBookSettings(),
+        groupStates: readFloatingBookGroupStates(),
         lastBadgeSignature: '',
         refreshToken: 0,
         enabled: isWorldInfoFloatingBookEnabled(),
@@ -2628,8 +2658,14 @@ function createWorldInfoFloatingBookController() {
             controller.lastBadgeSignature = signature;
         },
         createEntryRow(row) {
-            const element = document.createElement('div');
+            const canOpen = !row.hidden && Boolean(row.book) && Number.isSafeInteger(row.uid) && row.uid >= 0;
+            const element = document.createElement(canOpen ? 'button' : 'div');
             element.className = 'wi-floating-book-entry';
+            if (canOpen) {
+                element.type = 'button';
+                element.title = translate('Open lorebook entry');
+                element.addEventListener('click', () => openWorldInfoEditor(row.book, row.uid));
+            }
             if (row.hidden) {
                 element.classList.add('wi-floating-book-entry-hidden');
             }
@@ -2637,10 +2673,10 @@ function createWorldInfoFloatingBookController() {
                 element.classList.add('wi-floating-book-entry-constant');
             }
 
-            const header = document.createElement('div');
+            const header = document.createElement('span');
             header.className = 'wi-floating-book-entry-header';
 
-            const strategy = document.createElement('div');
+            const strategy = document.createElement('span');
             strategy.className = 'wi-floating-book-entry-strategy';
             if (!row.hidden) {
                 strategy.classList.add(`wi-floating-book-entry-strategy-${row.strategyType || 'normal'}`);
@@ -2653,7 +2689,7 @@ function createWorldInfoFloatingBookController() {
             }
             header.append(strategy);
 
-            const title = document.createElement('div');
+            const title = document.createElement('span');
             title.className = 'wi-floating-book-entry-title';
             title.textContent = row.keywordText ? `${row.title} ${row.keywordText}` : row.title;
             header.append(title);
@@ -2711,7 +2747,7 @@ function createWorldInfoFloatingBookController() {
                 for (const group of model.groups) {
                     const drawer = document.createElement('details');
                     drawer.className = 'wi-floating-book-group';
-                    drawer.open = true;
+                    bindFloatingBookGroupState(drawer, group.name, controller);
 
                     const title = document.createElement('summary');
                     title.className = 'wi-floating-book-group-title';
@@ -2777,6 +2813,7 @@ function createWorldInfoFloatingBookController() {
                 { key: 'order', label: 'Show in order' },
                 { key: 'messages', label: 'Show message separators' },
                 { key: 'drag', label: 'Enable drag to move' },
+                { key: 'rememberGroups', label: translate('Remember lorebook group state') },
             ];
 
             for (const option of options) {
@@ -4057,9 +4094,10 @@ function registerWorldInfoSlashCommands() {
  * Loads the given world into the World Editor.
  *
  * @param {string} name - The name of the world
+ * @param {number|null} targetUid Optional entry to open after a fresh access check
  * @return {Promise<void>} A promise that resolves when the world editor is loaded
  */
-export async function showWorldEditor(name) {
+export async function showWorldEditor(name, targetUid = null) {
     if (!name) {
         worldEditorLoadToken++;
         await hideWorldEditor();
@@ -4067,12 +4105,21 @@ export async function showWorldEditor(name) {
     }
 
     const loadToken = ++worldEditorLoadToken;
-    const wiData = await loadWorldInfo(name);
+    if (targetUid !== null) {
+        await hideWorldEditor();
+        if (loadToken !== worldEditorLoadToken) return;
+    }
+    const wiData = await loadWorldInfo(name, { forceReload: targetUid !== null });
     if (loadToken !== worldEditorLoadToken) {
         return;
     }
 
-    await displayWorldEntries(name, wiData, navigation_option.none, true, loadToken);
+    if (targetUid !== null && (!Number.isSafeInteger(targetUid) || targetUid < 0
+        || !wiData?.entries?.[targetUid] || wiData.entries[targetUid].hidden)) {
+        toastr.warning(translate('Lorebook entry is unavailable.'));
+        return;
+    }
+    await displayWorldEntries(name, wiData, targetUid ?? navigation_option.none, true, loadToken, targetUid !== null);
 }
 
 /**
@@ -4081,14 +4128,16 @@ export async function showWorldEditor(name) {
  * This function will return from `worldInfoCache` if it has already been loaded before.
  *
  * @param {string} name - The name of the world to load
+ * @param {object} options Loading options
+ * @param {boolean} [options.forceReload=false] Bypass cached data to recheck management access
  * @return {Promise<Object|null>} A promise that resolves to the loaded world information, or null if the request fails.
  */
-export async function loadWorldInfo(name) {
+export async function loadWorldInfo(name, { forceReload = false } = {}) {
     if (!name) {
         return;
     }
 
-    if (worldInfoCache.has(name)) {
+    if (!forceReload && worldInfoCache.has(name)) {
         return worldInfoCache.get(name);
     }
 
@@ -4390,10 +4439,11 @@ function clearEntryList($list) {
 }
 
 //MARK: displayWorldEntries
-async function displayWorldEntries(name, data, navigation = navigation_option.none, flashOnNav = true, loadToken = worldEditorLoadToken) {
+async function displayWorldEntries(name, data, navigation = navigation_option.none, flashOnNav = true, loadToken = worldEditorLoadToken, openTarget = false) {
     if (loadToken !== worldEditorLoadToken) {
         return;
     }
+    const targetedNavigation = openTarget;
 
     updateEditor = async (navigation, flashOnNav = true) => await displayWorldEntries(name, data, navigation, flashOnNav, loadToken);
 
@@ -4558,6 +4608,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
                             blocks.push(block);
                         }
                     } catch (error) {
+                        if (targetedNavigation) throw new Error('Lorebook entry is unavailable.');
                         console.error(`Error while processing entry ${entry.uid}:`, error);
                     }
                 }
@@ -4576,8 +4627,25 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
                 worldEntriesList.append(blocks);
                 syncWorldInfoBulkMoveUi(name);
                 applyWorldInfoReadOnlyState(name, data);
+                if (openTarget) {
+                    openTarget = false;
+                    const target = worldEntriesList.find(`.world_entry[uid="${navigation}"]`);
+                    if (!target.length) {
+                        toastr.warning(translate('Lorebook entry is unavailable.'));
+                        return;
+                    }
+                    const control = target.find('.inline-drawer-icon');
+                    if (!target.find('.inline-drawer-outlet').is(':visible')) control.trigger('click');
+                    target[0].scrollIntoView({ block: 'center' });
+                    control.attr('tabindex', '-1').trigger('focus');
+                    if (flashOnNav) flashHighlight(target);
+                }
             } catch (error) {
-                console.error('Error while rendering WI entries:', error);
+                if (targetedNavigation) {
+                    toastr.warning(translate('Lorebook entry is unavailable.'));
+                } else {
+                    console.error('Error while rendering WI entries:', error);
+                }
             }
         },
         afterSizeSelectorChange: function (e) {
@@ -4590,7 +4658,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         },
     });
 
-    if (typeof navigation === 'number' && Number(navigation) >= 0) {
+    if (!targetedNavigation && typeof navigation === 'number' && Number(navigation) >= 0) {
         const selector = `#world_popup_entries_list [uid="${navigation}"]`;
         waitUntilCondition(() => document.querySelector(selector) !== null).finally(() => {
             const element = $(selector);
@@ -7971,14 +8039,18 @@ export async function importWorldInfo(file) {
 /**
  * Forces the world info editor to open on a specific world.
  * @param {string} worldName The name of the world to open
+ * @param {number|null} targetUid Optional visible entry to open
  */
-export function openWorldInfoEditor(worldName) {
-    console.log(`Opening lorebook for ${worldName}`);
+export function openWorldInfoEditor(worldName, targetUid = null) {
+    if (targetUid !== null && (!world_names.includes(worldName) || !Number.isSafeInteger(targetUid) || targetUid < 0)) {
+        toastr.warning(translate('Lorebook entry is unavailable.'));
+        return;
+    }
     if (!$('#WorldInfo').is(':visible')) {
         $('#WIDrawerIcon').trigger('click');
     }
     const index = world_names.indexOf(worldName);
-    $('#world_editor_select').val(index).trigger('change');
+    $('#world_editor_select').val(index).trigger('change', [targetUid]);
 }
 
 /**
@@ -8497,7 +8569,7 @@ export function initWorldInfo() {
         }
     });
 
-    $('#world_editor_select').on('change', async () => {
+    $('#world_editor_select').on('change', async (_event, targetUid = null) => {
         $('#world_info_search').val('');
         worldInfoFilter.setFilterData(FILTER_TYPES.WORLD_INFO_SEARCH, '', true);
         const selectedIndex = String($('#world_editor_select').find(':selected').val());
@@ -8513,7 +8585,15 @@ export function initWorldInfo() {
             await hideWorldEditor();
         } else {
             updateWorldInfoStorageButton(worldName);
-            await showWorldEditor(worldName);
+            if (targetUid === null) {
+                await showWorldEditor(worldName);
+            } else {
+                try {
+                    await showWorldEditor(worldName, targetUid);
+                } catch {
+                    toastr.warning(translate('Lorebook entry is unavailable.'));
+                }
+            }
         }
     });
 

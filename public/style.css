@@ -8309,3 +8309,19 @@ p.stmb-help-drawer-copy {
 #automatic_prompt_cache_supported[data-cc-toggle="false"] > .icon-unsupported {
     color: var(--SmartThemeQuoteColor);
 }
+
+button.wi-floating-book-entry {
+    width: 100%;
+    margin: 0;
+    border: 0;
+    font: inherit;
+    color: var(--SmartThemeBodyColor);
+    text-align: start;
+    cursor: pointer;
+}
+
+button.wi-floating-book-entry:focus-visible {
+    outline: 2px solid var(--SmartThemeQuoteColor);
+    outline-offset: 2px;
+    opacity: 1;
+}

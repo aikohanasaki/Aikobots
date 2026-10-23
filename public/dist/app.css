@@ -11393,6 +11393,22 @@ p.stmb-help-drawer-copy {
     color: var(--SmartThemeQuoteColor);
 }
 
+button.wi-floating-book-entry {
+    width: 100%;
+    margin: 0;
+    border: 0;
+    font: inherit;
+    color: var(--SmartThemeBodyColor);
+    text-align: start;
+    cursor: pointer;
+}
+
+button.wi-floating-book-entry:focus-visible {
+    outline: 2px solid var(--SmartThemeQuoteColor);
+    outline-offset: 2px;
+    opacity: 1;
+}
+
 /* css/st-tailwind.css */
 .text_warning {
     color: rgb(220 173 16);

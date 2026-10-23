@@ -1,4 +1,7 @@
 {
+    "Open lorebook entry": "Ouvrir l’entrée du lorebook",
+    "Remember lorebook group state": "Mémoriser l’état des groupes de lorebooks",
+    "Lorebook entry is unavailable.": "L’entrée du lorebook est indisponible.",
     "Gemini Service Tier": "Niveau de service Gemini",
     "gemini_service_tier_standard": "Standard",
     "gemini_service_tier_flex": "Flex",

@@ -1115,6 +1115,10 @@ The smart-theme rules in `public/style.css` give `.stmb-help-drawer-copy` a flex
 
 The floating `.stmb_floating_clip_button` contains native **Clip** and **Extract** buttons and retains its existing SmartTheme colors and viewport positioning. The shared Find/Extract picker uses `.chat-extract-result` to place a selection checkbox beside an expandable `.chat-find-result`; the details can shrink and long message text wraps using existing Find styling. Preserve these controls' keyboard access, hidden states, and wrapping in custom layouts. **Extract…** inside Topical Clip opens the same picker above the editor without replacing its fields.
 
+### Floating lorebook entry navigation
+
+Visible entries in the floating Active World Info panel use native buttons to open the corresponding editor entry. `button.wi-floating-book-entry` in `public/style.css` preserves the row layout and SmartTheme colors, with a themed keyboard focus outline. Hidden placeholders remain non-interactive. The panel's **Remember lorebook group state** option restores each book group's last collapsed/expanded state across refreshes and reloads; it is off by default.
+
 ### Text-completion panel removal
 
 The text-generation CFG panel (`#cfgConfig`) and its menu item have been removed. Shared floating-panel rules now target only Author's Note (`#floatingPrompt`); desktop, mobile, and workspace-right layouts retain their existing geometry. Image-generation CFG controls are unchanged.

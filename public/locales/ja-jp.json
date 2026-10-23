@@ -1,4 +1,7 @@
 {
+    "Open lorebook entry": "ロアブックのエントリーを開く",
+    "Remember lorebook group state": "ロアブックのグループの開閉状態を記憶する",
+    "Lorebook entry is unavailable.": "ロアブックのエントリーを利用できません。",
     "Gemini Service Tier": "Gemini サービス階層",
     "gemini_service_tier_standard": "標準",
     "gemini_service_tier_flex": "Flex",

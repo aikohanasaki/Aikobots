@@ -1,4 +1,7 @@
 {
+    "Open lorebook entry": "Открыть запись лорбука",
+    "Remember lorebook group state": "Запоминать состояние групп лорбуков",
+    "Lorebook entry is unavailable.": "Запись лорбука недоступна.",
     "Gemini Service Tier": "Уровень обслуживания Gemini",
     "gemini_service_tier_standard": "Стандартный",
     "gemini_service_tier_flex": "Flex",
