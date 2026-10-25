@@ -735,6 +735,59 @@ async function testWorldInfoPresetSelectionUi(page) {
     await page.unroute('**/api/worldinfo/list', catalogHandler);
 }
 
+/** Exercises the author popup and JSON export against synthetic data only. */
+async function testUniverseDirectory(page) {
+    const name = '9Z Universe Smoke';
+    if (!await page.locator('#WorldInfo').isVisible()) await page.locator('#WIDrawerIcon').click();
+    await page.locator('#world_editor_select').evaluate((select, name) => {
+        select.value = Array.from(select.options).find(option => option.textContent === name).value;
+        globalThis.jQuery(select).trigger('change');
+    }, name);
+    const button = page.locator('#world_universe_info');
+    await button.waitFor({ state: 'visible' });
+    await page.locator('#world_standalone_universe').uncheck();
+    await button.waitFor({ state: 'hidden' });
+    await page.locator('#world_standalone_universe').check();
+    await button.waitFor({ state: 'visible' });
+    await button.click();
+    let popup = page.locator('dialog.popup').filter({ has: page.locator('.universe-info-form') });
+    assert.equal(await popup.locator('[name=name]').inputValue(), 'Universe Smoke');
+    assert.equal(await popup.locator('[name=creator]').inputValue(), 'default-user');
+    assert.equal(await popup.locator('[name=nameOverride]').inputValue(), '');
+    assert.equal(await popup.locator('[name=creatorOverride]').inputValue(), '');
+    await popup.locator('[name=nameOverride]').fill('Canceled title');
+    await popup.locator('.popup-button-cancel').click();
+    await popup.waitFor({ state: 'detached' });
+    await button.click();
+    popup = page.locator('dialog.popup').filter({ has: page.locator('.universe-info-form') });
+    assert.equal(await popup.locator('[name=nameOverride]').inputValue(), '');
+    await popup.locator('[name=nameOverride]').fill('Synthetic Directory Title');
+    await popup.locator('[name=description]').fill('<script>synthetic text only</script>');
+    await popup.locator('[name=audience]').fill('Explorers');
+    await popup.locator('[name=tags]').fill('fantasy, exploration');
+    await popup.locator('[name=imageUrl]').fill('https://images.example.test/missing.png');
+    await popup.locator('.popup-button-ok').click();
+    await popup.waitFor({ state: 'detached' });
+    await button.click();
+    assert.equal(await popup.locator('[name=nameOverride]').inputValue(), 'Synthetic Directory Title');
+    await popup.locator('.popup-button-cancel').click();
+    await popup.waitFor({ state: 'detached' });
+
+    const readDownload = async selector => {
+        const downloading = page.waitForEvent('download');
+        await page.locator(selector).click();
+        const download = await downloading;
+        const chunks = [];
+        for await (const chunk of await download.createReadStream()) chunks.push(chunk);
+        return Buffer.concat(chunks).toString('utf8');
+    };
+    const json = await readDownload('#world_universe_export_json');
+    const listing = JSON.parse(json).find(item => item.name === 'Synthetic Directory Title');
+    assert.equal(listing.audience, 'Explorers');
+    assert.equal(json.includes('SYNTHETIC_SECURE_DIRECTORY_ENTRY'), false);
+    assert.equal(await page.locator('#world_universe_export_html').count(), 0);
+}
+
 /** Checks that surviving image integrations can open their shared key manager. */
 async function testChatOnlyControls(page) {
     assert.equal(await page.locator('#cfgConfig, #option_toggle_CFG').count(), 0);
@@ -793,6 +846,9 @@ try {
     await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 4)}\n`);
     const worldsPath = path.join(dataRoot, 'default-user', 'worlds');
     await fs.mkdir(worldsPath, { recursive: true });
+    await fs.writeFile(path.join(worldsPath, '9Z Universe Smoke.json'), JSON.stringify({ entries: { 0: { uid: 0, content: 'SYNTHETIC_SECURE_DIRECTORY_ENTRY' } } }));
+    await fs.mkdir(path.join(dataRoot, '_secure', 'worlds'), { recursive: true });
+    await fs.writeFile(path.join(dataRoot, '_secure', 'worlds', 'index.json'), JSON.stringify({ version: 1, books: { '9Z Universe Smoke': { ownerHandle: 'default-user', standaloneUniverse: true } } }));
     await fs.writeFile(path.join(worldsPath, 'Editor Rendering Smoke.json'), JSON.stringify(makeEditorRenderingBook()));
     await fs.writeFile(path.join(worldsPath, 'Extractor Smoke.json'), JSON.stringify({ entries: {
         0: { uid: 0, comment: 'Necklace [STMB Clip]', content: 'Existing necklace details.', key: ['necklace'], keysecondary: [] },
@@ -883,6 +939,7 @@ try {
         await testStmbSettingsControls(page);
         assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected Data Maid browser diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);
         await testWorldInfoPresetSelectionUi(page);
+        await testUniverseDirectory(page);
         await testWorldInfoReadOnlyRendering(page);
         await testWorldInfoBulkDelete(page, fatalBrowserDiagnostics);
         assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected World Info bulk-delete diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);

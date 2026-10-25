@@ -22,7 +22,8 @@ import { t, translate } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { fetchPromptInspectionSnapshot } from './openai.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription } from './personas.js';
-import { getCurrentUserHandle } from './user.js';
+import { getCurrentUserHandle, isAdmin } from './user.js';
+import { showUniverseInfo, downloadUniverseDirectory } from './universe-directory.js';
 import {
     getStloSettingsFromLorebook,
     setStloSettingsOnLorebook,
@@ -318,6 +319,7 @@ function normalizeWorldInfoItems(data = {}) {
                     canManageOwners: hasOwn('canManageOwners') ? Boolean(item.canManageOwners) : undefined,
                     reservedTemplate: Boolean(item.reservedTemplate),
                     standaloneUniverse: item.standaloneUniverse === true,
+                    universeInfo: item.universeInfo,
                 };
             });
     }
@@ -658,6 +660,8 @@ function updateWorldInfoStorageButton(name = '') {
     const item = getWorldInfoItem(name);
     $('#world_standalone_universe_label').prop('hidden', item?.storage !== 'secure');
     $('#world_standalone_universe').prop('checked', item?.standaloneUniverse === true).prop('disabled', !item?.canEdit);
+    $('#world_universe_info').prop('hidden', item?.standaloneUniverse !== true).prop('disabled', !item?.canEdit);
+    $('#world_universe_exports').prop('hidden', !isAdmin());
 
     if (!item) {
         const label = t`Move lorebook between user and secure storage`;
@@ -8507,6 +8511,14 @@ export async function charSetAuxWorlds(fileName, books) {
 }
 
 export function initWorldInfo() {
+    $('#world_universe_info').on('click', () => {
+        const name = world_names[Number($('#world_editor_select').val())];
+        void showUniverseInfo(getWorldInfoItem(name), item => {
+            upsertWorldInfoItem(item);
+            updateWorldInfoStorageButton(name);
+        });
+    });
+    $('#world_universe_export_json').on('click', () => downloadUniverseDirectory());
     $('#world_standalone_universe').on('change', async function () {
         const name = world_names[Number($('#world_editor_select').val())];
         $(this).prop('disabled', true);

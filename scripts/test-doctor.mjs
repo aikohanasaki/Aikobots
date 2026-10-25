@@ -9,7 +9,7 @@ import { resolveSystemChromiumPath } from './browser-path.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const expected = {
-    node: '24.18.0',
+    node: '24.22.1',
     npm: '12.0.1',
 };
 

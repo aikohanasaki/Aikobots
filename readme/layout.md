@@ -1119,6 +1119,16 @@ The floating `.stmb_floating_clip_button` contains native **Clip** and **Extract
 
 Visible entries in the floating Active World Info panel use native buttons to open the corresponding editor entry. `button.wi-floating-book-entry` in `public/style.css` preserves the row layout and SmartTheme colors, with a themed keyboard focus outline. Hidden placeholders remain non-interactive. The panel's **Remember lorebook group state** option restores each book group's last collapsed/expanded state across refreshes and reloads; it is off by default.
 
+### Standalone universe directory
+
+Checking **Standalone universe** reveals **Universe Info** in lorebook management. Owners and admins edit directory metadata in a Save/Cancel popup, subject to shared-lorebook checkout. Read-only name and creator defaults appear beside initially blank overrides. Description, audience guidance, comma-separated tags, image URL, and information URL are optional. Failed saves retain the form. Unchecking standalone hides the button and retains the metadata for reuse.
+
+The smart-theme rules in `public/style.css` style `.universe-info-form` and the universe controls, preserving keyboard access and hidden states.
+
+Admins use **Download JSON** in lorebook management to download `universes.json`, containing only directory listing metadata. The application does not offer an HTML download. A separately hosted directory can consume this JSON; that host supplies its own presentation and access control.
+
+Exports are manual snapshots. Replace the JSON after metadata edits, publication changes, or withdrawals. Previously downloaded copies cannot be recalled. Hosting deployment, universe activation, and image uploads are not included.
+
 ### Text-completion panel removal
 
 The text-generation CFG panel (`#cfgConfig`) and its menu item have been removed. Shared floating-panel rules now target only Author's Note (`#floatingPrompt`); desktop, mobile, and workspace-right layouts retain their existing geometry. Image-generation CFG controls are unchanged.

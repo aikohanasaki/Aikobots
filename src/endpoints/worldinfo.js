@@ -23,6 +23,8 @@ import {
     listLorebooksForManagement,
     listStandaloneUniverseNames,
     setStandaloneUniverse,
+    saveUniverseInfo,
+    exportUniverseDirectory,
     filterGlobalLorebookNames,
     promoteLorebook,
     promoteLorebookToShared,
@@ -728,6 +730,22 @@ router.post('/standalone-universe', async (request, response) => {
     try {
         const item = await setStandaloneUniverse(request.user, request.body?.name, request.body?.enabled);
         return response.send(item);
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/universe-info', async (request, response) => {
+    try {
+        return response.send(await saveUniverseInfo(request.user, request.body?.name, request.body?.info));
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/universe-directory', async (request, response) => {
+    try {
+        return response.json(await exportUniverseDirectory(request.user));
     } catch (error) {
         return sendLorebookError(response, error);
     }

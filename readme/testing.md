@@ -2,7 +2,7 @@
 
 ## First-time setup
 
-Use Node 24.18.0 and npm 12.0.1, then run this once with registry access:
+Use Node 24.22.1 and npm 12.0.1, then run this once with registry access:
 
 ```sh
 npm ci --include=dev
