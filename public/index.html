@@ -399,6 +399,16 @@
                                             </select>
                                         </div>
                                     </div>
+                                    <div class="range-block" data-source="makersuite,vertexai">
+                                        <div class="flex-container oneline-dropdown">
+                                            <label for="google_api_mode" data-i18n="Google API mode">Google API mode</label>
+                                            <select id="google_api_mode">
+                                                <option value="latest" data-i18n="Latest API (Interactions API)">Latest API (Interactions API)</option>
+                                                <option value="preserve_compatibility" data-i18n="Preserve compatibility">Preserve compatibility</option>
+                                            </select>
+                                        </div>
+                                        <div class="toggle-description" data-i18n="Google API mode help">API choice can affect feature availability and caching.</div>
+                                    </div>
                                     <div class="range-block" data-source="openai,aimlapi,openrouter,mistralai,makersuite,vertexai,claude,custom,xai,pollinations,moonshot,cohere,cometapi,nanogpt,electronhub,navy,zanity,azure_openai,zai,siliconflow">
                                         <label for="openai_image_inlining" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_image_inlining" type="checkbox" />

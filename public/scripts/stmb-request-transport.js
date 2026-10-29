@@ -15,6 +15,7 @@ const STMB_GENERATE_DATA_FIELDS = new Set([
     'automatic_prompt_cache_mode',
     'automatic_prompt_cache_ttl',
     'service_tier',
+    'google_api_mode',
     'json_schema',
     'response_format',
     'responseMimeType',

@@ -690,6 +690,7 @@ export const settingsToUpdate = {
     automatic_prompt_cache_mode: ['#automatic_prompt_cache_mode', 'automatic_prompt_cache_mode', false, false],
     automatic_prompt_cache_ttl: ['#automatic_prompt_cache_ttl', 'automatic_prompt_cache_ttl', false, false],
     gemini_service_tier: ['#gemini_service_tier', 'gemini_service_tier', false, false],
+    google_api_mode: ['#google_api_mode', 'google_api_mode', false, false],
     inline_image_quality: ['#openai_inline_image_quality', 'inline_image_quality', false, false],
     video_inlining: ['#openai_video_inlining', 'video_inlining', true, false],
     audio_inlining: ['#openai_audio_inlining', 'audio_inlining', true, false],
@@ -800,6 +801,7 @@ const default_settings = {
     automatic_prompt_cache_mode: 'inherit',
     automatic_prompt_cache_ttl: '5m',
     gemini_service_tier: '',
+    google_api_mode: 'latest',
     inline_image_quality: 'auto',
     video_inlining: true,
     audio_inlining: true,
@@ -2842,6 +2844,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
         generate_data['top_k'] = Number(oai_settings.top_k_openai);
         generate_data['stop'] = getCustomStoppingStrings(stopStringsLimit).slice(0, stopStringsLimit).filter(x => x.length >= 1 && x.length <= 16);
         generate_data['use_makersuite_sysprompt'] = oai_settings.use_makersuite_sysprompt;
+        generate_data['google_api_mode'] = oai_settings.google_api_mode;
         if (isGoogle && oai_settings.gemini_service_tier) {
             generate_data['service_tier'] = oai_settings.gemini_service_tier;
         }
@@ -4829,6 +4832,7 @@ async function saveOpenAIPreset(name, settings, triggerUi = true) {
         automatic_prompt_cache_mode: settings.automatic_prompt_cache_mode,
         automatic_prompt_cache_ttl: settings.automatic_prompt_cache_ttl,
         gemini_service_tier: settings.gemini_service_tier,
+        google_api_mode: settings.google_api_mode || 'latest',
         inline_image_quality: settings.inline_image_quality,
         video_inlining: settings.video_inlining,
         audio_inlining: settings.audio_inlining,
@@ -7359,6 +7363,10 @@ export function initOpenAI() {
 
     $('#gemini_service_tier').on('change', function () {
         oai_settings.gemini_service_tier = String($(this).val());
+        saveSettingsDebounced();
+    });
+    $('#google_api_mode').on('change', function () {
+        oai_settings.google_api_mode = String($(this).val());
         saveSettingsDebounced();
     });
 

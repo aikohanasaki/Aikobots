@@ -98,6 +98,7 @@ import {
     getWebTokenizer,
 } from '../tokenizers.js';
 import { getVertexAIAuth, getProjectIdFromServiceAccount } from '../google.js';
+import { requiresLegacyGoogleApi, toGoogleInteraction, fromGoogleInteraction, streamGoogleInteraction } from '../../google-interactions.js';
 import {
     CLAUDE_API_VERSION,
     getClaudeRequestPolicy,
@@ -1384,7 +1385,7 @@ async function sendMakerSuiteRequest(request) {
         const useSystemPrompt = !enableImageModality && !isGemma && request.body.use_makersuite_sysprompt;
 
         const tools = [];
-        const prompt = convertGooglePrompt(request.body.messages, model, useSystemPrompt, getPromptNames(request));
+        const prompt = convertGooglePrompt(structuredClone(request.body.messages), model, useSystemPrompt, getPromptNames(request));
         const safetySettings = [...GEMINI_SAFETY, ...(useVertexAi ? VERTEX_SAFETY : [])];
 
         if (enableWebSearch && !enableImageModality && !isGemma && !isLearnLM && !noSearchModels.includes(model)) {
@@ -1393,7 +1394,7 @@ async function sendMakerSuiteRequest(request) {
 
         if (Array.isArray(request.body.tools) && request.body.tools.length > 0 && !enableImageModality && !isGemma) {
             const functionDeclarations = [];
-            for (const tool of request.body.tools) {
+            for (const tool of structuredClone(request.body.tools)) {
                 if (tool.type === 'function') {
                     if (tool.function.parameters?.$schema) {
                         delete tool.function.parameters.$schema;
@@ -1446,6 +1447,16 @@ async function sendMakerSuiteRequest(request) {
     }
 
     const body = getGeminiBody();
+    const compatible = request.body.google_api_mode === 'preserve_compatibility';
+    const legacyModel = requiresLegacyGoogleApi(model) || (compatible && (Boolean(request.body.reverse_proxy) || useVertexAi && request.body.vertexai_region && request.body.vertexai_region !== 'global'));
+    let interactionBody;
+    if (!legacyModel) {
+        try {
+            interactionBody = toGoogleInteraction(body, model, stream, request.body.messages);
+        } catch (error) {
+            if (!compatible) return createProviderJsonResult({ error: { message: error.message } }, { status: 400, ok: false });
+        }
+    }
     console.debug(`${apiName} request:`, getSafeProviderRequestLog(body));
 
     try {
@@ -1470,8 +1481,9 @@ async function sendMakerSuiteRequest(request) {
                     ? 'https://aiplatform.googleapis.com'
                     : `https://${region}-aiplatform.googleapis.com`;
                 url = projectId
-                    ? `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:${responseType}?key=${keyParam}${stream ? '&alt=sse' : ''}`
-                    : `${baseUrl}/v1/publishers/google/models/${model}:${responseType}?key=${keyParam}${stream ? '&alt=sse' : ''}`;
+                    ? `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:${responseType}${stream ? '?alt=sse' : ''}`
+                    : `${baseUrl}/v1/publishers/google/models/${model}:${responseType}${stream ? '?alt=sse' : ''}`;
+                headers['x-goog-api-key'] = keyParam;
             } else if (authType === 'full') {
                 // For Full mode (service account authentication), use project-specific URL
                 // Get project ID from Service Account JSON
@@ -1503,7 +1515,55 @@ async function sendMakerSuiteRequest(request) {
                 headers['Authorization'] = authHeader;
             }
         } else {
-            url = `${apiUrl.toString().replace(/\/$/, '')}/${apiVersion}/models/${model}:${responseType}?key=${apiKey}${stream ? '&alt=sse' : ''}`;
+            url = `${apiUrl.toString().replace(/\/$/, '')}/${apiVersion}/models/${model}:${responseType}${stream ? '?alt=sse' : ''}`;
+            if (apiKey) headers['x-goog-api-key'] = apiKey;
+        }
+
+        if (interactionBody) {
+            const region = request.body.vertexai_region || 'us-central1';
+            let interactionsUrl;
+            if (useVertexAi) {
+                const base = request.body.reverse_proxy ? trimTrailingSlash(request.body.reverse_proxy) : region === 'global' ? 'https://aiplatform.googleapis.com' : `https://${region}-aiplatform.googleapis.com`;
+                if (authType === 'full') {
+                    const serviceAccount = JSON.parse(readRequestSecret(request, SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT));
+                    interactionsUrl = `${base}/v1beta1/projects/${getProjectIdFromServiceAccount(serviceAccount)}/locations/${region}/interactions`;
+                    headers.Authorization = authHeader;
+                } else if (authType === 'express') {
+                    const projectId = request.body.vertexai_express_project_id;
+                    interactionsUrl = projectId ? `${base}/v1beta1/projects/${projectId}/locations/${region}/interactions` : `${base}/v1beta1/locations/${region}/interactions`;
+                    headers['x-goog-api-key'] = authHeader.replace('Bearer ', '');
+                } else {
+                    interactionsUrl = `${base}/v1beta1/interactions`;
+                    headers.Authorization = authHeader;
+                }
+            } else {
+                interactionsUrl = `${trimTrailingSlash(request.body.reverse_proxy || API_MAKERSUITE)}/${apiVersion}/interactions`;
+                if (apiKey) headers['x-goog-api-key'] = apiKey;
+            }
+            const options = applyAdditionalParameters(request.body, { body: interactionBody, method: 'POST', headers, signal: controller.signal });
+            // Privacy and chat ownership cannot be overridden by user-supplied provider parameters.
+            const finalBody = JSON.parse(options.body);
+            finalBody.model = model;
+            finalBody.stream = stream;
+            finalBody.store = false;
+            delete finalBody.previous_interaction_id;
+            delete finalBody.background;
+            options.body = JSON.stringify(finalBody);
+            const result = await fetch(interactionsUrl, options);
+            if (!result.ok) {
+                // Only a definitive unsupported endpoint/model/feature response can retry.
+                const error = await result.clone().json().catch(() => null);
+                const unsupported = [400, 404, 501].includes(result.status) && /(?:interactions?[^.]{0,80}(?:not supported|unsupported|not found)|(?:method|endpoint)[^.]{0,80}(?:not supported|not found)|(?:model|feature)[^.]{0,80}(?:not supported|unsupported))/i.test(String(error?.error?.message || ''));
+                if (!unsupported) return createProviderJsonResult({ error: { message: 'Google Interactions request failed.' } }, { status: result.status, ok: false });
+                // The original Gemini body is intact; retry once through generateContent.
+            } else if (stream) {
+                return createProviderStreamResult(streamGoogleInteraction(result));
+            } else {
+                const interaction = await result.json();
+                const reply = fromGoogleInteraction(interaction);
+                if (!reply.responseContent.parts.length) return createProviderJsonResult({ error: { message: 'Google returned no model output.' } }, { status: 502, ok: false });
+                return createProviderJsonResult(reply, { cacheUsage: { cachedInputTokens: interaction?.usage?.total_cached_tokens } });
+            }
         }
 
         const generateResponse = await fetch(url, applyAdditionalParameters(request.body, {
@@ -3576,9 +3636,7 @@ router.post('/status', async function (request, statusResponse) {
         apiKey = request.body.reverse_proxy ? request.body.proxy_password : readRequestSecret(request, SECRET_KEYS.MAKERSUITE);
         apiUrl = trimTrailingSlash(request.body.reverse_proxy || API_MAKERSUITE);
         const apiVersion = getConfigValue('gemini.apiVersion', 'v1beta');
-        const modelsUrl = !apiKey && request.body.reverse_proxy
-            ? `${apiUrl}/${apiVersion}/models`
-            : `${apiUrl}/${apiVersion}/models?key=${apiKey}`;
+        const modelsUrl = `${apiUrl}/${apiVersion}/models`;
 
         if (!apiKey && !request.body.reverse_proxy) {
             console.warn('Google AI Studio API key is missing.');
@@ -3586,14 +3644,14 @@ router.post('/status', async function (request, statusResponse) {
         }
 
         try {
-            const response = await fetch(modelsUrl);
+            const response = await fetch(modelsUrl, { headers: apiKey ? { 'x-goog-api-key': apiKey } : {} });
 
             if (response.ok) {
                 /** @type {any} */
                 const data = await response.json();
                 // Transform Google AI Studio models to OpenAI format
                 const models = data.models
-                    ?.filter(model => model.supportedGenerationMethods?.includes('generateContent'))
+                    ?.filter(model => model.supportedGenerationMethods?.some(method => ['generateContent', 'CreateInteraction', 'createInteraction'].includes(method)))
                     ?.map(model => ({
                         id: model.name.replace('models/', ''),
                     })) || [];

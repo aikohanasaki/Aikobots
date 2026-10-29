@@ -22,6 +22,7 @@ const REQUEST_OVERRIDE_KEYS = Object.freeze([
     'vertexai_auth_mode',
     'vertexai_region',
     'vertexai_express_project_id',
+    'google_api_mode',
     'zai_endpoint',
 ]);
 
@@ -72,6 +73,7 @@ function getPresetProviderOptions(presetName) {
             ?? (preset?.automatic_prompt_cache === true ? 'automatic' : 'inherit'),
         automatic_prompt_cache_ttl: preset?.automatic_prompt_cache_ttl ?? '5m',
         gemini_service_tier: preset?.gemini_service_tier ?? '',
+        google_api_mode: preset?.google_api_mode ?? 'latest',
     });
 }
 
@@ -155,6 +157,7 @@ export function applyConnectionProfileSnapshot(generateData, snapshot, overrides
         automatic_prompt_cache_mode: providerOptions.automatic_prompt_cache_mode ?? 'inherit',
         automatic_prompt_cache_ttl: providerOptions.automatic_prompt_cache_ttl ?? '5m',
         service_tier: source === 'makersuite' ? providerOptions.gemini_service_tier || undefined : undefined,
+        google_api_mode: ['makersuite', 'vertexai'].includes(source) ? snapshot.requestOverrides?.google_api_mode ?? providerOptions.google_api_mode ?? 'latest' : undefined,
         custom_url: snapshot.apiUrl || undefined,
         reverse_proxy: snapshot.proxyUrl || undefined,
         proxy_password: proxy?.password || undefined,
