@@ -1,4 +1,6 @@
 {
+    "Stateful conversations (Interactions API)": "Stateful conversations (Interactions API)",
+    "Google stateful storage help": "Stateful mode allows Google to store conversation history, including secure lorebook prompts. Changed context starts a new interaction; unsupported requests remain stateless.",
     "ChatExtract_Phrase": "Type a term or phrase",
     "ChatExtract_HiddenOnly": "Hidden only",
     "ChatExtract_SelectedCount": "Selected messages: {{count}}",

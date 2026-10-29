@@ -6,6 +6,16 @@ This document records Aikobots’ native SQLite storage decisions, the current t
 
 `AGENTS.md` is the governing project directive. This file must not be treated as proof that every current mutation path already satisfies the target architecture. Claims in this document must remain consistent with verified code and tests.
 
+## Optional Google stateful conversations
+
+Google API mode `stateful` opts into provider-held conversation history, including secure lorebook prompts. The default remains stateless. This uses the existing settings, preset and connection-profile persistence. Google retains stored interactions under its own retention policy; disabling this mode or rebuilding context does not delete previous provider records.
+
+Continuation metadata lives in `DATA_ROOT/_google-interactions/state.sqlite`, independently of chat databases. Records contain only an opaque interaction ID, credential-keyed HMACs of the exact input/output steps and scope, and an expiry. Prompt text, lorebook text and credentials are never stored in this database or returned to clients. Scope includes the authenticated user, chat scope, endpoint, model and context configuration. Sampling parameters and service tier are resent on every turn without invalidating history.
+
+SQLite WAL, a 10-second busy timeout and immediate write transactions coordinate all PM2 workers. Connections close after each operation; there is no process-local continuation cache. Records expire after 23 hours and expired rows are removed on successful writes. Concurrent completions may replace an optimization record, but exact prefix matching prevents using the wrong answer. This adds no chat migration and never mutates messages, swipes or identities.
+
+Only completed text interactions with an exact matching history prefix are continued. Edits, changed swipes, context trimming, changed lorebook content or provider configuration cause a fresh full-prompt interaction. Tool/multimodal requests and requests without chat scope remain stateless. Missing/expired provider IDs retry once with the full prompt; authentication and ambiguous failures do not retry. Metadata failures fall back to full-prompt generation. Only generated output is forwarded to clients; stored interaction resources are never exposed.
+
 ## Additional connection parameters
 
 Chat-completion settings and saved completion presets also support an `additional_parameters` map keyed by provider source. Each entry holds the three existing YAML strings (`custom_include_body`, `custom_exclude_body`, `custom_include_headers`); custom connections continue using the legacy top-level fields. Connection profiles store only their provider's entry in `request-overrides` (legacy custom profiles retain top-level fields). Missing provider entries resolve to empty strings, and legacy custom fields are ignored for other providers. Presets containing the map restore it; older presets without it preserve current connection settings. These additions use existing settings/preset persistence and locks, require no chat migration.

@@ -83,7 +83,7 @@ export function fromGoogleInteraction(interaction) {
 }
 
 /** Translate Interactions SSE events to the existing Google SSE contract. */
-export function streamGoogleInteraction(fetchResponse) {
+export function streamGoogleInteraction(fetchResponse, onComplete) {
     const output = async function* () {
         let pending = '';
         const stepTypes = new Map();
@@ -92,6 +92,10 @@ export function streamGoogleInteraction(fetchResponse) {
         const images = new Map();
         const decoder = new TextDecoder();
         let completed = false;
+        let completedInteraction;
+        let outputText = '';
+        let outputSteps = 0;
+        let textOnly = true;
         for await (const chunk of fetchResponse.body) {
             pending += decoder.decode(chunk, { stream: true });
             let boundary;
@@ -104,6 +108,10 @@ export function streamGoogleInteraction(fetchResponse) {
                 try { event = JSON.parse(line.slice(5).trim()); } catch { continue; }
                 if (event.event_type === 'step.start') {
                     stepTypes.set(event.index, event.step?.type);
+                    if (event.step?.type === 'model_output') {
+                        outputSteps++;
+                        if (event.step.content?.length) textOnly = false;
+                    } else if (event.step?.type !== 'thought') textOnly = false;
                     if (event.step?.type === 'function_call') functionCalls.set(event.index, { name: event.step.name, arguments: '' });
                 }
                 if (event.event_type === 'step.delta' && functionCalls.has(event.index) && event.delta?.type === 'arguments_delta') functionCalls.get(event.index).arguments += event.delta.arguments || '';
@@ -111,6 +119,10 @@ export function streamGoogleInteraction(fetchResponse) {
                 if (event.event_type === 'step.delta' && (stepTypes.get(event.index) === 'model_output' || stepTypes.get(event.index) === 'thought')) {
                     const delta = event.delta;
                     const text = delta?.text ?? delta?.content?.text;
+                    if (stepTypes.get(event.index) === 'model_output') {
+                        if (onComplete && typeof text === 'string') outputText += text;
+                        else if (delta?.type !== 'thought_signature') textOnly = false;
+                    }
                     if (typeof text === 'string' && text) yield `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text, ...(stepTypes.get(event.index) === 'thought' ? { thought: true } : {}) }] } }] })}\n\n`;
                     if (delta?.type === 'image' && typeof delta.data === 'string') {
                         const previous = images.get(event.index) || { data: '', mimeType: delta.mime_type };
@@ -134,10 +146,18 @@ export function streamGoogleInteraction(fetchResponse) {
                     yield `data: ${JSON.stringify({ candidates: [{ content: { parts: [part] } }] })}\n\n`;
                     functionCalls.delete(event.index);
                 }
-                if (event.event_type === 'interaction.completed') completed = true;
+                if (event.event_type === 'interaction.completed') {
+                    completed = true;
+                    completedInteraction = event.interaction;
+                }
             }
         }
         if (!completed) throw new Error('Google Interactions stream ended before completion.');
+        if (textOnly && outputSteps === 1 && outputText) onComplete?.({
+            id: completedInteraction?.id,
+            status: completedInteraction?.status,
+            steps: [{ type: 'model_output', content: [{ type: 'text', text: outputText }] }],
+        });
         yield 'data: [DONE]\n\n';
     };
     const bytes = async function* () { for await (const event of output()) yield Buffer.from(event); };

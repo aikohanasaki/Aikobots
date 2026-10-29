@@ -1,5 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeAll, beforeEach, expect, it, jest } from '@jest/globals';
 import * as nodeFetch from 'node-fetch';
 import * as secrets from '../src/endpoints/secrets.js';
@@ -163,6 +166,43 @@ it('routes older models and compatibility proxies directly to generateContent', 
     expect(fetchMock.mock.calls[1][0]).toContain(':generateContent');
 });
 
+it.each([false, true])('continues opted-in Google conversations and rebuilds missing provider history (stream=%s)', async stream => {
+    const previousRoot = globalThis.DATA_ROOT;
+    const root = mkdtempSync(path.join(os.tmpdir(), 'google-route-test-'));
+    globalThis.DATA_ROOT = root;
+    try {
+        fetchMock.mockImplementation(async () => new nodeFetch.Response(stream
+            ? 'data: {"event_type":"step.start","index":0,"step":{"type":"model_output"}}\n\n'
+                + 'data: {"event_type":"step.delta","index":0,"delta":{"type":"text","text":"OK"}}\n\n'
+                + 'data: {"event_type":"interaction.completed","interaction":{"id":"dummy-id","status":"completed"}}\n\n'
+            : JSON.stringify({ id: 'dummy-id', status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'text', text: 'OK' }] }] })));
+        const parameters = {
+            google_api_mode: 'stateful',
+            prompt_context: { promptInspection: { chatScope: 'dummy-chat', mesId: 1, swipeId: 0 } },
+            messages: [{ role: 'user', content: 'SYNTHETIC_SECURE_ENTRY' }],
+            custom_include_body: 'previous_interaction_id: untrusted\nstore: false',
+        };
+        await run('makersuite', stream, parameters);
+        expect(JSON.parse(fetchMock.mock.calls.at(-1)[1].body)).toMatchObject({ store: true });
+        const next = { ...parameters, messages: [...parameters.messages, { role: 'assistant', content: 'OK' }, { role: 'user', content: 'Next' }] };
+        const response = await run('makersuite', stream, next);
+        const sent = JSON.parse(fetchMock.mock.calls.at(-1)[1].body);
+        expect(sent.previous_interaction_id).toBe('dummy-id');
+        expect(sent.input).toEqual([{ type: 'user_input', content: [{ type: 'text', text: 'Next' }] }]);
+        expect(JSON.stringify(response.body ?? response.chunks)).not.toContain('SYNTHETIC_SECURE_ENTRY');
+        // Rebuild the original prefix so the next request exercises an expired provider ID.
+        await run('makersuite', stream, parameters);
+        fetchMock.mockResolvedValueOnce(new nodeFetch.Response(JSON.stringify({ error: { message: 'Previous interaction not found' } }), { status: 404 }));
+        await run('makersuite', stream, next);
+        const rebuilt = JSON.parse(fetchMock.mock.calls.at(-1)[1].body);
+        expect(rebuilt.previous_interaction_id).toBeUndefined();
+        expect(rebuilt.input).toHaveLength(3);
+    } finally {
+        globalThis.DATA_ROOT = previousRoot;
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
 it('preserves custom sampling only in compatibility mode', async () => {
     fetchMock.mockImplementation(async () => success(false));
     const latest = await run('makersuite', false, { model: 'gemini-3-flash', temperature: 0.4 });
@@ -232,8 +272,10 @@ it('normalizes generated reasoning, images, and tool calls without echoing input
 
 it('does not mark an interrupted Interactions stream complete', async () => {
     const source = new nodeFetch.Response(Readable.from([Buffer.from('data: {"event_type":"step.delta","index":0,"delta":{"type":"text","text":"partial"}}\n\n')]));
-    const translated = streamGoogleInteraction(source);
+    const onComplete = jest.fn();
+    const translated = streamGoogleInteraction(source, onComplete);
     await expect(async () => { for await (const _ of translated.body) { /* consume */ } }).rejects.toThrow('before completion');
+    expect(onComplete).not.toHaveBeenCalled();
 });
 
 it.each([

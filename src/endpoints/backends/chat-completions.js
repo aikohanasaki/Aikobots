@@ -99,6 +99,7 @@ import {
 } from '../tokenizers.js';
 import { getVertexAIAuth, getProjectIdFromServiceAccount } from '../google.js';
 import { requiresLegacyGoogleApi, toGoogleInteraction, fromGoogleInteraction, streamGoogleInteraction } from '../../google-interactions.js';
+import { prepareGoogleConversation } from '../../google-conversation-state.js';
 import {
     CLAUDE_API_VERSION,
     getClaudeRequestPolicy,
@@ -1548,8 +1549,25 @@ async function sendMakerSuiteRequest(request) {
             finalBody.store = false;
             delete finalBody.previous_interaction_id;
             delete finalBody.background;
+            const chatScope = getPromptInspectionInfo(request)?.chatScope;
+            const conversation = request.body.google_api_mode === 'stateful' && chatScope
+                ? prepareGoogleConversation(finalBody, {
+                    root: globalThis.DATA_ROOT,
+                    user: request.user?.profile?.handle,
+                    chat: request.body.prompt_context.promptInspection.chatScope || chatScope,
+                    endpoint: interactionsUrl,
+                    credential: JSON.stringify(options.headers.raw()),
+                }) : null;
             options.body = JSON.stringify(finalBody);
-            const result = await fetch(interactionsUrl, options);
+            let result = await fetch(interactionsUrl, options);
+            if (!result.ok && finalBody.previous_interaction_id && [400, 404, 410].includes(result.status)) {
+                const error = await result.clone().json().catch(() => null);
+                if (/(?:previous_interaction_id|interaction)[^.]{0,100}(?:expired|not found|does not exist)/i.test(String(error?.error?.message || ''))) {
+                    conversation.reset();
+                    options.body = JSON.stringify(finalBody);
+                    result = await fetch(interactionsUrl, options);
+                }
+            }
             if (!result.ok) {
                 // Only a definitive unsupported endpoint/model/feature response can retry.
                 const error = await result.clone().json().catch(() => null);
@@ -1557,11 +1575,12 @@ async function sendMakerSuiteRequest(request) {
                 if (!unsupported) return createProviderJsonResult({ error: { message: 'Google Interactions request failed.' } }, { status: result.status, ok: false });
                 // The original Gemini body is intact; retry once through generateContent.
             } else if (stream) {
-                return createProviderStreamResult(streamGoogleInteraction(result));
+                return createProviderStreamResult(streamGoogleInteraction(result, conversation?.complete));
             } else {
                 const interaction = await result.json();
                 const reply = fromGoogleInteraction(interaction);
                 if (!reply.responseContent.parts.length) return createProviderJsonResult({ error: { message: 'Google returned no model output.' } }, { status: 502, ok: false });
+                conversation?.complete(interaction);
                 return createProviderJsonResult(reply, { cacheUsage: { cachedInputTokens: interaction?.usage?.total_cached_tokens } });
             }
         }

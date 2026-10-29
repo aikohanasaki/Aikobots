@@ -1,4 +1,6 @@
 {
+    "Stateful conversations (Interactions API)": "Zustandsbehaftete Unterhaltungen (Interactions API)",
+    "Google stateful storage help": "Im zustandsbehafteten Modus darf Google den Gesprächsverlauf einschließlich Prompts mit geschützten Lorebucheinträgen speichern. Bei geändertem Kontext beginnt eine neue Interaktion; nicht unterstützte Anfragen bleiben zustandslos.",
     "Open lorebook entry": "Lorebook-Eintrag öffnen",
     "Remember lorebook group state": "Zustand der Lorebook-Gruppen merken",
     "Lorebook entry is unavailable.": "Der Lorebook-Eintrag ist nicht verfügbar.",

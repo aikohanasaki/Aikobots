@@ -1,4 +1,6 @@
 {
+    "Stateful conversations (Interactions API)": "Диалоги с сохранением состояния (Interactions API)",
+    "Google stateful storage help": "В этом режиме Google может хранить историю диалога, включая промпты с защищёнными записями лорбука. При изменении контекста начинается новое взаимодействие; неподдерживаемые запросы выполняются без сохранения состояния.",
     "Open lorebook entry": "Открыть запись лорбука",
     "Remember lorebook group state": "Запоминать состояние групп лорбуков",
     "Lorebook entry is unavailable.": "Запись лорбука недоступна.",

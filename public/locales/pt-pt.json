@@ -1,4 +1,6 @@
 {
+    "Stateful conversations (Interactions API)": "Conversas com estado (Interactions API)",
+    "Google stateful storage help": "O modo com estado permite ao Google guardar o histórico da conversa, incluindo prompts com entradas de lorebook protegidas. Uma alteração do contexto inicia uma nova interação; os pedidos não suportados continuam sem estado.",
     "Open lorebook entry": "Abrir entrada do lorebook",
     "Remember lorebook group state": "Memorizar o estado dos grupos de lorebooks",
     "Lorebook entry is unavailable.": "A entrada do lorebook não está disponível.",

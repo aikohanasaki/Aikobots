@@ -1,4 +1,6 @@
 {
+    "Stateful conversations (Interactions API)": "ステートフルな会話（Interactions API）",
+    "Google stateful storage help": "ステートフルモードでは、保護されたロアブックの内容を含むプロンプトも含め、Google に会話履歴の保存を許可します。コンテキストが変わると新しいインタラクションを開始します。未対応のリクエストはステートレスのまま処理されます。",
     "Open lorebook entry": "ロアブックのエントリーを開く",
     "Remember lorebook group state": "ロアブックのグループの開閉状態を記憶する",
     "Lorebook entry is unavailable.": "ロアブックのエントリーを利用できません。",
