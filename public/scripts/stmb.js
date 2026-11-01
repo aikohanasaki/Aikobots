@@ -10533,7 +10533,15 @@ async function initiateMemoryCreation(options = {}) {
     const source = options?.source || 'memory';
     const requiresIdleQueue = Boolean(options?.requiresIdleQueue);
     const pending = await getStmbOperations(sceneContext.chatRef);
-    if (pending.operations?.length) { await reviewStmbOperations(); return null; }
+    if (pending.operations?.length) {
+        const jobs = getStmbJobStoreSnapshot(getStmbChatKey(sceneContext));
+        const activeOperationIds = new Set([...jobs.runningJobs, ...jobs.queue].map(job => job.payload?.operationId));
+        // Active jobs own their recovery; only orphaned operations block queue preparation.
+        if (pending.operations.some(operation => !activeOperationIds.has(operation.id))) {
+            await reviewStmbOperations();
+            return null;
+        }
+    }
 
     assertRangeWithinCurrentChat(range);
 
