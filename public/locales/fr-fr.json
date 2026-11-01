@@ -6704,5 +6704,6 @@
     "Could not load universes.json. Host it beside this HTML file and check access permissions.": "Impossible de charger universes.json. Hébergez-le à côté de ce fichier HTML et vérifiez les autorisations d’accès.",
     "Creator": "Créateur",
     "Description": "Description",
-    "Tags": "Étiquettes"
+    "Tags": "Étiquettes",
+    "Recovery is blocked by active Memory Books work. Finish or cancel all running or queued jobs for this chat in Memory Books Jobs, and wait for active Memory Books tasks to finish. Then retry Pending Memory Books operations.": "La récupération est bloquée par des travaux Memory Books actifs. Laissez terminer ou annulez toutes les tâches en cours ou en attente pour cette discussion dans « Memory Books Jobs », puis attendez la fin des tâches Memory Books actives. Réessayez ensuite les opérations Memory Books en attente."
 }

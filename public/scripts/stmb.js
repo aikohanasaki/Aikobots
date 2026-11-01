@@ -2254,7 +2254,11 @@ async function finishStmbSavedProgress(sceneContext, operationId, savedResult = 
 /** Shows durable pending work without reading entry content into the recovery UI. */
 export async function reviewStmbOperations({ auto = false } = {}) {
     const origin = buildStmbSceneContext();
-    if (!origin.chatRef || hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(origin))) return;
+    if (!origin.chatRef) return;
+    if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(origin))) {
+        if (!auto) toastr.info(translate('Recovery is blocked by active Memory Books work. Finish or cancel all running or queued jobs for this chat in Memory Books Jobs, and wait for active Memory Books tasks to finish. Then retry Pending Memory Books operations.'), 'STMB', { timeOut: 0, extendedTimeOut: 0, closeButton: true });
+        return;
+    }
     let result;
     try {
         result = await resolveStmbOperation(origin.chatRef, null, '', () => isSceneContextCurrent(origin), data => applyStmbProgressResult(origin, data));

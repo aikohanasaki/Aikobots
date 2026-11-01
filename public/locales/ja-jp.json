@@ -6647,5 +6647,6 @@
     "Could not load universes.json. Host it beside this HTML file and check access permissions.": "universes.jsonを読み込めませんでした。このHTMLファイルと同じ場所に配置し、アクセス権を確認してください。",
     "Creator": "作者",
     "Description": "説明",
-    "Tags": "タグ"
+    "Tags": "タグ",
+    "Recovery is blocked by active Memory Books work. Finish or cancel all running or queued jobs for this chat in Memory Books Jobs, and wait for active Memory Books tasks to finish. Then retry Pending Memory Books operations.": "Memory Books の処理が進行中のため、復旧できません。「Memory Books Jobs」でこのチャットの実行中または待機中のジョブをすべて完了させるかキャンセルし、実行中の Memory Books タスクが終了するまでお待ちください。その後、保留中の Memory Books 操作を再度確認してください。"
 }

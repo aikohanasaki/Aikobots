@@ -26,9 +26,12 @@ test('memory preparation permits owned operations but preserves recovery for uno
     const start = source.indexOf('async function initiateMemoryCreation(');
     const end = source.indexOf('function getStmbCanonicalEntryNumber(', start);
     assert.ok(start >= 0 && end > start);
+    const reviewStart = source.indexOf('export async function reviewStmbOperations(');
+    const reviewEnd = source.indexOf('/** Opens the existing operation review', reviewStart);
+    assert.ok(reviewStart >= 0 && reviewEnd > reviewStart);
     for (const owner of ['runningJobs', 'queue', 'recentHistory', 'otherChat', 'none']) {
         let prepared = 0;
-        let reviewed = 0;
+        const notices = [];
         const jobs = { runningJobs: [], queue: [], recentHistory: [] };
         if (owner in jobs) jobs[owner].push({ payload: { operationId: 'active-operation' } });
         const stores = { 'current-chat': jobs };
@@ -41,7 +44,10 @@ test('memory preparation permits owned operations but preserves recovery for uno
                 assert.equal(key, 'current-chat');
                 return stores[key];
             },
-            reviewStmbOperations: async () => { reviewed++; },
+            buildStmbSceneContext: () => ({ chatRef: {} }),
+            translate: text => text,
+            toastr: { info: text => notices.push(text) },
+            resolveStmbOperation: () => assert.fail('Recovery must not resolve job-owned work while jobs are active'),
             assertRangeWithinCurrentChat: () => {},
             validateMemoryCreationContext: () => true,
             hasActiveStmbTasks: () => false,
@@ -49,18 +55,35 @@ test('memory preparation permits owned operations but preserves recovery for uno
             shouldBlockStmbMemoryPreparation,
             executeMemoryCreationFromRange: async () => { prepared++; return { queued: true }; },
         });
+        vm.runInContext(source.slice(reviewStart, reviewEnd).replace('export ', ''), context);
         const initiate = vm.runInContext(source.slice(start, end) + '; initiateMemoryCreation', context);
         const options = { range: { sceneStart: 10, sceneEnd: 20 }, sceneContext: { chatRef: {} } };
         const owned = owner === 'runningJobs' || owner === 'queue';
         await initiate(options);
         assert.equal(prepared, owned ? 1 : 0, owner);
-        assert.equal(reviewed, owned ? 0 : 1, owner);
+        assert.equal(notices.length, owned ? 0 : 1, owner);
         if (owned) {
             context.getStmbOperations = async () => ({ operations: [{ id: 'active-operation' }, { id: 'orphan' }] });
             await initiate(options);
             assert.equal(prepared, 1, 'unrelated unresolved work must still block preparation');
-            assert.equal(reviewed, 1);
+            assert.equal(notices.length, 1);
         }
+        assert.match(notices[0], /Finish or cancel all running or queued jobs for this chat in Memory Books Jobs/);
+        assert.match(notices[0], /Then retry Pending Memory Books operations/);
+        await vm.runInContext('reviewStmbOperations({ auto: true })', context);
+        assert.equal(notices.length, 1, 'automatic review must stay quiet while busy');
+        context.hasActiveStmbJobs = () => false;
+        context.hasActiveStmbTasks = () => true;
+        await vm.runInContext('reviewStmbOperations()', context);
+        assert.equal(notices.length, 2, 'active tasks must also explain blocked recovery');
+        context.hasActiveStmbTasks = () => false;
+        let recovered = 0;
+        context.resolveStmbOperation = async () => { recovered++; return { operations: [] }; };
+        context.isSceneContextCurrent = () => true;
+        context.refreshMemoryBoundaryUi = () => {};
+        await vm.runInContext('reviewStmbOperations()', context);
+        assert.equal(recovered, 1, 'recovery must resume once jobs and tasks finish');
+        assert.equal(notices.length, 2);
     }
 });
 
