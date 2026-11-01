@@ -10575,6 +10575,15 @@ body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDra
     max-height: min(50vh, 30rem);
 }
 
+.stmb-sort-button {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    padding: 4px 8px;
+}
+
 @media (max-width: 600px) {
     .stmb-narrator-manager-add,
     .stmb-narrator-manager-row {

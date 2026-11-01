@@ -1,4 +1,7 @@
 {
+    "STMemoryBooks_SortAscending": "昇順",
+    "STMemoryBooks_SortDescending": "降順",
+    "STMemoryBooks_SortUnsorted": "未並べ替え",
     "Stateful conversations (Interactions API)": "ステートフルな会話（Interactions API）",
     "Google stateful storage help": "ステートフルモードでは、保護されたロアブックの内容を含むプロンプトも含め、Google に会話履歴の保存を許可します。コンテキストが変わると新しいインタラクションを開始します。未対応のリクエストはステートレスのまま処理されます。",
     "Open lorebook entry": "ロアブックのエントリーを開く",

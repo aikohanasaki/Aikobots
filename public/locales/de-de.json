@@ -1,4 +1,7 @@
 {
+    "STMemoryBooks_SortAscending": "aufsteigend",
+    "STMemoryBooks_SortDescending": "absteigend",
+    "STMemoryBooks_SortUnsorted": "unsortiert",
     "Stateful conversations (Interactions API)": "Zustandsbehaftete Unterhaltungen (Interactions API)",
     "Google stateful storage help": "Im zustandsbehafteten Modus darf Google den Gesprächsverlauf einschließlich Prompts mit geschützten Lorebucheinträgen speichern. Bei geändertem Kontext beginnt eine neue Interaktion; nicht unterstützte Anfragen bleiben zustandslos.",
     "Open lorebook entry": "Lorebook-Eintrag öffnen",

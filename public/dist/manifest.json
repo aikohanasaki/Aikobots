@@ -1,15 +1,15 @@
 {
   "formatVersion": 1,
   "initialRequestCount": 10,
-  "initialGzipBytes": 1725059,
+  "initialGzipBytes": 1725956,
   "builtinExtensionCount": 13,
-  "stmbModuleCount": 37,
+  "stmbModuleCount": 39,
   "assets": [
     {
       "name": "app.css",
-      "bytes": 503173,
-      "gzipBytes": 93127,
-      "sha256": "a64755c152f3a6bc4d3b7d02eb5c156cfd3dbd6945351420c82ba16a94c0505c"
+      "bytes": 503331,
+      "gzipBytes": 93142,
+      "sha256": "3105048b4f9a07ed512aeb8ed52eba4915a80da6672d9201c81f05b0c10b13db"
     },
     {
       "name": "app.js",
@@ -37,9 +37,9 @@
     },
     {
       "name": "stmb.js",
-      "bytes": 803376,
-      "gzipBytes": 203274,
-      "sha256": "d5ba392a2a5ef1a0f36354fcf50a82ab44cd63379dba0f831a09f54e5b1faa42"
+      "bytes": 805961,
+      "gzipBytes": 204156,
+      "sha256": "7e5b28c8f59cb44437f2bed14fc333227567f2098020ff5c584b0169dc26749f"
     },
     {
       "name": "vendor.js",

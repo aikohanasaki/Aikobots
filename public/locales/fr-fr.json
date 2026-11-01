@@ -1,4 +1,7 @@
 {
+    "STMemoryBooks_SortAscending": "croissant",
+    "STMemoryBooks_SortDescending": "décroissant",
+    "STMemoryBooks_SortUnsorted": "non trié",
     "Stateful conversations (Interactions API)": "Conversations avec état (Interactions API)",
     "Google stateful storage help": "Le mode avec état autorise Google à conserver l’historique des conversations, y compris les prompts contenant des entrées de lorebook sécurisées. Un changement de contexte démarre une nouvelle interaction ; les requêtes non prises en charge restent sans état.",
     "Open lorebook entry": "Ouvrir l’entrée du lorebook",

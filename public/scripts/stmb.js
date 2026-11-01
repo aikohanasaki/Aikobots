@@ -42,6 +42,7 @@ import {
 import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showConsolidationPreviewPopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showRegenerationReviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { applyLocale, getCurrentLocale, t, translate } from './i18n.js';
+import { getPromptTableSort, mountPromptTableSort } from './stmb-view-sort.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
@@ -3666,6 +3667,9 @@ function refreshSummaryPromptManagerList(dialog, selectedPresetKey = null, targe
         } catch {
             // noop
         }
+        mountPromptTableSort(list.querySelector('table'), getPromptTableSort(dialog, 'summary'), ['name'], {
+            name: row => row.querySelector('.stmb-preset-name')?.textContent.trim(),
+        });
     }
     const applyButton = dialog.querySelector('#stmb-pm-apply');
     if (applyButton) {
@@ -3788,7 +3792,7 @@ async function applySummaryPromptPresetToSelectedProfile(presetKey, targetProfil
     return true;
 }
 
-async function showSummaryPromptManagerPopup({ onChange = null, targetProfileIndex = null } = {}) {
+async function showSummaryPromptManagerPopup({ onChange = null, targetProfileIndex = null, sortState = null } = {}) {
     try {
         await firstRunInitSummaryPromptPresets(stmbSettings);
         let selectedPresetKey = null;
@@ -3819,6 +3823,7 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
             okButton: false,
             cancelButton: translate('Close', 'STMemoryBooks_Close'),
         }));
+        if (sortState) getPromptTableSort(popup.dlg, 'summary', sortState);
         try {
             applyLocale(popup.dlg);
         } catch {
@@ -3831,8 +3836,9 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
             }
         };
         const reopenManager = async () => {
+            const currentSort = getPromptTableSort(popup.dlg, 'summary');
             popup.completeAffirmative();
-            await showSummaryPromptManagerPopup({ onChange, targetProfileIndex });
+            await showSummaryPromptManagerPopup({ onChange, targetProfileIndex, sortState: currentSort });
         };
 
         popup.dlg?.addEventListener('click', async event => {
@@ -4016,6 +4022,9 @@ function refreshArcPromptManagerList(dialog, selectedPresetKey = null) {
     const list = dialog.querySelector('#stmb-apm-list');
     if (list) {
         list.innerHTML = buildSummaryPromptManagerRowsHtml(presets, selectedPresetKey);
+        mountPromptTableSort(list.querySelector('table'), getPromptTableSort(dialog, 'consolidation'), ['name'], {
+            name: row => row.querySelector('.stmb-preset-name')?.textContent.trim(),
+        });
     }
 }
 
@@ -4404,6 +4413,11 @@ async function refreshSidePromptManagerList(dialog, selectedTemplateKey = null) 
         } catch {
             // noop
         }
+        mountPromptTableSort(list.querySelector('table'), getPromptTableSort(dialog, 'side-prompts'), ['name', 'triggers'], {
+            name: row => row.cells[0]?.textContent.trim(),
+            triggers: row => row.cells[1]?.querySelector('select')?.selectedOptions[0]?.textContent.trim()
+                ?? row.cells[1]?.textContent.trim(),
+        });
     }
 }
 
@@ -4489,6 +4503,10 @@ async function refreshSidePromptSetControls(dialog) {
     } catch {
         // noop
     }
+    mountPromptTableSort(container.querySelector('table'), getPromptTableSort(dialog, 'side-prompt-sets'), ['name', 'items'], {
+        name: row => row.cells[0]?.textContent.trim(),
+        items: row => Number(row.cells[1]?.textContent.trim()) || 0,
+    });
 }
 
 function buildSetEditorRowHtml(templates = [], item = {}) {

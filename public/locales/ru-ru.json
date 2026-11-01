@@ -1,4 +1,7 @@
 {
+    "STMemoryBooks_SortAscending": "по возрастанию",
+    "STMemoryBooks_SortDescending": "по убыванию",
+    "STMemoryBooks_SortUnsorted": "без сортировки",
     "Stateful conversations (Interactions API)": "Диалоги с сохранением состояния (Interactions API)",
     "Google stateful storage help": "В этом режиме Google может хранить историю диалога, включая промпты с защищёнными записями лорбука. При изменении контекста начинается новое взаимодействие; неподдерживаемые запросы выполняются без сохранения состояния.",
     "Open lorebook entry": "Открыть запись лорбука",
