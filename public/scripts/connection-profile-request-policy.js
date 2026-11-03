@@ -31,3 +31,17 @@ export function resolveConnectionProfileTemperature(...candidates) {
 export function mergeConnectionProfilePayloadOverrides(payload, extraRequestFields = {}) {
     return { ...payload, ...extraRequestFields };
 }
+
+/** Copies legacy preset Google choices into a profile once, preserving explicit profile values. */
+export function migrateConnectionProfileGoogleOptions(profile, preset = {}) {
+    if (profile.mode !== 'cc') return false;
+    const overrides = profile['request-overrides'] ??= {};
+    let changed = false;
+    for (const [key, fallback] of Object.entries({ gemini_service_tier: '', google_api_mode: 'latest' })) {
+        if (overrides[key] === undefined) {
+            overrides[key] = preset?.[key] ?? fallback;
+            changed = true;
+        }
+    }
+    return changed;
+}

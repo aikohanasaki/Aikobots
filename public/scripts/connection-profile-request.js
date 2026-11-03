@@ -23,6 +23,7 @@ const REQUEST_OVERRIDE_KEYS = Object.freeze([
     'vertexai_region',
     'vertexai_express_project_id',
     'google_api_mode',
+    'gemini_service_tier',
     'zai_endpoint',
 ]);
 
@@ -65,15 +66,13 @@ function getPresetTemperature(presetName) {
     return Number.isFinite(temperature) && temperature >= 0 ? temperature : undefined;
 }
 
-/** Captures only the cache and Gemini choices belonging to this profile's preset. */
+/** Captures the cache choices belonging to this profile's preset. */
 function getPresetProviderOptions(presetName) {
     const preset = presetName ? getPresetManager(ChatCompletionService.TYPE)?.getCompletionPresetByName(presetName) : null;
     return Object.freeze({
         automatic_prompt_cache_mode: preset?.automatic_prompt_cache_mode
             ?? (preset?.automatic_prompt_cache === true ? 'automatic' : 'inherit'),
         automatic_prompt_cache_ttl: preset?.automatic_prompt_cache_ttl ?? '5m',
-        gemini_service_tier: preset?.gemini_service_tier ?? '',
-        google_api_mode: preset?.google_api_mode ?? 'latest',
     });
 }
 
@@ -156,7 +155,7 @@ export function applyConnectionProfileSnapshot(generateData, snapshot, overrides
         temperature,
         automatic_prompt_cache_mode: providerOptions.automatic_prompt_cache_mode ?? 'inherit',
         automatic_prompt_cache_ttl: providerOptions.automatic_prompt_cache_ttl ?? '5m',
-        service_tier: source === 'makersuite' ? providerOptions.gemini_service_tier || undefined : undefined,
+        service_tier: source === 'makersuite' ? (snapshot.requestOverrides?.gemini_service_tier ?? providerOptions.gemini_service_tier) || undefined : undefined,
         google_api_mode: ['makersuite', 'vertexai'].includes(source) ? snapshot.requestOverrides?.google_api_mode ?? providerOptions.google_api_mode ?? 'latest' : undefined,
         custom_url: snapshot.apiUrl || undefined,
         reverse_proxy: snapshot.proxyUrl || undefined,

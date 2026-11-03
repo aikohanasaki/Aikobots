@@ -6720,5 +6720,9 @@
     "Creator": "Автор",
     "Description": "Описание",
     "Tags": "Теги",
-    "Recovery is blocked by active Memory Books work. Finish or cancel all running or queued jobs for this chat in Memory Books Jobs, and wait for active Memory Books tasks to finish. Then retry Pending Memory Books operations.": "Восстановление заблокировано активной работой Memory Books. Дождитесь завершения или отмените все выполняющиеся и ожидающие задания этого чата в «Memory Books Jobs», а также дождитесь завершения активных задач Memory Books. Затем снова откройте незавершённые операции Memory Books."
+    "Recovery is blocked by active Memory Books work. Finish or cancel all running or queued jobs for this chat in Memory Books Jobs, and wait for active Memory Books tasks to finish. Then retry Pending Memory Books operations.": "Восстановление заблокировано активной работой Memory Books. Дождитесь завершения или отмените все выполняющиеся и ожидающие задания этого чата в «Memory Books Jobs», а также дождитесь завершения активных задач Memory Books. Затем снова откройте незавершённые операции Memory Books.",
+    "Google Service Tier": "Уровень обслуживания Google",
+    "Google connection profile settings help": "Уровень обслуживания Google и режим API сохраняются при создании или обновлении профиля подключения независимо от пресетов сэмплеров.",
+    "Google Interactions sampling warning": "API Interactions использует температуру 1 и отключает Top P, Top K, штраф за присутствие и штраф за частоту.",
+    "Interactions API only allows temperature 1 and no other sampling parameters.": "API Interactions допускает только температуру 1 и не поддерживает другие параметры сэмплирования."
 }

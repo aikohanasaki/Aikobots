@@ -1,6 +1,8 @@
 # Native SQLite Chat Architecture
 
-STMB connection snapshots may contain optional `providerOptions` for Claude cache mode/lifetime and Gemini service tier. Older snapshots without these fields resolve to server-default caching, a five-minute lifetime, and no explicit Gemini tier before applying the Memory Books profile. The profile's `skipCaching` defaults to true when absent, including in older queued jobs; an explicit false preserves the selected connection's cache mode. No database migration or job rewrite is needed.
+STMB connection snapshots contain preset cache mode/lifetime in `providerOptions` and connection-owned Google service tier/API mode in `requestOverrides`. Older queued snapshots retain their captured Google options in `providerOptions`; absent options resolve to server-default caching, a five-minute lifetime, no explicit Gemini tier, and `latest` Google mode. The profile's `skipCaching` defaults to true when absent, including in older queued jobs; an explicit false preserves the selected connection's cache mode. No database migration or job rewrite is needed.
+
+Connection Profiles store `gemini_service_tier` and `google_api_mode` in their existing `request-overrides` object. On connection-manager initialization, missing fields are copied once from the profile's named completion preset; a selected profile without a named preset uses current connection settings, and other missing values use the defaults above. Explicit profile values, including an empty service tier, take precedence. Later sampler preset changes do not modify these fields, and preset saves/exports omit them. Create/Update captures them from the API connection panel; normal profile activation and background snapshots both use the profile values. Migration uses the existing settings save path and server locking, without new files, locks, or chat identity changes.
 
 This document records Aikobots’ native SQLite storage decisions, the current transitional mutation model, and the target mutation contract.
 
@@ -8,7 +10,7 @@ This document records Aikobots’ native SQLite storage decisions, the current t
 
 ## Optional Google stateful conversations
 
-Google API mode `stateful` opts into provider-held conversation history, including secure lorebook prompts. The default remains stateless. This uses the existing settings, preset and connection-profile persistence. Google retains stored interactions under its own retention policy; disabling this mode or rebuilding context does not delete previous provider records.
+Google API mode `stateful` opts into provider-held conversation history, including secure lorebook prompts. The default remains stateless. This uses the existing settings and connection-profile persistence. Google retains stored interactions under its own retention policy; disabling this mode or rebuilding context does not delete previous provider records.
 
 Continuation metadata lives in `DATA_ROOT/_google-interactions/state.sqlite`, independently of chat databases. Records contain only an opaque interaction ID, credential-keyed HMACs of the exact input/output steps and scope, and an expiry. Prompt text, lorebook text and credentials are never stored in this database or returned to clients. Scope includes the authenticated user, chat scope, endpoint, model and context configuration. Sampling parameters and service tier are resent on every turn without invalidating history.
 

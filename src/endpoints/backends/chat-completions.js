@@ -1449,6 +1449,11 @@ async function sendMakerSuiteRequest(request) {
 
     const body = getGeminiBody();
     const compatible = request.body.google_api_mode === 'preserve_compatibility';
+    if (!compatible) {
+        body.generationConfig.temperature = 1;
+        delete body.generationConfig.topP;
+        delete body.generationConfig.topK;
+    }
     const legacyModel = requiresLegacyGoogleApi(model) || (compatible && (Boolean(request.body.reverse_proxy) || useVertexAi && request.body.vertexai_region && request.body.vertexai_region !== 'global'));
     let interactionBody;
     if (!legacyModel) {
@@ -1544,6 +1549,13 @@ async function sendMakerSuiteRequest(request) {
             const options = applyAdditionalParameters(request.body, { body: interactionBody, method: 'POST', headers, signal: controller.signal });
             // Privacy and chat ownership cannot be overridden by user-supplied provider parameters.
             const finalBody = JSON.parse(options.body);
+            // Interactions uses fixed sampling, including when additional parameters are supplied.
+            for (const key of ['temperature', 'top_p', 'top_k', 'presence_penalty', 'frequency_penalty']) {
+                delete finalBody[key];
+                if (finalBody.generation_config && typeof finalBody.generation_config === 'object') {
+                    delete finalBody.generation_config[key];
+                }
+            }
             finalBody.model = model;
             finalBody.stream = stream;
             finalBody.store = false;

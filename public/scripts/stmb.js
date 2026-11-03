@@ -5707,7 +5707,7 @@ function buildProfileEditorHtml(profile, options = {}) {
     const orderMode = String(profile?.orderMode || 'auto');
     const position = Number(profile?.position ?? 0);
     const connectionProfileId = String(profile?.connectionProfileId || '');
-    const isLegacyDirect = !isBuiltin && !connectionProfileId && String(connection.api || 'current_st') !== 'current_st';
+    const isLegacyDirect = !isBuiltin && !connectionProfileId && !['current_st', 'connection_profile'].includes(String(connection.api || 'current_st'));
     const usesCurrentSt = isBuiltin || (!connectionProfileId && String(connection.api || 'current_st') === 'current_st');
 
     return `
@@ -5725,7 +5725,7 @@ function buildProfileEditorHtml(profile, options = {}) {
                     <select id="stmb-profile-editor-connection-profile" class="text_pole">
                         ${getConnectionProfileOptionsHtml(connectionProfileId)}
                     </select>
-                    ${isLegacyDirect ? '<small class="warning" data-i18n="This legacy profile remains usable. Select a connection profile to rebind it.">This legacy profile remains usable. Select a connection profile to rebind it.</small>' : ''}
+                    ${isLegacyDirect ? '<small id="stmb-profile-editor-legacy-warning" class="warning" data-i18n="This legacy profile remains usable. Select a connection profile to rebind it.">This legacy profile remains usable. Select a connection profile to rebind it.</small>' : ''}
                     ${usesCurrentSt ? '<small data-i18n="This saved profile uses the currently active SillyTavern connection. Select a connection profile to rebind it.">This saved profile uses the currently active SillyTavern connection. Select a connection profile to rebind it.</small>' : ''}
                 </div>
             `}
@@ -5842,6 +5842,11 @@ function buildProfileEditorHtml(profile, options = {}) {
 function updateProfileEditorDynamicState(dialog) {
     if (!dialog) {
         return;
+    }
+
+    const legacyWarning = dialog.querySelector('#stmb-profile-editor-legacy-warning');
+    if (legacyWarning) {
+        legacyWarning.classList.toggle('displayNone', Boolean(dialog.querySelector('#stmb-profile-editor-connection-profile')?.value));
     }
 
     const titleFormatSelect = dialog.querySelector('#stmb-profile-editor-title-format-select');

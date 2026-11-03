@@ -10,10 +10,11 @@ import { applyStmbRequestTransport } from '../public/scripts/stmb-request-transp
 import { getClaudeCacheMode } from '../src/prompt-cache-usage.js';
 
 const openaiSource = fs.readFileSync(new URL('../public/scripts/openai.js', import.meta.url), 'utf8');
+const actualSettingsToUpdate = vm.runInNewContext(openaiSource.slice(openaiSource.indexOf('export const settingsToUpdate ='), openaiSource.indexOf('const default_settings =')).replace('export ', '') + '; settingsToUpdate');
 
 /** Loads an existing browser function with only its browser dependencies stubbed. */
 function browserFunction(source, start, end, name, context) {
-    return vm.runInNewContext(source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start))).replace(/^export /gm, '') + `\n${name}`, context);
+    return vm.runInNewContext(source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start))).replace(/^export /gm, '') + `\n${name}`, { updateGoogleSamplingControls() {}, ...context });
 }
 
 test('saved presets apply cache mode and subsequent settings without confirmation', async () => {
@@ -22,16 +23,18 @@ test('saved presets apply cache mode and subsequent settings without confirmatio
         let saves = 0;
         const applications = [];
         const completed = [];
-        const settings = { automatic_prompt_cache_mode: 'inherit', reasoning_effort: 'low' };
+        const settings = { automatic_prompt_cache_mode: 'inherit', reasoning_effort: 'low', gemini_service_tier: 'flex', google_api_mode: 'preserve_compatibility' };
         const context = {
             structuredClone, oai_settings: settings,
             openai_settings: [
-                { automatic_prompt_cache: true, ...(legacy ? {} : { automatic_prompt_cache_mode: 'automatic' }), reasoning_effort: 'high' },
+                { automatic_prompt_cache: true, ...(legacy ? {} : { automatic_prompt_cache_mode: 'automatic' }), reasoning_effort: 'high', gemini_service_tier: 'priority', google_api_mode: 'stateful' },
             ],
             openai_setting_names: { First: 0 },
             settingsToUpdate: {
                 automatic_prompt_cache_mode: ['#cache', 'automatic_prompt_cache_mode', false, false],
                 reasoning_effort: ['#reasoning', 'reasoning_effort', false, false],
+                gemini_service_tier: actualSettingsToUpdate.gemini_service_tier,
+                google_api_mode: actualSettingsToUpdate.google_api_mode,
             },
             $: () => ({ find: () => ({ text: () => selected }), prop() { return this; }, val() { return this; }, trigger() { return this; } }),
             event_types: { OAI_PRESET_CHANGED_BEFORE: 'before', PRESET_CHANGED: 'changed' },
@@ -53,6 +56,8 @@ test('saved presets apply cache mode and subsequent settings without confirmatio
         apply();
         assert.equal(settings.automatic_prompt_cache_mode, 'automatic');
         assert.equal(settings.reasoning_effort, 'high');
+        assert.equal(settings.gemini_service_tier, 'flex');
+        assert.equal(settings.google_api_mode, 'preserve_compatibility');
         await applications[0];
         assert.deepEqual(completed, ['First']);
         assert.equal(saves, 1);
@@ -105,15 +110,16 @@ test('applying connection profiles preserves absent parameters and restores expl
             ConnectionManagerSpinner: class { static abort() {} start() {} stop() {} },
             CC_COMMANDS: [], TC_COMMANDS: [], saveSettingsDebounced() { saves++; },
             waitForCurrentOpenAIConnection: async () => {}, online_status: 'connected',
+            $: () => ({ val() {} }),
         });
         const legacyOverrides = { azure_deployment_name: 'example' };
         if (source !== 'custom') Object.assign(legacyOverrides, { custom_include_body: 'custom_only: true' });
         await apply({ mode: 'cc', 'request-overrides': legacyOverrides });
         assert.deepEqual(getAdditionalParameters(settings, source), parameters);
-        assert.equal(saves, 0);
+        assert.equal(saves, 1);
         await apply({ mode: 'cc', 'request-overrides': { additional_parameters: { claude: {} } } });
         assert.deepEqual(getAdditionalParameters(settings, source), parameters);
-        assert.equal(saves, 0);
+        assert.equal(saves, 2);
         for (const body of ['', 'restored: true']) {
             const values = { custom_include_body: body };
             const overrides = source === 'custom' ? values : { additional_parameters: { [source]: values } };
@@ -122,7 +128,33 @@ test('applying connection profiles preserves absent parameters and restores expl
                 custom_include_body: body, custom_exclude_body: '', custom_include_headers: '',
             });
         }
-        assert.equal(saves, 2);
+        assert.equal(saves, 6);
+    }
+});
+
+test('normal profile activation restores Google options and clears the previous tier', async () => {
+    const manager = fs.readFileSync(new URL('../public/scripts/extensions/connection-manager/index.js', import.meta.url), 'utf8');
+    const settings = {};
+    const controls = {};
+    const apply = browserFunction(manager, 'export async function applyConnectionProfile(', '\n/**', 'applyConnectionProfile', {
+        ADDITIONAL_PARAMETER_KEYS, getAdditionalParameters, setAdditionalParameters, oai_settings: settings,
+        ConnectionManagerSpinner: class { static abort() {} start() {} stop() {} },
+        CC_COMMANDS: [], TC_COMMANDS: [], saveSettingsDebounced() {},
+        waitForCurrentOpenAIConnection: async () => {}, online_status: 'connected',
+        $: selector => ({ val(value) { controls[selector] = value; } }),
+    });
+    for (const source of ['makersuite', 'vertexai']) {
+        settings.chat_completion_source = source;
+        for (const [tier, mode] of [['flex', 'preserve_compatibility'], ['', 'latest'], ['priority', 'stateful']]) {
+            await apply({ mode: 'cc', 'request-overrides': { gemini_service_tier: tier, google_api_mode: mode } });
+            assert.equal(settings.gemini_service_tier, tier);
+            assert.equal(settings.google_api_mode, mode);
+            assert.equal(controls['#gemini_service_tier'], tier);
+            assert.equal(controls['#google_api_mode'], mode);
+        }
+        await apply({ mode: 'cc' });
+        assert.equal(settings.gemini_service_tier, '');
+        assert.equal(settings.google_api_mode, 'latest');
     }
 });
 
@@ -150,7 +182,7 @@ test('empty and malformed YAML preserve existing requests; invalid headers do no
 });
 
 test('completion preset save/load preserves independent parameter maps without aliasing', async () => {
-    const settings = { preset_settings_openai: 'Example' };
+    const settings = { preset_settings_openai: 'Example', gemini_service_tier: 'flex', google_api_mode: 'stateful' };
     const applications = [];
     setAdditionalParameters(settings, 'openai', { custom_include_body: 'example: true' });
     let saved;
@@ -170,6 +202,8 @@ test('completion preset save/load preserves independent parameter maps without a
     context.saveOpenAIPreset = browserFunction(openaiSource, 'async function saveOpenAIPreset(', '\nfunction onLogitBiasPresetChange', 'saveOpenAIPreset', context);
     await context.saveOpenAIPreset('Example', settings, false);
     assert.deepEqual(saved.additional_parameters, settings.additional_parameters);
+    assert.equal(saved.gemini_service_tier, undefined);
+    assert.equal(saved.google_api_mode, undefined);
     const apply = browserFunction(openaiSource, 'function onSettingsPresetChange()', '\nfunction getMaxContextOpenAI', 'onSettingsPresetChange', context);
     context.openai_settings[0] = saved;
     setAdditionalParameters(settings, 'openai', {});
@@ -192,7 +226,7 @@ test('connection profile capture and request snapshots isolate background reques
     const source = fs.readFileSync(new URL('../public/scripts/connection-profile-request.js', import.meta.url), 'utf8');
     const manager = fs.readFileSync(new URL('../public/scripts/extensions/connection-manager/index.js', import.meta.url), 'utf8');
     const keys = vm.runInNewContext(source.slice(source.indexOf('const REQUEST_OVERRIDE_KEYS'), source.indexOf('\nfunction getConnectionManagerSettings')) + '\nREQUEST_OVERRIDE_KEYS');
-    const settings = { chat_completion_source: 'claude', custom_include_body: 'legacy: true' };
+    const settings = { chat_completion_source: 'claude', custom_include_body: 'legacy: true', gemini_service_tier: 'flex', google_api_mode: 'preserve_compatibility' };
     const parameters = {
         custom_include_body: 'claude_option: true',
         custom_exclude_body: '- temperature',
@@ -211,6 +245,8 @@ test('connection profile capture and request snapshots isolate background reques
         REQUEST_OVERRIDE_KEYS: keys, getAdditionalParameters, structuredClone,
     });
     const requestOverrides = copy(profile, 'claude');
+    assert.equal(requestOverrides.gemini_service_tier, 'flex');
+    assert.equal(requestOverrides.google_api_mode, 'preserve_compatibility');
     const apply = browserFunction(source, 'export function applyConnectionProfileSnapshot(', '\n/**', 'applyConnectionProfileSnapshot', {
         structuredClone, resolveRequestModel: value => value, resolveConnectionProfileTemperature: value => value,
         proxies: [], mergeConnectionProfilePayloadOverrides,
@@ -272,17 +308,26 @@ test('STMB saved profile options override active settings and older snapshots us
         proxies: [], mergeConnectionProfilePayloadOverrides,
     });
     const active = { automatic_prompt_cache_mode: 'off', automatic_prompt_cache_ttl: '5m', service_tier: 'priority' };
-    const snapshot = { source: 'makersuite', model: 'synthetic-gemini', requestOverrides: {}, providerOptions: getOptions('Saved') };
+    const providerOptions = getOptions('Saved');
+    assert.equal(providerOptions.gemini_service_tier, undefined);
+    assert.equal(providerOptions.google_api_mode, undefined);
+    const snapshot = { source: 'makersuite', model: 'synthetic-gemini', requestOverrides: { gemini_service_tier: 'flex', google_api_mode: 'preserve_compatibility' }, providerOptions };
     const selected = apply(active, snapshot);
     assert.equal(selected.automatic_prompt_cache_mode, 'automatic');
     assert.equal(selected.automatic_prompt_cache_ttl, '1h');
     assert.equal(selected.service_tier, 'flex');
+    assert.equal(selected.google_api_mode, 'preserve_compatibility');
+    assert.equal(apply(active, { ...snapshot, requestOverrides: { gemini_service_tier: '' } }).service_tier, undefined);
     assert.equal(apply(active, { ...snapshot, source: 'vertexai' }).service_tier, undefined);
-    const older = apply(active, { ...snapshot, providerOptions: undefined });
+    const older = apply(active, { ...snapshot, requestOverrides: {}, providerOptions: undefined });
     assert.equal(older.automatic_prompt_cache_mode, 'inherit');
     assert.equal(older.automatic_prompt_cache_ttl, '5m');
     assert.equal(older.service_tier, undefined);
     assert.equal(applyStmbRequestTransport(selected).service_tier, 'flex');
+    assert.equal(applyStmbRequestTransport(selected).google_api_mode, 'preserve_compatibility');
+    const queued = apply(active, { ...snapshot, requestOverrides: {}, providerOptions: { gemini_service_tier: 'priority', google_api_mode: 'stateful' } });
+    assert.equal(queued.service_tier, 'priority');
+    assert.equal(queued.google_api_mode, 'stateful');
 });
 
 test('preset export retains parameters only when sensitive connection settings are included', async () => {
@@ -292,7 +337,7 @@ test('preset export retains parameters only when sensitive connection settings a
             static show = { confirm: async () => stripSensitive ? 1 : 0 };
             async show() {}
         }
-        const preset = { additional_parameters: { openai: { custom_include_headers: 'X-Example: enabled' } } };
+        const preset = { additional_parameters: { openai: { custom_include_headers: 'X-Example: enabled' } }, gemini_service_tier: 'flex', google_api_mode: 'stateful' };
         const context = {
             structuredClone, oai_settings: { preset_settings_openai: 'Example' }, openai_settings: [preset], openai_setting_names: { Example: 0 },
             sensitiveFields: ['additional_parameters'], settingsToUpdate: { additional_parameters: ['', 'additional_parameters', false, true] },
@@ -304,6 +349,8 @@ test('preset export retains parameters only when sensitive connection settings a
         const run = browserFunction(openaiSource, 'async function onExportPresetClick()', '\nasync function onLogitBiasPresetImportFileChange', 'onExportPresetClick', context);
         await run();
         assert.equal(Boolean(exported.additional_parameters), !stripSensitive && includeConnection);
+        assert.equal(exported.gemini_service_tier, undefined);
+        assert.equal(exported.google_api_mode, undefined);
         assert.ok(preset.additional_parameters, 'Export must not mutate the saved preset');
     }
 });

@@ -64,6 +64,48 @@ async function testAdditionalParameters(page) {
     }, originalSource);
 }
 
+/** Checks Google mode changes against the real sampler controls without changing saved preferences. */
+async function testGoogleInteractionsSampling(page) {
+    await page.evaluate(() => {
+        const settings = globalThis.SillyTavern.getContext().chatCompletionSettings;
+        const ids = ['temp_openai', 'top_p_openai', 'top_k_openai', 'pres_pen_openai', 'freq_pen_openai'];
+        const original = Object.fromEntries(['chat_completion_source', 'google_api_mode', ...ids].map(key => [key, settings[key]]));
+        const check = (value, message) => { if (!value) throw new Error(message); };
+        try {
+            for (const source of ['makersuite', 'vertexai']) {
+                globalThis.jQuery('#chat_completion_source').val(source).trigger('change');
+                Object.assign(settings, { temp_openai: 0.4, top_p_openai: 0.6, top_k_openai: 40, pres_pen_openai: 0.7, freq_pen_openai: 0.8 });
+                for (const mode of ['latest', 'stateful', 'preserve_compatibility']) {
+                    globalThis.jQuery('#google_api_mode').val(mode).trigger('change');
+                    const restricted = mode !== 'preserve_compatibility';
+                    check(document.getElementById('google_interactions_sampling_warning').hidden === !restricted, 'Google warning did not follow API mode');
+                    for (const id of ids) {
+                        const slider = document.getElementById(id);
+                        const counter = document.querySelector(`input[data-for="${id}"]`);
+                        const row = slider.closest('.range-block');
+                        check(slider.disabled === restricted && counter.disabled === restricted, `${id} disabled state is wrong`);
+                        check(counter.value === String(restricted ? (id === 'temp_openai' ? 1 : '') : settings[id]), `${id} display is wrong`);
+                        check(row.classList.contains('opacity50p') === restricted, `${id} disabled styling is wrong`);
+                        if (restricted) {
+                            check(getComputedStyle(row).display !== 'none', `${id} should be shown disabled`);
+                            check(row.title.includes('Interactions API only allows temperature 1'), `${id} tooltip is missing`);
+                        }
+                    }
+                    check(settings.temp_openai === 0.4 && settings.top_k_openai === 40, 'Google mode overwrote saved sampling');
+                }
+            }
+            globalThis.jQuery('#google_api_mode').val('stateful').trigger('change');
+            globalThis.jQuery('#chat_completion_source').val('openai').trigger('change');
+            check(!document.getElementById('temp_openai').disabled, 'Switching providers left temperature disabled');
+        } finally {
+            Object.assign(settings, original);
+            globalThis.jQuery('#chat_completion_source').val(original.chat_completion_source).trigger('change');
+            for (const id of ids) globalThis.jQuery(`#${id}`).val(original[id]).trigger('input');
+            globalThis.jQuery('#google_api_mode').val(original.google_api_mode).trigger('change');
+        }
+    });
+}
+
 /** Exercises the actual STMB change listener, keyboard toggles, and saved settings payload. */
 async function testStmbSettingsControls(page) {
     const closeAndWait = async () => {
@@ -935,6 +977,7 @@ try {
         assert.equal(await page.locator('#stmb-jobs-topbar-button[aria-controls="top_chat_stmb_jobs"]').count(), 1, 'STMB jobs UI was not initialized.');
         assert.equal(await page.locator('#aiko-layout-css[href="css/layouts/classic.css"]').count(), 1, 'Selected runtime layout link was not retained.');
         await testAdditionalParameters(page);
+        await testGoogleInteractionsSampling(page);
         await testDataMaidMultiSelect(page, fatalBrowserDiagnostics);
         await testStmbSettingsControls(page);
         assert.deepEqual(fatalBrowserDiagnostics, [], `Unexpected Data Maid browser diagnostics: ${fatalBrowserDiagnostics.join('\n')}`);

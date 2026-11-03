@@ -6648,5 +6648,9 @@
     "Creator": "作者",
     "Description": "説明",
     "Tags": "タグ",
-    "Recovery is blocked by active Memory Books work. Finish or cancel all running or queued jobs for this chat in Memory Books Jobs, and wait for active Memory Books tasks to finish. Then retry Pending Memory Books operations.": "Memory Books の処理が進行中のため、復旧できません。「Memory Books Jobs」でこのチャットの実行中または待機中のジョブをすべて完了させるかキャンセルし、実行中の Memory Books タスクが終了するまでお待ちください。その後、保留中の Memory Books 操作を再度確認してください。"
+    "Recovery is blocked by active Memory Books work. Finish or cancel all running or queued jobs for this chat in Memory Books Jobs, and wait for active Memory Books tasks to finish. Then retry Pending Memory Books operations.": "Memory Books の処理が進行中のため、復旧できません。「Memory Books Jobs」でこのチャットの実行中または待機中のジョブをすべて完了させるかキャンセルし、実行中の Memory Books タスクが終了するまでお待ちください。その後、保留中の Memory Books 操作を再度確認してください。",
+    "Google Service Tier": "Google サービス階層",
+    "Google connection profile settings help": "Google サービス階層と API モードは、サンプラープリセットとは独立して、接続プロファイルの作成または更新時に保存されます。",
+    "Google Interactions sampling warning": "Interactions API は温度 1 を使用し、Top P、Top K、存在ペナルティ、頻度ペナルティを無効にします。",
+    "Interactions API only allows temperature 1 and no other sampling parameters.": "Interactions API では温度 1 のみが許可され、他のサンプリングパラメーターは使用できません。"
 }

@@ -16,8 +16,10 @@ import { SlashCommandScope } from '../../slash-commands/SlashCommandScope.js';
 import { collapseSpaces, getUniqueName, isFalseBoolean, uuidv4, waitUntilCondition } from '../../utils.js';
 import { t, translate } from '../../i18n.js';
 import { getSecretLabelById } from '../../secrets.js';
-import { checkOpenAIStatus, oai_settings, waitForCurrentOpenAIConnection } from '../../openai.js';
+import { checkOpenAIStatus, oai_settings, updateGoogleSamplingControls, waitForCurrentOpenAIConnection } from '../../openai.js';
 import { isConnectionProfileTransitionPending, runConnectionProfileTransition, waitForCurrentConnectionProfileTransition } from '../../connection-profile-transition.js';
+import { migrateConnectionProfileGoogleOptions } from '../../connection-profile-request-policy.js';
+import { getPresetManager } from '../../preset-manager.js';
 
 const MODULE_NAME = 'connection-manager';
 const NONE = '<None>';
@@ -514,6 +516,14 @@ export async function applyConnectionProfile(profile) {
             }
         }
 
+        if (mode === 'cc') {
+            for (const [key, fallback] of Object.entries({ gemini_service_tier: '', google_api_mode: 'latest' })) {
+                oai_settings[key] = profile['request-overrides']?.[key] ?? fallback;
+                $(`#${key}`).val(oai_settings[key]);
+            }
+            updateGoogleSamplingControls();
+            saveSettingsDebounced();
+        }
         if (mode === 'cc' && profile['request-overrides']) {
             const source = oai_settings.chat_completion_source;
             const overrides = profile['request-overrides'];
@@ -703,10 +713,15 @@ async function renderDetailsContent(detailsContent) {
     }
 
     if (Array.isArray(extension_settings.connectionManager.profiles)) {
+        const migratedGoogleOptions = extension_settings.connectionManager.profiles.map(profile => {
+            const preset = profile.preset ? getPresetManager('openai')?.getCompletionPresetByName(profile.preset)
+                : profile.id === extension_settings.connectionManager.selectedProfile ? oai_settings : undefined;
+            return migrateConnectionProfileGoogleOptions(profile, preset);
+        }).some(Boolean);
         const removedObsoleteCommands = extension_settings.connectionManager.profiles
             .map(removeObsoleteProfileCommands)
             .some(Boolean);
-        if (removedObsoleteCommands) {
+        if (removedObsoleteCommands || migratedGoogleOptions) {
             saveSettingsDebounced();
         }
     }

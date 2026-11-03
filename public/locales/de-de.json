@@ -6645,5 +6645,9 @@
     "Creator": "Urheber",
     "Description": "Beschreibung",
     "Tags": "Tags",
-    "Recovery is blocked by active Memory Books work. Finish or cancel all running or queued jobs for this chat in Memory Books Jobs, and wait for active Memory Books tasks to finish. Then retry Pending Memory Books operations.": "Die Wiederherstellung wird durch aktive Memory-Books-Arbeit blockiert. Lass alle laufenden oder eingereihten Aufträge für diesen Chat unter „Memory Books Jobs“ abschließen oder brich sie ab und warte, bis aktive Memory-Books-Aufgaben beendet sind. Versuche danach erneut, die ausstehenden Memory-Books-Vorgänge zu prüfen."
+    "Recovery is blocked by active Memory Books work. Finish or cancel all running or queued jobs for this chat in Memory Books Jobs, and wait for active Memory Books tasks to finish. Then retry Pending Memory Books operations.": "Die Wiederherstellung wird durch aktive Memory-Books-Arbeit blockiert. Lass alle laufenden oder eingereihten Aufträge für diesen Chat unter „Memory Books Jobs“ abschließen oder brich sie ab und warte, bis aktive Memory-Books-Aufgaben beendet sind. Versuche danach erneut, die ausstehenden Memory-Books-Vorgänge zu prüfen.",
+    "Google Service Tier": "Google-Dienststufe",
+    "Google connection profile settings help": "Google-Dienststufe und API-Modus werden beim Erstellen oder Aktualisieren eines Verbindungsprofils gespeichert, unabhängig von Sampler-Voreinstellungen.",
+    "Google Interactions sampling warning": "Die Interactions API verwendet Temperatur 1 und deaktiviert Top P, Top K, Anwesenheitsstrafe und Häufigkeitsstrafe.",
+    "Interactions API only allows temperature 1 and no other sampling parameters.": "Die Interactions API erlaubt nur Temperatur 1 und keine weiteren Sampling-Parameter."
 }

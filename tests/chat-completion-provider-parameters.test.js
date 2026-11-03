@@ -205,12 +205,29 @@ it.each([false, true])('continues opted-in Google conversations and rebuilds mis
 
 it('preserves custom sampling only in compatibility mode', async () => {
     fetchMock.mockImplementation(async () => success(false));
-    const latest = await run('makersuite', false, { model: 'gemini-3-flash', temperature: 0.4 });
-    expect(latest.statusCode).toBe(400);
-    expect(fetchMock).not.toHaveBeenCalled();
     await run('makersuite', false, { model: 'gemini-3-flash', temperature: 0.4, google_api_mode: 'preserve_compatibility' });
     expect(fetchMock.mock.calls[0][0]).toContain(':generateContent');
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).generationConfig.temperature).toBe(0.4);
+});
+
+it.each(['latest', 'stateful'])('enforces fixed Interactions sampling for %s mode, including payload overrides', async mode => {
+    for (const source of ['makersuite', 'vertexai']) {
+        fetchMock.mockImplementation(async url => googleSuccess(url, false));
+        const response = await run(source, false, {
+            model: 'gemini-new-model', google_api_mode: mode,
+            temperature: 0.4, top_p: 0.6, top_k: 40, presence_penalty: 0.7, frequency_penalty: 0.8,
+            custom_include_body: 'temperature: 0.3\ntop_p: 0.2\ntop_k: 25\npresence_penalty: 0.6\nfrequency_penalty: 0.5\ngeneration_config:\n  temperature: 0.3\n  top_p: 0.2\n  top_k: 25\n  presence_penalty: 0.6\n  frequency_penalty: 0.5\n  max_output_tokens: 100',
+        });
+        const [url, options] = fetchMock.mock.calls.at(-1);
+        expect(url).toMatch(/\/interactions$/);
+        expect(response.statusCode).toBe(200);
+        const sent = JSON.parse(options.body);
+        for (const key of ['temperature', 'top_p', 'top_k', 'presence_penalty', 'frequency_penalty']) {
+            expect(sent).not.toHaveProperty(key);
+            expect(sent.generation_config).not.toHaveProperty(key);
+        }
+        expect(sent.generation_config.max_output_tokens).toBe(100);
+    }
 });
 
 it('retries only definitive unsupported Interactions responses once with the original prompt', async () => {

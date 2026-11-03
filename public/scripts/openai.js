@@ -689,8 +689,8 @@ export const settingsToUpdate = {
     image_inlining: ['#openai_image_inlining', 'image_inlining', true, false],
     automatic_prompt_cache_mode: ['#automatic_prompt_cache_mode', 'automatic_prompt_cache_mode', false, false],
     automatic_prompt_cache_ttl: ['#automatic_prompt_cache_ttl', 'automatic_prompt_cache_ttl', false, false],
-    gemini_service_tier: ['#gemini_service_tier', 'gemini_service_tier', false, false],
-    google_api_mode: ['#google_api_mode', 'google_api_mode', false, false],
+    gemini_service_tier: ['#gemini_service_tier', 'gemini_service_tier', false, true],
+    google_api_mode: ['#google_api_mode', 'google_api_mode', false, true],
     inline_image_quality: ['#openai_inline_image_quality', 'inline_image_quality', false, false],
     video_inlining: ['#openai_video_inlining', 'video_inlining', true, false],
     audio_inlining: ['#openai_audio_inlining', 'audio_inlining', true, false],
@@ -4541,6 +4541,39 @@ function loadOpenAISettings(data, settings) {
     $('#chat_completion_source').trigger('change');
 }
 
+/** Displays fixed Interactions sampling without changing saved sampler preferences. */
+export function updateGoogleSamplingControls() {
+    const restricted = ['makersuite', 'vertexai'].includes(oai_settings.chat_completion_source)
+        && ['latest', 'stateful'].includes(oai_settings.google_api_mode || 'latest');
+    const warning = document.getElementById('google_interactions_sampling_warning');
+    if (warning) warning.hidden = !restricted;
+    const reason = restricted ? translate('Interactions API only allows temperature 1 and no other sampling parameters.') : '';
+    let restored = false;
+    const ids = ['temp_openai', 'top_p_openai', 'top_k_openai', 'pres_pen_openai', 'freq_pen_openai'];
+    for (const id of ids) {
+        const slider = document.getElementById(id);
+        const counter = document.querySelector(`input[data-for="${id}"]`);
+        const row = slider?.closest('.range-block');
+        if (!row || !counter || (!restricted && !row.hasAttribute('data-google-sampling'))) continue;
+        restored ||= !restricted;
+        row.toggleAttribute('data-google-sampling', restricted);
+        row.classList.toggle('opacity50p', restricted);
+        $(row).toggle(restricted || row.dataset.source.split(',').includes(oai_settings.chat_completion_source));
+        row.title = slider.title = counter.title = reason;
+        slider.disabled = counter.disabled = restricted;
+        slider.value = restricted && id === 'temp_openai' ? 1 : oai_settings[id];
+        counter.value = restricted ? (id === 'temp_openai' ? 1 : '') : oai_settings[id];
+    }
+    if (restored && oai_settings.chat_completion_source === chat_completion_sources.CLAUDE) {
+        updateClaudeModelSupport();
+        for (const id of ids) {
+            const slider = document.getElementById(id);
+            const counter = document.querySelector(`input[data-for="${id}"]`);
+            if (slider && counter) counter.disabled = slider.disabled;
+        }
+    }
+}
+
 function setNamesBehaviorControls() {
     switch (oai_settings.names_behavior) {
         case character_names_behavior.NONE:
@@ -4831,8 +4864,6 @@ async function saveOpenAIPreset(name, settings, triggerUi = true) {
         automatic_prompt_cache: settings.automatic_prompt_cache,
         automatic_prompt_cache_mode: settings.automatic_prompt_cache_mode,
         automatic_prompt_cache_ttl: settings.automatic_prompt_cache_ttl,
-        gemini_service_tier: settings.gemini_service_tier,
-        google_api_mode: settings.google_api_mode || 'latest',
         inline_image_quality: settings.inline_image_quality,
         video_inlining: settings.video_inlining,
         audio_inlining: settings.audio_inlining,
@@ -5140,6 +5171,8 @@ async function onExportPresetClick() {
         }
     }
 
+    delete preset.gemini_service_tier;
+    delete preset.google_api_mode;
     await eventSource.emit(event_types.OAI_PRESET_EXPORT_READY, preset);
     const presetJsonString = JSON.stringify(preset, null, 4);
     const presetFileName = `${oai_settings.preset_settings_openai}.json`;
@@ -5323,6 +5356,7 @@ function onSettingsPresetChange() {
         resetAutomaticCacheComparisons();
         updateAutomaticCacheControls();
 
+        updateGoogleSamplingControls();
         saveSettingsDebounced();
         await eventSource.emit(event_types.OAI_PRESET_CHANGED_AFTER);
         await eventSource.emit(event_types.PRESET_CHANGED, { apiId: 'openai', name: presetName });
@@ -6272,6 +6306,7 @@ async function onModelChange() {
 
     $('#openai_max_context_counter').attr('max', Number($('#openai_max_context').attr('max')));
 
+    updateGoogleSamplingControls();
     saveSettingsDebounced();
     updateFeatureSupportFlags();
     eventSource.emit(event_types.CHATCOMPLETION_MODEL_CHANGED, value);
@@ -6458,6 +6493,7 @@ function toggleChatCompletionForms() {
         const matchesSource = validSources.includes(oai_settings.chat_completion_source);
         $(this).toggle(mode !== 'except' ? matchesSource : !matchesSource);
     });
+    updateGoogleSamplingControls();
 }
 
 async function testApiConnection() {
@@ -7367,6 +7403,7 @@ export function initOpenAI() {
     });
     $('#google_api_mode').on('change', function () {
         oai_settings.google_api_mode = String($(this).val());
+        updateGoogleSamplingControls();
         saveSettingsDebounced();
     });
 
