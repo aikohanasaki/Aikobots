@@ -14,13 +14,17 @@ const makeEntry = (request, sequence, overrides = {}) => ({
     [SIDE_PROMPT_HISTORY_KEY]: { ...request, version: 1, sequence }, ...overrides,
 });
 
-test('both checkboxes are required, default off, and the group is a single whitespace-free name', () => {
+test('both checkboxes are required, default off, and the group uses the resolved entry title', () => {
     assert.equal(normalizeStmbSettings({}).moduleSettings.sidePromptVersioningEnabled, false);
     assert.equal(normalizeStmbSettings(settings).moduleSettings.sidePromptVersioningEnabled, true);
     assert.equal(makeRequest().append, true);
     assert.equal(makeRequest(template, {}).append, false);
     assert.equal(makeRequest({ ...template, settings: {} }).append, false);
-    assert.equal(makeRequest().group, 'AssessState-MyChat-One');
+    assert.equal(makeRequest().group, 'Assess');
+    const titled = makeRequest(template, settings, scene, 'Alice, Status (STMB SidePrompt)');
+    assert.equal(titled.group, 'Alice- Status');
+    assert.equal(titled.titleBase, 'Alice, Status');
+    validateSidePromptHistoryRequest(titled);
     assert.equal(formatSidePromptVersionTitle('Assess', 1000), 'Assess-1000 (STMB SidePrompt)');
 });
 

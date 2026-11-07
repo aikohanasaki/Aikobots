@@ -1,5 +1,8 @@
 const STORAGE_KEY = 'aikobots.pending-generations.v2';
 const LEGACY_STORAGE_KEY = 'aikobots.pending-generation.v1';
+const CANCELLATION_KEY = 'aikobots.pending-generation-cancellations.v1';
+const cancellationIntents = new Map();
+const cancellationRequests = new Map();
 const MAX_PENDING_AGE_MS = 7 * 24 * 60 * 60_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RECOVERABLE_TYPES = new Set(['normal', 'regenerate', 'continue', 'swipe']);
@@ -196,4 +199,63 @@ export function clearPendingGeneration(generationId = null, storage = getDefault
     } catch {
         // Storage is best-effort; generation cancellation and chat writes remain authoritative.
     }
+}
+
+/** Returns cancelled or cancellation-pending IDs, including confirmations that suppress stale discovery. */
+export function listPendingGenerationCancellations(storage = getDefaultStorage()) {
+    try {
+        const records = JSON.parse(storage?.getItem(CANCELLATION_KEY) || '[]');
+        for (const record of Array.isArray(records) ? records : []) {
+            if (UUID_PATTERN.test(record?.id) && Number.isFinite(record?.createdAt)) {
+                cancellationIntents.set(record.id, {
+                    createdAt: record.createdAt,
+                    confirmed: cancellationIntents.get(record.id)?.confirmed === true || record.confirmed === true,
+                });
+            }
+        }
+    } catch {
+        // Keep in-memory intents if browser storage is unavailable.
+    }
+    for (const [id, intent] of cancellationIntents) {
+        if (Date.now() - intent.createdAt > MAX_PENDING_AGE_MS) cancellationIntents.delete(id);
+    }
+    return [...cancellationIntents.keys()];
+}
+
+/** Persists only job IDs and timestamps; cancellation never stores prompt contents. */
+function persistCancellationIntents(storage) {
+    try {
+        storage?.setItem(CANCELLATION_KEY, JSON.stringify([...cancellationIntents].map(([id, intent]) => ({ id, ...intent }))));
+    } catch {
+        // Retry from memory while this page remains open.
+    }
+}
+
+/** Retains cancellation and recovery until the server confirms a durable cancellation or terminal state. */
+export function cancelGenerationWithConfirmation(generationId, { getHeaders, fetchImpl = fetch, storage = getDefaultStorage() } = {}) {
+    if (!UUID_PATTERN.test(generationId)) return Promise.resolve(false);
+    listPendingGenerationCancellations(storage);
+    if (cancellationIntents.get(generationId)?.confirmed) return Promise.resolve(true);
+    cancellationIntents.set(generationId, { createdAt: Date.now(), confirmed: false });
+    persistCancellationIntents(storage);
+    if (cancellationRequests.has(generationId)) return cancellationRequests.get(generationId);
+    const request = (async () => {
+        try {
+            const response = await fetchImpl(`/api/backends/chat-completions/generations/${generationId}/cancel`, {
+                method: 'POST', headers: getHeaders(), signal: AbortSignal.timeout(10_000),
+            });
+            if (!response.ok) return false;
+            const result = await response.json();
+            if (result?.id !== generationId || !['cancelled', 'cancel_requested', 'completed', 'failed'].includes(result.state)) return false;
+            cancellationIntents.set(generationId, { createdAt: Date.now(), confirmed: true });
+            persistCancellationIntents(storage);
+            clearPendingGeneration(generationId, storage);
+            return true;
+        } catch {
+            return false;
+        }
+    })();
+    cancellationRequests.set(generationId, request);
+    void request.finally(() => cancellationRequests.delete(generationId));
+    return request;
 }

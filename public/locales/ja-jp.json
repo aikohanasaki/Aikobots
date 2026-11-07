@@ -1,4 +1,11 @@
 {
+    "The locked World Info preset no longer exists. Trying the default preset instead.": "ロックされたWorld Infoプリセットは存在しません。代わりにデフォルトのプリセットの適用を試みます。",
+    "No available default World Info preset. Select a default preset or update the lock before generating.": "利用可能なデフォルトのWorld Infoプリセットがありません。生成する前にデフォルトのプリセットを選択するか、ロック設定を更新してください。",
+    "Generation start could not be confirmed. Cancellation will be retried when connected.": "生成の開始を確認できませんでした。接続が利用可能になったらキャンセルを再試行します。",
+    "The chat changed before generation could start. Please try again.": "生成を開始する前にチャットが変更されました。もう一度お試しください。",
+    "Generation admission could not be verified. Reload the page before trying again.": "生成開始の確認を検証できませんでした。ページを再読み込みしてから、もう一度お試しください。",
+    "World Info preset could not be applied. Check its settings and try again.": "World Infoのプリセットを適用できませんでした。設定を確認して、もう一度お試しください。",
+    "Generation could not start. Check the chat and try again.": "生成を開始できませんでした。チャットを確認して、もう一度お試しください。",
     "STMemoryBooks_SortAscending": "昇順",
     "STMemoryBooks_SortDescending": "降順",
     "STMemoryBooks_SortUnsorted": "未並べ替え",
@@ -6652,5 +6659,8 @@
     "Google Service Tier": "Google サービス階層",
     "Google connection profile settings help": "Google サービス階層と API モードは、サンプラープリセットとは独立して、接続プロファイルの作成または更新時に保存されます。",
     "Google Interactions sampling warning": "Interactions API は温度 1 を使用し、Top P、Top K、存在ペナルティ、頻度ペナルティを無効にします。",
-    "Interactions API only allows temperature 1 and no other sampling parameters.": "Interactions API では温度 1 のみが許可され、他のサンプリングパラメーターは使用できません。"
+    "Interactions API only allows temperature 1 and no other sampling parameters.": "Interactions API では温度 1 のみが許可され、他のサンプリングパラメーターは使用できません。",
+    "Generation was cancelled.": "生成がキャンセルされました。",
+    "Your generation queue is full. Wait for an existing generation to finish and try again.": "生成キューがいっぱいです。進行中の生成が完了するのを待ってから、もう一度お試しください。",
+    "The generation queue is full. Please try again later.": "生成キューがいっぱいです。しばらくしてからもう一度お試しください。"
 }

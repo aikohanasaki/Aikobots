@@ -1,6 +1,6 @@
 import { DOMPurify, Popper } from '../lib.js';
 
-import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION } from '../script.js';
+import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION, CHAT_SAVE_RESULT } from '../script.js';
 import { getBuiltinExtensionManifests, getBuiltinExtensions, loadBuiltinExtension, loadBuiltinExtensionResources } from './builtin-extension-registry.js';
 import { showLoader } from './loader.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
@@ -71,13 +71,43 @@ const defaultUrl = 'http://localhost:5100';
 let requiresReload = false;
 let stateChanged = false;
 let saveMetadataTimeout = null;
+let pendingMetadataSave = null;
+let metadataSaveInFlight = null;
+let metadataSaveVersion = 0;
 
 export function cancelDebouncedMetadataSave() {
+    ++metadataSaveVersion;
     if (saveMetadataTimeout) {
         console.debug('Debounced metadata save cancelled');
         clearTimeout(saveMetadataTimeout);
         saveMetadataTimeout = null;
     }
+    pendingMetadataSave = null;
+}
+
+/** Runs one captured metadata save and retains failed work for an explicit retry. */
+function runPendingMetadataSave() {
+    if (metadataSaveInFlight) return metadataSaveInFlight;
+    if (!pendingMetadataSave) return Promise.resolve(CHAT_SAVE_RESULT.SAVED);
+    clearTimeout(saveMetadataTimeout);
+    saveMetadataTimeout = null;
+    const save = pendingMetadataSave;
+    const version = metadataSaveVersion;
+    pendingMetadataSave = null;
+    metadataSaveInFlight = Promise.resolve().then(save).catch(() => CHAT_SAVE_RESULT.FAILED).then(result => {
+        if (result !== CHAT_SAVE_RESULT.SAVED && version === metadataSaveVersion) pendingMetadataSave ||= save;
+        return result;
+    }).finally(() => { metadataSaveInFlight = null; });
+    return metadataSaveInFlight;
+}
+
+/** Flushes deferred and already running metadata writes before a chat boundary. */
+export async function flushDebouncedMetadataSave() {
+    while (pendingMetadataSave || metadataSaveInFlight) {
+        const result = await runPendingMetadataSave();
+        if (result !== CHAT_SAVE_RESULT.SAVED) return result;
+    }
+    return CHAT_SAVE_RESULT.SAVED;
 }
 
 export function saveMetadataDebounced() {
@@ -88,28 +118,30 @@ export function saveMetadataDebounced() {
 
     cancelDebouncedMetadataSave();
 
-    saveMetadataTimeout = setTimeout(async () => {
+    pendingMetadataSave = async () => {
         const newContext = getContext();
 
         if (groupId !== newContext.groupId) {
             console.warn('Group changed, not saving metadata');
-            return;
+            return CHAT_SAVE_RESULT.SAVED;
         }
 
         if (characterId !== newContext.characterId) {
             console.warn('Character changed, not saving metadata');
-            return;
+            return CHAT_SAVE_RESULT.SAVED;
         }
 
         if (chatId !== newContext.chatId) {
             console.warn('Chat changed, not saving metadata');
-            return;
+            return CHAT_SAVE_RESULT.SAVED;
         }
 
         console.debug('Saving metadata...');
-        await newContext.saveMetadata();
+        const result = await newContext.saveMetadata();
         console.debug('Saved metadata...');
-    }, debounce_timeout.relaxed);
+        return result;
+    };
+    saveMetadataTimeout = setTimeout(() => { void flushDebouncedMetadataSave(); }, debounce_timeout.relaxed);
 }
 
 /**

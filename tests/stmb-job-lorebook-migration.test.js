@@ -50,6 +50,38 @@ beforeAll(async () => {
 
 afterAll(() => finishRunningJob?.());
 
+it('queues separate automatic set rows while deduplicating repeated rows and individual prompts', () => {
+    const finishes = [];
+    registerStmbJobExecutor('sidePrompt', () => new Promise(resolve => finishes.push(resolve)));
+    const input = {
+        chatKey: 'set-row-dedupe-test', type: 'sidePrompt', lorebookName: 'Synthetic Book',
+        range: { sceneStart: 0, sceneEnd: 10 },
+        payload: {
+            trigger: 'onAfterMemory', templateKey: 'character-sheet', setKey: 'cast',
+            setItemId: 'aiko', runtimeMacros: { '{{DCCName}}': 'Aiko' },
+        },
+    };
+    try {
+        const aiko = enqueueStmbJob(input);
+        const zeeInput = { ...input, payload: { ...input.payload, setItemId: 'zee', runtimeMacros: { '{{DCCName}}': 'Zee' } } };
+        const zee = enqueueStmbJob(zeeInput);
+        expect(zee.id).not.toBe(aiko.id);
+        expect(enqueueStmbJob(input).id).toBe(aiko.id);
+        expect(enqueueStmbJob(zeeInput).id).toBe(zee.id);
+        const otherSet = enqueueStmbJob({ ...input, payload: { ...input.payload, setKey: 'other-cast' } });
+        expect(otherSet.id).not.toBe(aiko.id);
+        const individualInput = { ...input, payload: { trigger: 'onAfterMemory', templateKey: 'character-sheet' } };
+        const individual = enqueueStmbJob(individualInput);
+        expect(individual.id).not.toBe(aiko.id);
+        expect(enqueueStmbJob(individualInput).id).toBe(individual.id);
+        const store = getStmbJobStoreSnapshot(input.chatKey);
+        expect([...store.runningJobs, ...store.queue]).toHaveLength(4);
+    } finally {
+        registerStmbJobExecutor('sidePrompt', () => undefined);
+        finishes.forEach(resolve => resolve());
+    }
+});
+
 it('migrates current and legacy snapshots when the top-level lorebook already matches', () => {
     const currentSnapshot = {
         canonicalLorebookName: 'Old Book',

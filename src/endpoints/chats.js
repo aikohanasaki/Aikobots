@@ -3901,6 +3901,15 @@ async function buildLogicalChatSummary(pathToFile, {
     return chatData;
 }
 
+/** Serializes a referenced chat operation with every worker's saves, renames, and deletes. */
+export async function withChatReferenceLock(directories, chatRef, operation) {
+    const reference = validateStmbChatRef(chatRef);
+    const filePath = reference.type === 'group'
+        ? resolveGroupChatFilePath(directories.groupChats, reference.chatId)
+        : resolveCharacterChatFilePath(directories.chats, reference.avatarUrl, reference.fileName);
+    return withChatSaveLock(filePath, operation);
+}
+
 export async function resolveLogicalChatReference(directories, chatRef) {
     const reference = validateStmbChatRef(chatRef);
 

@@ -823,6 +823,8 @@ function getSidePromptJobIdentity(job = {}) {
         trigger: String(job?.payload?.trigger || ''),
         range: getRangeIdentity(job?.range || job?.payload?.range),
         templateKey: String(job?.payload?.templateKey || ''),
+        setKey: String(job?.payload?.setKey || ''),
+        setItemId: String(job?.payload?.setItemId || ''),
         templates: getSidePromptBatchTemplateIdentity(job),
         lorebookName: String(job?.lorebookName || job?.payload?.lorebookName || '').trim(),
     };
@@ -844,7 +846,8 @@ function areJobsEquivalentForDedupe(left = {}, right = {}) {
     }
 
     if (leftIdentity.type === 'sidePrompt' && (leftIdentity.trigger === 'onInterval' || leftIdentity.trigger === 'onAfterMemory')) {
-        return Boolean(leftIdentity.templateKey) && leftIdentity.templateKey === rightIdentity.templateKey;
+        return Boolean(leftIdentity.templateKey) && leftIdentity.templateKey === rightIdentity.templateKey
+            && leftIdentity.setKey === rightIdentity.setKey && leftIdentity.setItemId === rightIdentity.setItemId;
     }
 
     if (leftIdentity.type === 'memoryAssistance' && leftIdentity.trigger === 'onAfterMemory') {

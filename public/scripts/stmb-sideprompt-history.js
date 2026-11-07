@@ -4,16 +4,17 @@ export const SIDE_PROMPT_SUFFIX = ' (STMB SidePrompt)';
 /** Builds the history identity independently of prompt display names and inclusion groups. */
 export function buildSidePromptHistoryRequest(template, settings, sceneContext, titleBase, legacyTitles) {
     const ref = sceneContext?.chatRef;
+    titleBase = titleBase.endsWith(SIDE_PROMPT_SUFFIX) ? titleBase.slice(0, -SIDE_PROMPT_SUFFIX.length) : titleBase;
     return {
         templateKey: String(template?.key || ''),
         chatKey: ref?.type === 'group'
             ? JSON.stringify(['group', sceneContext.groupId, ref.chatId])
             : JSON.stringify(['character', ref?.avatarUrl, ref?.fileName]),
         chatId: String(sceneContext?.chatId || ''),
-        titleBase: titleBase.endsWith(SIDE_PROMPT_SUFFIX) ? titleBase.slice(0, -SIDE_PROMPT_SUFFIX.length) : titleBase,
+        titleBase,
         // A template rename changes its default title, not its history. Macro-resolved overrides are separate streams.
         titleSource: String(template?.settings?.lorebook?.entryTitleOverride || '').trim() ? 'override' : 'name',
-        group: `${template?.name || ''}-${sceneContext?.chatId || ''}`.replace(/\s/g, '').replace(/,/g, '-'),
+        group: titleBase.replace(/,/g, '-'),
         append: settings?.moduleSettings?.sidePromptVersioningEnabled === true && template?.settings?.saveAllVersions === true,
         legacyTitles,
     };
@@ -31,7 +32,7 @@ export function validateSidePromptHistoryRequest(history) {
     if (!history || typeof history !== 'object' || Array.isArray(history)
         || ['templateKey', 'chatKey', 'chatId', 'titleBase', 'group'].some(key => typeof history[key] !== 'string' || !history[key].trim() || history[key].length > 4096)
         || !['name', 'override'].includes(history.titleSource) || typeof history.append !== 'boolean'
-        || /[\s,]/u.test(history.group)
+        || /,/u.test(history.group)
         || !Array.isArray(history.legacyTitles) || history.legacyTitles.length > 4
         || history.legacyTitles.some(title => typeof title !== 'string' || !title.trim() || title.length > 4096)) {
         throw sidePromptHistoryError(400);

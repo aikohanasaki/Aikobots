@@ -1,4 +1,11 @@
 {
+    "The locked World Info preset no longer exists. Trying the default preset instead.": "Заблокированный пресет World Info больше не существует. Попытка применить пресет по умолчанию.",
+    "No available default World Info preset. Select a default preset or update the lock before generating.": "Нет доступного пресета World Info по умолчанию. Выберите пресет по умолчанию или измените блокировку перед генерацией.",
+    "Generation start could not be confirmed. Cancellation will be retried when connected.": "Не удалось подтвердить начало генерации. Попытка отмены будет повторена при наличии подключения.",
+    "The chat changed before generation could start. Please try again.": "Чат изменился до начала генерации. Попробуйте ещё раз.",
+    "Generation admission could not be verified. Reload the page before trying again.": "Не удалось проверить подтверждение запуска генерации. Перезагрузите страницу перед повторной попыткой.",
+    "World Info preset could not be applied. Check its settings and try again.": "Не удалось применить пресет World Info. Проверьте его настройки и попробуйте ещё раз.",
+    "Generation could not start. Check the chat and try again.": "Не удалось запустить генерацию. Проверьте чат и попробуйте ещё раз.",
     "STMemoryBooks_SortAscending": "по возрастанию",
     "STMemoryBooks_SortDescending": "по убыванию",
     "STMemoryBooks_SortUnsorted": "без сортировки",
@@ -6724,5 +6731,8 @@
     "Google Service Tier": "Уровень обслуживания Google",
     "Google connection profile settings help": "Уровень обслуживания Google и режим API сохраняются при создании или обновлении профиля подключения независимо от пресетов сэмплеров.",
     "Google Interactions sampling warning": "API Interactions использует температуру 1 и отключает Top P, Top K, штраф за присутствие и штраф за частоту.",
-    "Interactions API only allows temperature 1 and no other sampling parameters.": "API Interactions допускает только температуру 1 и не поддерживает другие параметры сэмплирования."
+    "Interactions API only allows temperature 1 and no other sampling parameters.": "API Interactions допускает только температуру 1 и не поддерживает другие параметры сэмплирования.",
+    "Generation was cancelled.": "Генерация отменена.",
+    "Your generation queue is full. Wait for an existing generation to finish and try again.": "Ваша очередь генерации заполнена. Дождитесь завершения текущей генерации и повторите попытку.",
+    "The generation queue is full. Please try again later.": "Очередь генерации заполнена. Повторите попытку позже."
 }

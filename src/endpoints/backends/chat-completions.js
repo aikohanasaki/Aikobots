@@ -64,7 +64,7 @@ import {
     normalizePromptCacheUsage,
 } from '../../prompt-cache-usage.js';
 import { prepareEntriesForScan, resolveSortedEntriesPayload } from '../worldinfo.js';
-import { resolveCoreChatPayload, resolveLogicalChatReference } from '../chats.js';
+import { resolveCoreChatPayload, resolveLogicalChatReference, withChatReferenceLock } from '../chats.js';
 import {
     ACTIVE_SESSION_ERROR,
     ACTIVE_SESSION_LOCK_MESSAGE,
@@ -78,6 +78,7 @@ import {
     finishGenerationJob,
     getGenerationEventsAfter,
     getGenerationJob,
+    getMatchingGenerationJob,
     isGenerationCancellationRequested,
     listGenerationRecoveries,
     requestGenerationCancellation,
@@ -2506,19 +2507,13 @@ async function snapshotServerGenerationSource(request, preparation) {
     const promptContext = structuredClone(preparation.promptContext);
     const logicalChat = await resolveLogicalChatReference(request.user.directories, preparation.source.chatRef);
     if (logicalChat.storageMode !== 'sqlite' || !logicalChat.storageHealthy || !logicalChat.header) {
-        throw createChatCompletionStageError('Generation requires SQLite chat storage.', 409, {
-            stage: 'source_snapshot',
-            retryable: false,
-        });
+        throw Object.assign(new Error('Generation requires SQLite chat storage.'), { status: 409, code: 'generation_source_unavailable' });
     }
     const revision = Number(logicalChat.header.chat_revision) || 0;
     const lastMessage = logicalChat.messages.at(-1);
     if (revision !== preparation.source.expectedRevision
         || lastMessage?.aikobots_message_uuid !== preparation.source.anchorMessageUuid) {
-        throw createChatCompletionStageError('The chat changed before generation preparation.', 409, {
-            stage: 'source_snapshot',
-            retryable: false,
-        });
+        throw Object.assign(new Error('The chat changed before generation preparation.'), { status: 409, code: 'generation_source_changed' });
     }
 
     return { promptContext, messages: logicalChat.messages };
@@ -4814,7 +4809,7 @@ function isGenerationOwnerStale(job, now = Date.now()) {
 }
 
 /** Runs the existing provider dispatch independently of the creating HTTP socket. */
-async function runDetachedGeneration(sourceRequest, id, preparation, requestId, limits) {
+async function runDetachedGeneration(sourceRequest, id, preparation, requestId, limits, snapshot) {
     const userHandle = getGenerationUserHandle(sourceRequest);
     const abortController = new AbortController();
     const cancelPoll = setInterval(() => {
@@ -4827,7 +4822,6 @@ async function runDetachedGeneration(sourceRequest, id, preparation, requestId, 
     ownerHeartbeat.unref?.();
 
     try {
-        const snapshot = await snapshotServerGenerationSource(sourceRequest, preparation);
         abortController.signal.throwIfAborted();
         let failedClaims = 0;
         while (true) {
@@ -4903,6 +4897,25 @@ function recordDetachedGenerationFailure(id, userHandle, stream) {
     }
 }
 
+/** Captures the source before publishing a job; duplicate admission never recaptures it. */
+export async function admitGenerationSnapshot(request, preparation, jobOptions, {
+    withLock = withChatReferenceLock,
+    readSnapshot = snapshotServerGenerationSource,
+    findJob = getMatchingGenerationJob,
+    createJob = createGenerationJob,
+} = {}) {
+    const existing = findJob(jobOptions);
+    if (existing) return existing;
+    return withLock(request.user.directories, preparation.source.chatRef, async () => {
+        const replay = findJob(jobOptions);
+        if (replay) return replay;
+        const snapshot = await readSnapshot(request, preparation);
+        await assertActiveSessionOperation(request);
+        const created = createJob(jobOptions);
+        return { ...created, snapshot: created.created ? snapshot : undefined };
+    });
+}
+
 router.use('/generations', requireGenerationUserHandle);
 
 router.post('/generations', async function (request, response) {
@@ -4911,38 +4924,52 @@ router.post('/generations', async function (request, response) {
         return response.status(400).send({ error: { message: 'A valid generation ID is required.' } });
     }
 
+    const requestId = request.requestId || uuidv4();
     try {
         await assertActiveSessionOperation(request);
         const preparation = normalizeGenerationPreparation(request.body.preparation);
-        const requestId = request.requestId || uuidv4();
         const userHandle = getGenerationUserHandle(request);
         const limits = getGenerationJobLimits(request);
-        let created;
-        const generationTask = startTrackedGenerationTask(() => {
-            created = createGenerationJob({
-                id,
-                userHandle,
-                requestFingerprint: getGenerationRequestFingerprint({
-                    version: preparation.version,
-                    nonce: preparation.nonce,
-                    source: preparation.source,
-                }),
-                requestId,
-                recovery: request.body.recovery ?? null,
-                limits,
-            });
-            if (created.created) {
-                return runDetachedGeneration(request, id, preparation, requestId, limits)
-                    .catch(() => recordDetachedGenerationFailure(id, userHandle, Boolean(preparation.providerRequest.stream)));
+        let resolveAdmission;
+        let rejectAdmission;
+        const admission = new Promise((resolve, reject) => {
+            resolveAdmission = resolve;
+            rejectAdmission = reject;
+        });
+        const generationTask = startTrackedGenerationTask(async () => {
+            let created;
+            try {
+                created = await admitGenerationSnapshot(request, preparation, {
+                    id,
+                    userHandle,
+                    requestFingerprint: getGenerationRequestFingerprint({
+                        version: preparation.version,
+                        nonce: preparation.nonce,
+                        source: preparation.source,
+                    }),
+                    requestId,
+                    recovery: request.body.recovery ?? null,
+                    limits,
+                });
+                resolveAdmission(created);
+                if (created.created) {
+                    await runDetachedGeneration(request, id, preparation, requestId, limits, created.snapshot);
+                }
+            } catch (error) {
+                if (created) recordDetachedGenerationFailure(id, userHandle, Boolean(preparation.providerRequest.stream));
+                else rejectAdmission(error);
             }
         });
         if (!generationTask) {
             return response.status(503).send({ error: { message: 'Could not start generation.' } });
         }
+        const created = await admission;
         return response.status(created.created ? 202 : 200).send({
             id,
             state: created.job.state,
             request_id: created.job.requestId,
+            snapshot_admitted: true,
+            accepted_revision: preparation.source.expectedRevision,
         });
     } catch (error) {
         if (isActiveSessionError(error)) {
@@ -4952,10 +4979,21 @@ router.post('/generations', async function (request, response) {
         if (status === 503) {
             response.setHeader('Retry-After', '1');
         }
+        const admissionMessages = {
+            invalid_generation_preparation: 'Could not start generation.',
+            generation_source_changed: 'The chat changed before generation preparation.',
+            generation_source_unavailable: 'Could not start generation.',
+            generation_cancelled: 'Generation was cancelled.',
+            generation_user_limit_reached: 'Your generation queue is full. Wait for an existing generation to finish and try again.',
+            generation_queue_full: 'The generation queue is full. Please try again later.',
+        };
+        const code = Object.hasOwn(admissionMessages, error?.code) ? error.code : 'generation_admission_failed';
         return response.status(status).send({
             error: {
-                code: error?.code || undefined,
-                message: [400, 409, 429, 503].includes(status) ? error.message : 'Could not start generation.',
+                code,
+                message: admissionMessages[code] ?? 'Could not start generation.',
+                stage: 'generation_admission',
+                request_id: requestId,
             },
         });
     }
@@ -5105,6 +5143,9 @@ router.post('/generations/:id/resolve', async function (request, response) {
 });
 
 router.post('/generations/:id/cancel', async function (request, response) {
+    if (!GENERATION_ID_PATTERN.test(String(request.params.id || ''))) {
+        return response.status(400).send({ error: { message: 'A valid generation ID is required.' } });
+    }
     try {
         await assertActiveSessionOperation(request);
         const job = requestGenerationCancellation(request.params.id, getGenerationUserHandle(request));

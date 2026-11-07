@@ -308,7 +308,7 @@ describe('Side Prompt version saves', () => {
         const first = await save();
         expect(first.statusCode).toBe(200);
         expect(first.payload.entry.comment).toBe('Assess-002 (STMB SidePrompt)');
-        expect(book.entries[5]).toMatchObject({ content: 'Original', comment: 'Assess-001 (STMB SidePrompt)', disable: true, order: 42, group: 'Assess-ChatOne' });
+        expect(book.entries[5]).toMatchObject({ content: 'Original', comment: 'Assess-001 (STMB SidePrompt)', disable: true, order: 42, group: first.payload.entry.group });
         const second = await save(item({ content: 'Changed latest', sidePromptHistory: { ...history(), append: false } }));
         expect(second.payload.created).toBe(false);
         expect(second.payload.entry.uid).toBe(first.payload.entry.uid);
@@ -316,7 +316,18 @@ describe('Side Prompt version saves', () => {
         const third = await save();
         expect(third.payload.entry.comment).toBe('Assess-003 (STMB SidePrompt)');
         expect(Object.values(book.entries).filter(entry => !entry.disable)).toHaveLength(1);
-        expect(Object.values(book.entries).every(entry => entry.order === 42 && entry.group === 'Assess-ChatOne')).toBe(true);
+        expect(Object.values(book.entries).every(entry => entry.order === 42 && entry.group === first.payload.entry.group)).toBe(true);
+    });
+
+    it('replaces old groups with a stable history group for all versions on save', async () => {
+        const first = await save();
+        Object.values(book.entries)[0].group = 'Assess-ChatOne';
+        const renamed = { ...history(), titleBase: 'Alice, Status', group: 'OldClient-ChatOne' };
+        const response = await save(item({ sidePromptHistory: renamed }));
+        expect(response.statusCode).toBe(200);
+        expect(response.payload.entry.comment).toBe('Alice, Status-002 (STMB SidePrompt)');
+        expect(Object.values(book.entries).map(entry => entry.group)).toEqual([first.payload.entry.group, first.payload.entry.group]);
+        expect(first.payload.entry.group).toMatch(/^STMB-SidePrompt-[a-f0-9]{64}$/);
     });
 
     it('allocates sequential versions within a batch and keeps chats with identical titles separate', async () => {
@@ -328,6 +339,20 @@ describe('Side Prompt version saves', () => {
         const another = await save(item({ sidePromptHistory: other }));
         expect(another.payload.entry.comment).toBe('Assess-001 (STMB SidePrompt)');
         expect(Object.values(book.entries).filter(entry => !entry.disable)).toHaveLength(2);
+        expect(another.payload.entry.group).not.toBe(response.payload.results[1].entry.group);
+    });
+
+    it('keeps identical titles from different templates and override streams in separate inclusion groups', async () => {
+        const requests = [history(), { ...history(), templateKey: 'another' },
+            { ...history(), titleSource: 'override' },
+            { ...history(), titleSource: 'override', titleBase: 'Assess, status' },
+            { ...history(), titleSource: 'override', titleBase: 'Assess- status' }];
+        const response = await save(requests.map(sidePromptHistory => item({ sidePromptHistory })), true);
+        expect(response.statusCode).toBe(200);
+        const enabled = Object.values(book.entries).filter(entry => !entry.disable);
+        expect(enabled).toHaveLength(requests.length);
+        expect(new Set(enabled.map(entry => entry.group)).size).toBe(requests.length);
+        expect(enabled.every(entry => !entry.group.includes(','))).toBe(true);
     });
 
     it('reads and allocates inside the transaction when single and batch saves compete', async () => {

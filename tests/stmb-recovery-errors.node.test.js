@@ -100,7 +100,7 @@ test('the revision queue applies acknowledged effects before releasing later sav
         fetch: async () => ({ ok: true, json: async () => ({ status: 'noop', chat_revision: ++dispatched + 1 }) }),
         adoptChatSaveRevision: ({ incomingRevision, allowAdvance }) => { if (allowAdvance) revision = incomingRevision; },
     });
-    const queue = vm.runInContext(script.slice(start, end).replace('export ', '') + '; queueAcknowledgedChatRevisionRequest', context);
+    const queue = vm.runInContext(script.slice(start, end).replaceAll('export ', '') + '; queueAcknowledgedChatRevisionRequest', context);
     const first = queue(() => ({ url: 'save', body: {}, onAcknowledged: () => { marker = 2; } }));
     const second = queue(({ baseRevision }) => {
         assert.equal(baseRevision, 2);

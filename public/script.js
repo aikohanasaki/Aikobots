@@ -190,7 +190,7 @@ import {
     validateMessageSwipeState,
 } from './scripts/chat-identities.js';
 
-import { canUseServerGenerationPreparation, cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, runGenerationInterceptors } from './scripts/extensions.js';
+import { canUseServerGenerationPreparation, cancelDebouncedMetadataSave, flushDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, runGenerationInterceptors } from './scripts/extensions.js';
 import { COMMENT_NAME_DEFAULT, CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
 import {
     tag_map,
@@ -282,10 +282,10 @@ import { canCommitComposerSendAttempt, isSameComposerOwner, mergeRejectedSendDra
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
-import { clearPendingGeneration, getSupersededFailedGenerationIds, isSameGenerationRecoveryChatIdentity, isTerminalGenerationRecovery, listPendingGenerations, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
+import { cancelGenerationWithConfirmation, listPendingGenerationCancellations, clearPendingGeneration, getSupersededFailedGenerationIds, isSameGenerationRecoveryChatIdentity, isTerminalGenerationRecovery, listPendingGenerations, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
 import { createGenerationReadinessSignal, waitForGenerationReadiness, waitForGenerationSettlement } from './scripts/generation-readiness.js';
 import { captureChatWorkspaceTabFocus, getChatWorkspaceRecoveryRefreshDelay, getLatestChatWorkspaceRecovery, listChatWorkspaceTabs, removeChatWorkspaceTab, removeChatWorkspaceTabByIdentity, restoreChatWorkspaceTabFocus, upsertChatWorkspaceTab } from './scripts/chat-workspace-tabs.js';
-import { initWorldInfoLocks, loadWorldInfoLocksSettings } from './scripts/world-info-locks.js';
+import { initWorldInfoLocks, loadWorldInfoLocksSettings, waitForWorldInfoPreset } from './scripts/world-info-locks.js';
 import { SlashCommand } from './scripts/slash-commands/SlashCommand.js';
 import { SlashCommandParser } from './scripts/slash-commands/SlashCommandParser.js';
 import { ToastHistoryStore, initToastHistoryUi, installToastHistoryCapture } from './scripts/notification-history.js';
@@ -1776,7 +1776,7 @@ export function warnStaleChatSave(errorData) {
 export function queueAcknowledgedChatRevisionRequest(requestFactory) {
     const operationId = uuidv4();
     const chatKey = getActiveChatRevisionKey();
-    const run = chatRevisionOperationQueue.then(async () => {
+    return queueChatRevisionOperation(async () => {
         const baseRevision = getChatSaveRevision();
         const saveSessionId = getChatSaveSessionId();
         const request = requestFactory({ baseRevision, operationId, saveSessionId, chatKey });
@@ -1860,9 +1860,33 @@ export function queueAcknowledgedChatRevisionRequest(requestFactory) {
             };
         }
     });
+}
 
+/** Orders saves and snapshot admission without holding the queue during generation. */
+export function queueChatRevisionOperation(operation) {
+    const run = chatRevisionOperationQueue.then(operation);
     chatRevisionOperationQueue = run.catch(() => {});
     return run;
+}
+
+/** Flushes preparation writes, then captures the source while later saves wait for admission. */
+export async function queueGenerationAdmission(source, admit, signal) {
+    const chatKey = getActiveChatRevisionKey();
+    const saveResult = await flushDebouncedChatSave();
+    if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+        throw new Error(t`Pending chat changes could not be saved. Generation was not started.`);
+    }
+    return queueChatRevisionOperation(() => {
+        signal?.throwIfAborted();
+        const current = getServerGenerationSource(source.generationType);
+        if (chatKey !== getActiveChatRevisionKey() || !current
+            || JSON.stringify(current.chatRef) !== JSON.stringify(source.chatRef)
+            || current.anchorMessageUuid !== source.anchorMessageUuid
+            || generationPreparationMetadata.get(source) !== JSON.stringify([chat_metadata, chat.at(-1)])) {
+            throw new Error(t`The chat changed before generation could start. Please try again.`);
+        }
+        return admit(current);
+    });
 }
 
 function getSyncCurrentChatCooldownSeconds() {
@@ -3046,11 +3070,7 @@ async function cancelWorkspaceRecovery(recovery) {
     if (!recovery?.generationId) {
         return;
     }
-    await fetch(`/api/backends/chat-completions/generations/${recovery.generationId}/cancel`, {
-        method: 'POST',
-        headers: getRequestHeaders(),
-    }).catch(() => null);
-    clearPendingGeneration(recovery.generationId);
+    void cancelGenerationWithConfirmation(recovery.generationId, { getHeaders: getRequestHeaders });
     if (streamingProcessor?.generator?.generationId === recovery.generationId) {
         streamingProcessor.onStopStreaming();
         await foregroundGenerationPromise?.catch(() => null);
@@ -3215,6 +3235,9 @@ function renderChatWorkspaceTabs() {
 }
 
 async function refreshWorkspaceGenerationStatesNow() {
+    for (const id of listPendingGenerationCancellations()) {
+        void cancelGenerationWithConfirmation(id, { getHeaders: getRequestHeaders });
+    }
     if (!isPatron()) {
         latestGenerationRecoveries = [];
         renderChatWorkspaceTabs();
@@ -3435,6 +3458,7 @@ function initTopChatUi() {
         rememberCurrentChatWorkspaceTab();
         startWorkspaceGenerationRefresh({ immediate: true });
         window.addEventListener('pageshow', () => startWorkspaceGenerationRefresh({ immediate: true }));
+        window.addEventListener('online', () => startWorkspaceGenerationRefresh({ immediate: true }));
         window.addEventListener('pagehide', stopWorkspaceGenerationRefresh);
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
@@ -6377,6 +6401,9 @@ function getCoreChatPayloadForAssembly(coreChat, serverPreparationSource = null)
     return serverPreparationSource ? [] : coreChat;
 }
 
+// Browser-only preparation guard; it must never enter recovery storage or provider requests.
+const generationPreparationMetadata = new WeakMap();
+
 /** Captures the content-free SQLite identity that the worker must verify before prompt preparation. */
 function getServerGenerationSource(type) {
     if (!currentChatFileNameLooksSqlite() || !canUseServerGenerationPreparation()) {
@@ -6400,12 +6427,15 @@ function getServerGenerationSource(type) {
         return null;
     }
 
-    return {
+    const source = {
         chatRef,
         expectedRevision: getChatSaveRevision(),
         anchorMessageUuid,
         generationType: String(type || 'normal'),
     };
+    // Keep the preparation guard in browser memory only; never send it in the envelope.
+    generationPreparationMetadata.set(source, JSON.stringify([chat_metadata, chat.at(-1)]));
+    return source;
 }
 
 /**
@@ -7175,6 +7205,10 @@ async function flushPendingChatSaveQueue() {
 }
 
 export async function flushDebouncedChatSave() {
+    const metadataSaveResult = await flushDebouncedMetadataSave();
+    if (metadataSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
     const pendingMessageUpdateResult = await flushPendingSqliteMessageUpdateSave();
     if (pendingMessageUpdateResult === CHAT_SAVE_RESULT.FAILED) {
         return CHAT_SAVE_RESULT.FAILED;
@@ -10613,9 +10647,18 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
             unblockGeneration(type);
             throw new Error(t`Connection profile could not be applied. Check its settings and try again.`, { cause: error });
         }
+        signal?.throwIfAborted();
+        try {
+            await waitForWorldInfoPreset();
+            signal?.throwIfAborted();
+        } catch (error) {
+            unblockGeneration(type);
+            throw error;
+        }
     }
 
     const pendingSaveResult = await flushDebouncedChatSave();
+    signal?.throwIfAborted();
     if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
         unblockGeneration(type);
         if (type !== 'quiet') {
@@ -10638,19 +10681,18 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
 
     // Prevent generation from shallow characters
     await unshallowCharacter(this_chid);
+    signal?.throwIfAborted();
 
     // Occurs every time, even if the generation is aborted due to slash commands execution
     await eventSource.emit(event_types.GENERATION_STARTED, type, { automatic_trigger, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage }, dryRun);
 
-    // Don't recreate abort controller if signal is passed
-    if (!(abortController && signal)) {
-        abortController = new AbortController();
-    }
+    signal?.throwIfAborted();
 
     const isImpersonate = type == 'impersonate';
 
     if (consumeComposer && !(dryRun || generationRecovery || type == 'regenerate' || type == 'swipe' || type == 'quiet')) {
         const interruptedByCommand = await processCommands(String($('#send_textarea').val()));
+        signal?.throwIfAborted();
 
         if (interruptedByCommand) {
             //$("#send_textarea").val('')[0].dispatchEvent(new Event('input', { bubbles:true }));
@@ -10661,6 +10703,7 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
 
     // Occurs only if the generation is not aborted due to slash commands execution
     await eventSource.emit(event_types.GENERATION_AFTER_COMMANDS, type, { automatic_trigger, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage }, dryRun);
+    signal?.throwIfAborted();
 
     const dirtyingForegroundGeneration = isDirtyingForegroundGeneration(type, generationRecovery, dryRun);
     if (dirtyingForegroundGeneration) {
@@ -10673,6 +10716,7 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
     if (!dryRun) {
         // Ping server to make sure it is still alive
         const pingResult = await pingServer();
+        signal?.throwIfAborted();
 
         if (!pingResult) {
             unblockGeneration(type);
@@ -10691,7 +10735,7 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
     if (selected_group && !is_group_generating) {
         if (!dryRun) {
             // Returns the promise that generateGroupWrapper returns; resolves when generation is done
-            return generateGroupWrapper(false, type, { quiet_prompt, force_chid, signal: abortController.signal, quietImage, swipeTarget, generationRecovery, consumeComposer, composerSendAttempt });
+            return generateGroupWrapper(false, type, { quiet_prompt, force_chid, signal, quietImage, swipeTarget, generationRecovery, consumeComposer, composerSendAttempt });
         }
 
         const characterIndexMap = new Map(characters.map((char, index) => [char.avatar, index]));
@@ -10754,18 +10798,6 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
         if (chat.length && chat[chat.length - 1]['is_user']) {
             //do nothing? why does this check exist?
         }
-        else if (type === 'regenerate' && !dryRun && chat.length) {
-            const deletedId = chat.length - 1;
-            const deletedMessage = chat[deletedId];
-            chat.length = chat.length - 1;
-            remapLoadedRangesAfterMessageDeletion(deletedId);
-            syncPartialChatRangeStateAfterMutation();
-            await recomputeTimedWorldInfo();
-            await removeLastMessage();
-            generationStartMutatedChat = true;
-            generationStartDeletedId = deletedId;
-            generationStartDeletedMessage = deletedMessage;
-        }
     }
 
     const isContinue = type == 'continue';
@@ -10805,16 +10837,30 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
         const pendingUserText = textareaText || (type === undefined ? oai_settings.send_if_empty.trim() : '');
         const interceptorChat = pendingUserText
             ? [{ mes: pendingUserText, is_user: true }]
-            : [chat.at(-1)].filter(Boolean);
+            : [type === 'regenerate' && !chat.at(-1)?.is_user ? chat.at(-2) : chat.at(-1)].filter(Boolean);
         console.debug('Running client generation preflight before chat mutation');
         const aborted = await runGenerationInterceptors(interceptorChat, getMaxContextSize(), type, { preflightOnly: true });
+        signal?.throwIfAborted();
         if (aborted) {
             console.debug('Generation aborted by client preflight');
             unblockGeneration(type);
             return Promise.resolve();
         }
         preparedOpenAIRequest = await buildOpenAIGenerateData(type, [], { jsonSchema });
+        signal?.throwIfAborted();
         serverPreflightCompleted = true;
+    }
+
+    // Do not remove the existing reply until cancellable preflight has succeeded.
+    if (!generationRecovery && type === 'regenerate' && !dryRun && chat.length && !chat.at(-1).is_user) {
+        generationStartDeletedId = chat.length - 1;
+        generationStartDeletedMessage = chat.at(-1);
+        chat.length--;
+        remapLoadedRangesAfterMessageDeletion(generationStartDeletedId);
+        syncPartialChatRangeStateAfterMutation();
+        await recomputeTimedWorldInfo();
+        await removeLastMessage();
+        generationStartMutatedChat = true;
     }
 
     //*********************************
@@ -10903,6 +10949,7 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
         creatorNotes,
     } = getCharacterCardFields();
     const serverPreparationSource = !dryRun ? getServerGenerationSource(type) : null;
+    signal?.throwIfAborted();
     const serverPreparedContinueBase = serverPreparationSource && isContinue
         ? String(chat.at(-1)?.mes || '')
         : '';
@@ -11168,6 +11215,7 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
      * @throws {Error|object} Error with message text, or Error with response JSON (OAI/Horde), or the actual response JSON
      */
     async function finishGenerating() {
+        signal?.throwIfAborted();
         console.debug('rungenerate calling API');
 
         showStopButton();
@@ -11227,6 +11275,7 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
             }
 
             streamingProcessor.generator = await sendStreamingRequest(type, generate_data, {
+                signal,
                 generationRecovery: generationRecoveryContext,
                 preparedRequest: serverPreparationSource ? preparedOpenAIRequest : null,
                 onGenerationReady: onForegroundGenerationReady,
@@ -11313,6 +11362,7 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
             }
         } else {
             return await sendGenerationRequest(type, generate_data, {
+                signal,
                 jsonSchema,
                 generationRecovery: generationRecoveryContext,
                 preparedRequest: serverPreparationSource ? preparedOpenAIRequest : null,
@@ -11604,6 +11654,8 @@ async function acknowledgeGenerationRecovery(generationId, { supersedeFailures =
 
 /** Reads the authenticated user's content-free unresolved generation index. */
 async function getServerGenerationRecoveries() {
+    const cancelling = new Set(listPendingGenerationCancellations());
+    for (const id of cancelling) void cancelGenerationWithConfirmation(id, { getHeaders: getRequestHeaders });
     try {
         const response = await fetch('/api/backends/chat-completions/generations/recoverable', {
             headers: getRequestHeaders(),
@@ -11619,7 +11671,8 @@ async function getServerGenerationRecoveries() {
                 generationId: job?.generation_id,
                 serverRequestId: job?.request_id || '',
                 state: job?.state || '',
-            })).filter(Boolean)
+            })).filter(record => record && !cancelling.has(record.generationId)
+                && !listPendingGenerationCancellations().includes(record.generationId))
             : [];
     } catch {
         return [];
@@ -11645,26 +11698,24 @@ function isGenerationRecoveryApplied(record) {
 /** Selects the authoritative server recovery or falls back to the local record when unavailable. */
 async function findGenerationRecoveryForCurrentChat() {
     const currentIdentity = getGenerationRecoveryChatIdentity();
-    const local = listPendingGenerations().find(record => isSameGenerationRecoveryChatIdentity(record.chatIdentity, currentIdentity));
+    const cancelling = new Set(listPendingGenerationCancellations());
+    const local = listPendingGenerations().find(record => !cancelling.has(record.generationId)
+        && isSameGenerationRecoveryChatIdentity(record.chatIdentity, currentIdentity));
     const recoveries = await getServerGenerationRecoveries();
     const discovered = recoveries.find(record => isSameGenerationRecoveryChatIdentity(record.chatIdentity, currentIdentity)) || null;
     if (discovered) {
         savePendingGeneration(discovered);
         return discovered;
     }
-    return local || null;
+    return local && !listPendingGenerationCancellations().includes(local.generationId) ? local : null;
 }
 
 /** Cancels a pending job whose saved chat target is no longer safe to mutate. */
 function cancelPendingGeneration(record) {
-    clearPendingGeneration(record?.generationId);
     if (!record?.generationId) {
         return;
     }
-    void fetch(`/api/backends/chat-completions/generations/${record.generationId}/cancel`, {
-        method: 'POST',
-        headers: getRequestHeaders(),
-    }).catch(() => null);
+    void cancelGenerationWithConfirmation(record.generationId, { getHeaders: getRequestHeaders });
 }
 
 let pendingGenerationRecoveryPromise = null;
@@ -11745,7 +11796,12 @@ export async function Generate(type, options = {}, dryRun = false) {
         || createTemporaryGenerationAttempt(type, options, dryRun);
 
     const isForegroundGeneration = type !== 'quiet';
+    const generationController = new AbortController();
+    options = { ...options, signal: options.signal
+        ? AbortSignal.any([options.signal, generationController.signal])
+        : generationController.signal };
     if (isForegroundGeneration) {
+        abortController = generationController;
         foregroundGenerationId = '';
         is_send_press = true;
         setGenerationPreflightIndicator(true);
@@ -11757,6 +11813,7 @@ export async function Generate(type, options = {}, dryRun = false) {
         try {
             return await generationTask;
         } catch (error) {
+            if (options.signal.aborted) unblockGeneration(type);
             if (error?.generationParked === true) {
                 deferTemporaryGenerationAttempt(temporaryGenerationAttempt, foregroundGenerationId);
                 return { generationParked: true };
@@ -12179,6 +12236,7 @@ export function setInContextMessageId(firstIncludedMessageId) {
  * @property {object?} [generationRecovery]
  * @property {object?} [preparedRequest] Provider options and tool schemas frozen before chat mutation.
  * @property {(generationId: string) => void} [onGenerationReady] Called after detached job admission is durable.
+ * @property {AbortSignal} [signal] Cancellation owned by the generation that prepared this request.
  */
 
 /**
@@ -12195,7 +12253,7 @@ export async function sendGenerationRequest(type, data, options = {}) {
     }
 
     const openAIRequest = data?.promptContext ? { promptContext: data.promptContext } : data.prompt;
-    return await sendOpenAIRequest(type, openAIRequest, abortController.signal, options);
+    return await sendOpenAIRequest(type, openAIRequest, options.signal || abortController.signal, options);
 }
 
 /**
@@ -12206,15 +12264,17 @@ export async function sendGenerationRequest(type, data, options = {}) {
  * @returns {Promise<any>} Streaming generator
  */
 export async function sendStreamingRequest(type, data, options = {}) {
-    if (abortController?.signal?.aborted) {
-        throw new Error('Generation was aborted.');
-    }
+    const signal = AbortSignal.any([
+        options.signal || abortController.signal,
+        streamingProcessor.abortController.signal,
+    ]);
+    signal.throwIfAborted();
 
     if (main_api !== 'openai') {
         throw new Error('Only chat-completions generation is supported.');
     }
 
-    return await sendOpenAIRequest(type, data?.promptContext ? { promptContext: data.promptContext } : data.prompt, streamingProcessor.abortController.signal, options);
+    return await sendOpenAIRequest(type, data?.promptContext ? { promptContext: data.promptContext } : data.prompt, signal, options);
 }
 
 /**

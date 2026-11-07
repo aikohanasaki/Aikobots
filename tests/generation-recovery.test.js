@@ -2,6 +2,8 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
     clearPendingGeneration,
+    cancelGenerationWithConfirmation,
+    listPendingGenerationCancellations,
     getSupersededFailedGenerationIds,
     getPendingGeneration,
     isSameGenerationRecoveryChatIdentity,
@@ -38,6 +40,42 @@ function createRecord(createdAt = Date.now()) {
 }
 
 describe('pending generation recovery', () => {
+    it('retains cancellation and recovery across rejected replies, then suppresses stale discovery after confirmation', async () => {
+        const storage = createStorage();
+        const record = { ...createRecord(), generationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' };
+        savePendingGeneration(record, storage);
+        for (const status of [503, 423, 404]) {
+            const confirmed = await cancelGenerationWithConfirmation(record.generationId, {
+                storage, getHeaders: () => ({}), fetchImpl: async () => Response.json({ error: true }, { status }),
+            });
+            expect(confirmed).toBe(false);
+            expect(getPendingGeneration(storage)?.generationId).toBe(record.generationId);
+            expect(listPendingGenerationCancellations(storage)).toContain(record.generationId);
+        }
+        expect(await cancelGenerationWithConfirmation(record.generationId, {
+            storage, getHeaders: () => ({}), fetchImpl: async () => Response.json({ id: record.generationId, state: 'cancel_requested' }),
+        })).toBe(true);
+        expect(getPendingGeneration(storage)).toBeNull();
+        expect(listPendingGenerationCancellations(storage)).toContain(record.generationId);
+        expect(await cancelGenerationWithConfirmation(record.generationId, {
+            storage, getHeaders: () => ({}), fetchImpl: () => { throw new Error('Confirmed cancellation must not send again'); },
+        })).toBe(true);
+    });
+
+    it('restores content-free cancellation intent even without a pending generation record', async () => {
+        const storage = createStorage();
+        const id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+        storage.setItem('aikobots.pending-generation-cancellations.v1', JSON.stringify([{ id, createdAt: Date.now(), confirmed: false }]));
+        expect(listPendingGenerationCancellations(storage)).toContain(id);
+        let requested = false;
+        expect(await cancelGenerationWithConfirmation(id, {
+            storage, getHeaders: () => ({}), fetchImpl: async () => {
+                requested = true;
+                return Response.json({ id, state: 'cancelled' });
+            },
+        })).toBe(true);
+        expect(requested).toBe(true);
+    });
     it('round-trips only the opaque state needed to reattach after a reload', () => {
         const storage = createStorage();
         const record = {

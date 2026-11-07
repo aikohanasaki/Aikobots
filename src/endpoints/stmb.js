@@ -1,4 +1,5 @@
 import express from 'express';
+import { createHash } from 'node:crypto';
 import { areCombineSourcesCurrent, unionClipKeywords } from '../../public/scripts/stmb-combine-clips-policy.js';
 import { DEFAULT_CLIP_FORMAT, readFormattedClip, renderClipFormat, validateClipFormat, withClipFormatData, withoutClipFormatData } from '../../public/scripts/stmb-clip-format-policy.js';
 import { commitStmbConsolidation, listStmbConsolidationRecoveries, readStmbConsolidationRecovery, writeStmbConsolidationRecovery, reviewStmbConsolidationSources } from '../stmb-consolidation-commit.js';
@@ -522,7 +523,10 @@ function upsertLorebookEntryByTitleData(lorebookData, {
     if (history && !String(content).trim()) throw sidePromptHistoryError(400);
     let entry = history ? history.latest : Object.values(lorebookData.entries).find(candidate => String(candidate?.comment || '') === title);
     const versioned = history && (sidePromptHistory.append || history.versions.length > 0);
-    const group = history?.versions[0]?.group || sidePromptHistory?.group;
+    const group = history ? `STMB-SidePrompt-${createHash('sha256').update(JSON.stringify([
+        sidePromptHistory.templateKey, sidePromptHistory.chatKey, sidePromptHistory.titleSource,
+        sidePromptHistory.titleSource === 'name' ? null : sidePromptHistory.titleBase,
+    ])).digest('hex')}` : undefined;
     if (versioned && history.legacy) {
         const legacy = history.legacy;
         updateStmbSidePromptArchiveState(legacy, () => {
@@ -573,7 +577,10 @@ function upsertLorebookEntryByTitleData(lorebookData, {
         entry.group = group;
         entry.disable = false;
         for (const previous of history.versions) {
-            if (previous !== entry) updateStmbSidePromptArchiveState(previous, () => { previous.disable = true; }, allowRollback);
+            if (previous !== entry) updateStmbSidePromptArchiveState(previous, () => {
+                previous.disable = true;
+                previous.group = group;
+            }, allowRollback);
         }
     }
     if (allowRollback) stampStmbSidePromptRollback(entry, priorEntry);

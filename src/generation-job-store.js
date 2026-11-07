@@ -74,6 +74,12 @@ function openDatabase() {
             PRIMARY KEY (job_id, sequence),
             FOREIGN KEY (job_id) REFERENCES generation_jobs(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS generation_cancellations (
+            id TEXT NOT NULL,
+            user_key TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (id, user_key)
+        );
     `);
     const migrate = database.transaction(() => {
         ensureGenerationJobColumn(database, 'recovery_json', 'recovery_json TEXT');
@@ -210,6 +216,7 @@ function getAuthorizedRow(db, id, userHandle) {
 
 /** Applies terminal and unresolved-recovery retention without deleting healthy work. */
 function pruneExpiredJobs(db, now = Date.now()) {
+    db.prepare('DELETE FROM generation_cancellations WHERE created_at < ?').run(now - UNRESOLVED_COMPLETED_JOB_RETENTION_MS);
     db.prepare(`
         DELETE FROM generation_jobs
         WHERE (state = 'completed' AND recovery_json IS NOT NULL AND resolved_at IS NULL AND finished_at < @unresolvedCutoff)
@@ -223,33 +230,48 @@ function pruneExpiredJobs(db, now = Date.now()) {
     });
 }
 
-/**
- * Creates an idempotent detached generation job without persisting prompt content.
- */
-export function createGenerationJob({ id, userHandle, requestFingerprint, requestId, recovery = null, limits = null }) {
-    const db = openDatabase();
-    const now = Date.now();
-    const userKey = getUserKey(userHandle);
+/** Validates and canonicalizes the content-free recovery target for idempotency checks. */
+function serializeRecovery(recovery) {
     const normalizedRecovery = recovery === null ? null : normalizeGenerationRecovery(recovery);
     if (recovery !== null && !normalizedRecovery) {
         const error = new Error('Generation recovery metadata is invalid.');
         error.status = 400;
         throw error;
     }
-    const recoveryJson = normalizedRecovery ? JSON.stringify(normalizedRecovery) : null;
+    return normalizedRecovery ? JSON.stringify(normalizedRecovery) : null;
+}
+
+/** Validates duplicate admission without creating a job or reading the chat again. */
+export function getMatchingGenerationJob({ id, userHandle, requestFingerprint, recovery = null }) {
+    const userKey = getUserKey(userHandle);
+    const recoveryJson = serializeRecovery(recovery);
+    const existing = openDatabase().prepare('SELECT * FROM generation_jobs WHERE id = ?').get(id);
+    if (!existing) {
+        if (openDatabase().prepare('SELECT 1 FROM generation_cancellations WHERE id = ? AND user_key = ?').get(id, userKey)) {
+            throw Object.assign(new Error('Generation was cancelled.'), { status: 409, code: 'generation_cancelled' });
+        }
+        return null;
+    }
+    if (existing.user_key !== userKey || existing.request_fingerprint !== requestFingerprint || existing.recovery_json !== recoveryJson) {
+        const error = new Error(existing.user_key === userKey
+            ? 'Generation ID was already used for a different request or recovery target.'
+            : 'Generation ID is not available.');
+        error.status = 409;
+        throw error;
+    }
+    return { created: false, job: serializeJob(existing) };
+}
+
+/** Creates an idempotent job without persisting prompt content. */
+export function createGenerationJob({ id, userHandle, requestFingerprint, requestId, recovery = null, limits = null }) {
+    const db = openDatabase();
+    const now = Date.now();
+    const userKey = getUserKey(userHandle);
+    const recoveryJson = serializeRecovery(recovery);
     const admit = db.transaction(() => {
         pruneExpiredJobs(db, now);
-        const existing = db.prepare('SELECT * FROM generation_jobs WHERE id = ?').get(id);
-        if (existing) {
-            if (existing.user_key !== userKey || existing.request_fingerprint !== requestFingerprint || existing.recovery_json !== recoveryJson) {
-                const error = new Error(existing.user_key === userKey
-                    ? 'Generation ID was already used for a different request or recovery target.'
-                    : 'Generation ID is not available.');
-                error.status = 409;
-                throw error;
-            }
-            return { created: false, job: serializeJob(existing) };
-        }
+        const existing = getMatchingGenerationJob({ id, userHandle, requestFingerprint, recovery });
+        if (existing) return existing;
 
         const maxConcurrentPerUser = Number(limits?.maxConcurrentPerUser);
         const configuredQueuedPerUser = Number(limits?.maxQueuedPerUser);
@@ -561,9 +583,17 @@ export function setGenerationJobResult(id, userHandle, result) {
 /** Durably requests cancellation from whichever PM2 worker owns the provider call. */
 export function requestGenerationCancellation(id, userHandle) {
     const db = openDatabase();
+    return db.transaction(() => cancelGenerationInTransaction(db, id, userHandle)).immediate();
+}
+
+/** Records cancellation even before admission, atomically with job creation across workers. */
+function cancelGenerationInTransaction(db, id, userHandle) {
     const row = getAuthorizedRow(db, id, userHandle);
     if (!row) {
-        return null;
+        db.prepare(`INSERT INTO generation_cancellations (id, user_key, created_at) VALUES (?, ?, ?)
+            ON CONFLICT (id, user_key) DO UPDATE SET created_at = excluded.created_at`)
+            .run(id, getUserKey(userHandle), Date.now());
+        return { id, state: 'cancelled' };
     }
     if (TERMINAL_STATES.has(row.state)) {
         if (row.recovery_json && !row.resolved_at) {

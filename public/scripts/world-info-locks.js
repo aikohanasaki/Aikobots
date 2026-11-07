@@ -3,6 +3,7 @@ import {
     characters,
     chat_metadata,
     getRequestHeaders,
+    getCurrentChatId,
     saveMetadata,
     saveSettingsDebounced,
     this_chid,
@@ -47,6 +48,15 @@ export const WORLD_INFO_PRESET_CHAT_LOCK_KEY = 'worldInfoPresetLock';
 const settings = normalizeWorldInfoLocksSettings({});
 let initialized = false;
 let contextRefreshTimer = null;
+let contextRefreshPromise = Promise.resolve(true);
+let presetApplicationPromise = Promise.resolve(true);
+let presetApplicationVersion = 0;
+let presetReadinessFailed = false;
+
+/** Identifies the chat whose preset application may commit after an async refresh. */
+function getPresetContextKey() {
+    return JSON.stringify([selected_group, characters[this_chid]?.avatar, getCurrentChatId()]);
+}
 
 /** Loads legacy World Info Locks settings even when the extension subsystem is disabled. */
 export function loadWorldInfoLocksSettings(rawSettings = {}) {
@@ -348,22 +358,38 @@ function applyWorldInfoEngineSettings(value) {
     return failures;
 }
 
-async function activatePreset(preset, { skipLockPrompt = false } = {}) {
+function activatePreset(preset, options = {}) {
+    clearTimeout(contextRefreshTimer);
+    contextRefreshTimer = null;
+    contextRefreshPromise = Promise.resolve(true);
+    const version = ++presetApplicationVersion;
+    const contextKey = getPresetContextKey();
+    presetApplicationPromise = applyPreset(preset, options, () =>
+        version === presetApplicationVersion && contextKey === getPresetContextKey()).catch(() => false);
+    return presetApplicationPromise;
+}
+
+/** Commits a refreshed preset only while its original context and selection remain current. */
+async function applyPreset(preset, { skipLockPrompt = false }, isCurrent) {
     if (preset && !await refreshStandaloneUniverses(preset.worldList || [], preset.standaloneUniverses || [])) {
         toastr.warning(t`Could not refresh lorebook availability. The preset was not applied.`, t`World Info Presets`);
         renderPresetSelect();
         return false;
     }
+    if (!isCurrent()) return false;
     const currentLock = getContextLock();
     if (!skipLockPrompt && currentLock && currentLock !== (preset?.name || '')) {
         const confirmed = await Popup.show.confirm(
             t`Preset Lock Active`,
             t`This context is locked to "${currentLock}". Update the lock to use "${preset?.name || translate('None')}"?`,
         );
+        if (!isCurrent()) return false;
         if (confirmed && !await updateExistingLocks(preset?.name || '')) {
-            return;
+            return false;
         }
     }
+
+    if (!isCurrent()) return false;
 
     applyWorldInfoPresetSelection(getPresetEligibleNames(preset));
     const failures = preset?.worldInfoSettings ? applyWorldInfoEngineSettings(preset.worldInfoSettings) : [];
@@ -394,31 +420,70 @@ async function applyLocksForCurrentContext() {
     const lockedPresetName = getContextLock();
     if (lockedPresetName) {
         const preset = findPreset(lockedPresetName);
-        if (!preset) {
-            showNotification(t`The locked World Info preset no longer exists.`, 'warning');
-            renderPresetSelect();
-            return;
+        if (preset) {
+            const applied = await activatePreset(preset, { skipLockPrompt: true });
+            if (applied) {
+                showNotification(t`Applied the locked World Info preset.`);
+            }
+            return applied;
         }
-        if (await activatePreset(preset, { skipLockPrompt: true })) {
-            showNotification(t`Applied the locked World Info preset.`);
-        }
-        return;
+        toastr.warning(t`The locked World Info preset no longer exists. Trying the default preset instead.`, t`World Info Presets`);
     }
 
     if (settings.globalDefaultPreset) {
         const preset = findPreset(settings.globalDefaultPreset);
         if (preset) {
-            if (await activatePreset(preset, { skipLockPrompt: true })) {
+            const applied = await activatePreset(preset, { skipLockPrompt: true });
+            if (applied) {
                 showNotification(t`Applied the default World Info preset.`);
             }
+            return applied;
         }
     }
     renderPresetSelect();
+    if (lockedPresetName) {
+        toastr.error(t`No available default World Info preset. Select a default preset or update the lock before generating.`, t`World Info Presets`);
+        return false;
+    }
+    return true;
 }
 
 function scheduleContextRefresh() {
+    ++presetApplicationVersion;
     clearTimeout(contextRefreshTimer);
-    contextRefreshTimer = setTimeout(() => void applyLocksForCurrentContext(), 100);
+    contextRefreshTimer = setTimeout(startContextRefresh, 100);
+}
+
+/** Starts the pending context refresh now; readiness observes failures as well as success. */
+function startContextRefresh() {
+    clearTimeout(contextRefreshTimer);
+    contextRefreshTimer = null;
+    presetApplicationPromise = Promise.resolve(true);
+    contextRefreshPromise = applyLocksForCurrentContext().catch(() => false);
+}
+
+/** Waits for the current context's preset before generation freezes settings. */
+export async function waitForWorldInfoPreset() {
+    const contextKey = getPresetContextKey();
+    if (presetReadinessFailed) {
+        presetReadinessFailed = false;
+        startContextRefresh();
+    }
+    for (;;) {
+        if (contextRefreshTimer) startContextRefresh();
+        const contextTask = contextRefreshPromise;
+        const presetTask = presetApplicationPromise;
+        const results = await Promise.all([contextTask, presetTask]);
+        if (contextKey !== getPresetContextKey()) {
+            throw new Error(t`The chat changed before generation could start. Please try again.`);
+        }
+        if (contextRefreshTimer || contextTask !== contextRefreshPromise || presetTask !== presetApplicationPromise) continue;
+        if (results.includes(false)) {
+            presetReadinessFailed = true;
+            throw new Error(t`World Info preset could not be applied. Check its settings and try again.`);
+        }
+        return;
+    }
 }
 
 function makeCheckbox(label, checked, id) {
@@ -906,7 +971,7 @@ export function initWorldInfoLocks() {
     bindUi();
     registerSlashCommand();
     renderPresetSelect();
-    void applyLocksForCurrentContext();
+    startContextRefresh();
 
     eventSource.on(event_types.CHAT_CHANGED, scheduleContextRefresh);
     eventSource.on(event_types.CHARACTER_RENAMED, (oldId, newId) => {

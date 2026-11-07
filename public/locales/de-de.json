@@ -1,4 +1,11 @@
 {
+    "The locked World Info preset no longer exists. Trying the default preset instead.": "Die gesperrte World-Info-Voreinstellung existiert nicht mehr. Stattdessen wird versucht, die Standardvoreinstellung anzuwenden.",
+    "No available default World Info preset. Select a default preset or update the lock before generating.": "Keine verfügbare World-Info-Standardvoreinstellung. Wähle eine Standardvoreinstellung oder aktualisiere die Sperre, bevor du generierst.",
+    "Generation start could not be confirmed. Cancellation will be retried when connected.": "Der Start der Generierung konnte nicht bestätigt werden. Der Abbruch wird bei bestehender Verbindung erneut versucht.",
+    "The chat changed before generation could start. Please try again.": "Der Chat wurde geändert, bevor die Generierung starten konnte. Bitte versuche es erneut.",
+    "Generation admission could not be verified. Reload the page before trying again.": "Die Bestätigung des Generierungsstarts konnte nicht überprüft werden. Lade die Seite neu, bevor du es erneut versuchst.",
+    "World Info preset could not be applied. Check its settings and try again.": "Die World-Info-Voreinstellung konnte nicht angewendet werden. Überprüfe ihre Einstellungen und versuche es erneut.",
+    "Generation could not start. Check the chat and try again.": "Die Generierung konnte nicht starten. Überprüfe den Chat und versuche es erneut.",
     "STMemoryBooks_SortAscending": "aufsteigend",
     "STMemoryBooks_SortDescending": "absteigend",
     "STMemoryBooks_SortUnsorted": "unsortiert",
@@ -6649,5 +6656,8 @@
     "Google Service Tier": "Google-Dienststufe",
     "Google connection profile settings help": "Google-Dienststufe und API-Modus werden beim Erstellen oder Aktualisieren eines Verbindungsprofils gespeichert, unabhängig von Sampler-Voreinstellungen.",
     "Google Interactions sampling warning": "Die Interactions API verwendet Temperatur 1 und deaktiviert Top P, Top K, Anwesenheitsstrafe und Häufigkeitsstrafe.",
-    "Interactions API only allows temperature 1 and no other sampling parameters.": "Die Interactions API erlaubt nur Temperatur 1 und keine weiteren Sampling-Parameter."
+    "Interactions API only allows temperature 1 and no other sampling parameters.": "Die Interactions API erlaubt nur Temperatur 1 und keine weiteren Sampling-Parameter.",
+    "Generation was cancelled.": "Die Generierung wurde abgebrochen.",
+    "Your generation queue is full. Wait for an existing generation to finish and try again.": "Deine Generierungswarteschlange ist voll. Warte, bis eine laufende Generierung abgeschlossen ist, und versuche es erneut.",
+    "The generation queue is full. Please try again later.": "Die Generierungswarteschlange ist voll. Bitte versuche es später erneut."
 }

@@ -17,6 +17,7 @@ import {
     getMediaDisplay,
     getMediaIndex,
     getRequestHeaders,
+    queueGenerationAdmission,
     is_send_press,
     main_api,
     name1,
@@ -82,7 +83,7 @@ import { consumeChatCompletionStream } from './chat-completion-stream.js';
 import { getOpenRouterPricingDisplay } from './openrouter-pricing.js';
 import { createResumableGenerationResponse } from './resumable-generation.js';
 import { createAutomaticCacheComparison, finishAutomaticCacheComparison, normalizeAutomaticCacheUsage, resetAutomaticCacheComparisons } from './automatic-prompt-cache.js';
-import { clearPendingGeneration, recordGenerationAdmission, savePendingGeneration } from './generation-recovery.js';
+import { cancelGenerationWithConfirmation, clearPendingGeneration, recordGenerationAdmission, savePendingGeneration } from './generation-recovery.js';
 
 export {
     oai_settings,
@@ -1710,6 +1711,24 @@ export function tryParseStreamingError(response, decoded, { quiet = false } = {}
     checkModerationError(data, { quiet });
 
     if (data.error) {
+        if (data.error.stage === 'generation_admission') {
+            switch (data.error.code) {
+                case 'generation_source_changed':
+                    data.error.message = t`The chat changed before generation could start. Please try again.`;
+                    break;
+                case 'generation_cancelled':
+                    data.error.message = t`Generation was cancelled.`;
+                    break;
+                case 'generation_user_limit_reached':
+                    data.error.message = t`Your generation queue is full. Wait for an existing generation to finish and try again.`;
+                    break;
+                case 'generation_queue_full':
+                    data.error.message = t`The generation queue is full. Please try again later.`;
+                    break;
+                default:
+                    data.error.message = t`Generation could not start. Check the chat and try again.`;
+            }
+        }
         const message = formatProviderErrorMessage(data.error, response.statusText || `HTTP ${response.status}`);
         !quiet && toastr.error(message, translate('Chat Completion API'));
         throw new Error(message);
@@ -3101,10 +3120,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
     const usesDetachedGeneration = Boolean(resumedGeneration || generationSource);
     const supportsMultiSwipe = resumedGeneration?.canMultiSwipe ?? canMultiSwipe;
     const generationsUrl = '/api/backends/chat-completions/generations';
-    const cancelGeneration = () => fetch(`${generationsUrl}/${generationId}/cancel`, {
-        method: 'POST',
-        headers: getRequestHeaders(),
-    }).catch(() => null);
+    const cancelGeneration = () => cancelGenerationWithConfirmation(generationId, { getHeaders: getRequestHeaders });
     const onAbort = () => {
         if (!usesDetachedGeneration) {
             return;
@@ -3112,7 +3128,6 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
         if (signal.reason?.generationParked === true) {
             return;
         }
-        clearPendingGeneration(generationId);
         void cancelGeneration();
     };
     signal.addEventListener('abort', onAbort, { once: true });
@@ -3128,21 +3143,13 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
                     signal,
                 });
             }
-            if (usesDetachedGeneration && generationRecovery) {
-                savePendingGeneration({
-                    ...generationRecovery,
-                    generationId,
-                    stream,
-                    canMultiSwipe,
-                    state: 'queued',
-                });
-            }
             const createResponse = usesDetachedGeneration
                 ? await createDetachedGeneration(
                     generationsUrl,
                     generationId,
                     generate_data,
                     generationRecovery ? { ...generationRecovery, stream, canMultiSwipe } : null,
+                    signal,
                 )
                 : null;
 
@@ -3166,6 +3173,10 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
             created.request_id = recoveredJob.request_id || '';
             created.state = recoveredJob.state || resumedGeneration.state;
         }
+        if (signal.aborted) {
+            if (usesDetachedGeneration && signal.reason?.generationParked !== true) void cancelGeneration();
+            signal.throwIfAborted();
+        }
         if (usesDetachedGeneration && generationRecovery) {
             recordGenerationAdmission({
                 ...generationRecovery,
@@ -3175,12 +3186,6 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
                 serverRequestId: created.request_id || '',
                 state: created.state || generationRecovery.state || 'queued',
             }, onGenerationReady);
-        }
-        if (signal.aborted) {
-            if (usesDetachedGeneration && signal.reason?.generationParked !== true) {
-                await cancelGeneration();
-            }
-            signal.throwIfAborted();
         }
         if (usesDetachedGeneration) {
             response = stream
@@ -3362,39 +3367,54 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
     }
 }
 
-async function createDetachedGeneration(url, generationId, request, recovery = null) {
-    const promptContext = structuredClone(request?.prompt_context || {});
-    const source = promptContext.generationSource;
-    delete promptContext.generationSource;
-    const providerRequest = structuredClone(request || {});
-    delete providerRequest.prompt_context;
-    const body = {
-        generation_id: generationId,
-        preparation: {
-            version: 1,
-            nonce: uuidv4(),
-            source,
-            provider_request: providerRequest,
-            prompt_context: promptContext,
-        },
-        recovery,
-    };
-    let lastError;
-    for (let attempt = 0; attempt < 3; attempt++) {
+async function createDetachedGeneration(url, generationId, request, recovery = null, signal = null) {
+    return queueGenerationAdmission(request.prompt_context.generationSource, async source => {
+        const promptContext = structuredClone(request?.prompt_context || {});
+        delete promptContext.generationSource;
+        const providerRequest = structuredClone(request || {});
+        delete providerRequest.prompt_context;
+        const body = JSON.stringify({
+            generation_id: generationId,
+            preparation: {
+                version: 1,
+                nonce: uuidv4(),
+                source,
+                provider_request: providerRequest,
+                prompt_context: promptContext,
+            },
+            recovery,
+        });
+        if (recovery) savePendingGeneration({ ...recovery, generationId, state: 'queued' });
+        const controller = new AbortController();
+        const abort = () => controller.abort(signal.reason);
+        signal?.addEventListener('abort', abort, { once: true });
+        const timeout = setTimeout(() => controller.abort(), 15_000);
+        let admissionError = null;
         try {
-            return await fetch(url, {
-                method: 'POST',
-                body: JSON.stringify(body),
-                headers: getRequestHeaders(),
-            });
-        } catch (error) {
-            lastError = error;
-            if (attempt < 2) {
-                await delay(250 * (attempt + 1));
+            const response = await fetch(url, { method: 'POST', body, headers: getRequestHeaders(), signal: controller.signal });
+            const acknowledgement = response.ok ? await response.clone().json().catch(() => null) : null;
+            if (response.ok && (acknowledgement?.snapshot_admitted !== true
+                || acknowledgement?.accepted_revision !== source.expectedRevision
+                || acknowledgement?.id !== generationId)) {
+                admissionError = new Error(t`Generation admission could not be verified. Reload the page before trying again.`);
+                throw admissionError;
             }
+            signal?.throwIfAborted();
+            if (response.status >= 500 || response.status === 408) {
+                void cancelGenerationWithConfirmation(generationId, { getHeaders: getRequestHeaders });
+            }
+            return response;
+        } catch {
+            if (signal?.reason?.generationParked !== true) {
+                void cancelGenerationWithConfirmation(generationId, { getHeaders: getRequestHeaders });
+            }
+            signal?.throwIfAborted();
+            throw admissionError ?? new Error(t`Generation start could not be confirmed. Cancellation will be retried when connected.`);
+        } finally {
+            clearTimeout(timeout);
+            signal?.removeEventListener('abort', abort);
         }
-    }
-    throw lastError;
+    }, signal);
 }
 
 /** Bridges a reload that raced the original generation-create response. */
