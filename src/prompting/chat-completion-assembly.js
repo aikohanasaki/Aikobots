@@ -1438,6 +1438,14 @@ function joinContentSegments(parts = [], separator = '\n') {
     return normalizeContentSegments(joinedSegments);
 }
 
+/** Joins inserted World Info entries with the same newlines as the string path. */
+function joinWorldInfoEntrySegments(entries = []) {
+    return joinContentSegments(
+        (Array.isArray(entries) ? entries : [])
+            .map(entry => [createWorldInfoContentSegment(entry, entry.text)]),
+    );
+}
+
 function formatWorldInfoSegments(segments = [], wiFormat = '') {
     const normalizedSegments = normalizeContentSegments(segments);
     if (!normalizedSegments.length) {
@@ -1648,26 +1656,10 @@ async function applyWorldInfoToContext(context) {
     context.worldInfoBefore = scanResult.worldInfoBefore || '';
     context.worldInfoAfter = scanResult.worldInfoAfter || '';
     const structuredWorldInfo = scanResult.structuredWorldInfo || {};
-    context.worldInfoBeforeSegments = normalizeContentSegments(
-        (Array.isArray(structuredWorldInfo.beforeEntries) ? structuredWorldInfo.beforeEntries : [])
-            .map(entry => createWorldInfoContentSegment(entry, entry.text))
-            .filter(Boolean),
-    );
-    context.worldInfoAfterSegments = normalizeContentSegments(
-        (Array.isArray(structuredWorldInfo.afterEntries) ? structuredWorldInfo.afterEntries : [])
-            .map(entry => createWorldInfoContentSegment(entry, entry.text))
-            .filter(Boolean),
-    );
-    context.worldInfoAuthorsNoteTopSegments = normalizeContentSegments(
-        (Array.isArray(structuredWorldInfo.authorsNoteBeforeEntries) ? structuredWorldInfo.authorsNoteBeforeEntries : [])
-            .map(entry => createWorldInfoContentSegment(entry, entry.text))
-            .filter(Boolean),
-    );
-    context.worldInfoAuthorsNoteBottomSegments = normalizeContentSegments(
-        (Array.isArray(structuredWorldInfo.authorsNoteAfterEntries) ? structuredWorldInfo.authorsNoteAfterEntries : [])
-            .map(entry => createWorldInfoContentSegment(entry, entry.text))
-            .filter(Boolean),
-    );
+    context.worldInfoBeforeSegments = joinWorldInfoEntrySegments(structuredWorldInfo.beforeEntries);
+    context.worldInfoAfterSegments = joinWorldInfoEntrySegments(structuredWorldInfo.afterEntries);
+    context.worldInfoAuthorsNoteTopSegments = joinWorldInfoEntrySegments(structuredWorldInfo.authorsNoteBeforeEntries);
+    context.worldInfoAuthorsNoteBottomSegments = joinWorldInfoEntrySegments(structuredWorldInfo.authorsNoteAfterEntries);
 
     const extensionPrompts = { ...context.extensionPrompts };
     const authorsNote = extensionPrompts['2_floating_prompt'];
@@ -1698,11 +1690,7 @@ async function applyWorldInfoToContext(context) {
             depth: item.depth,
             scan: false,
             role: item.role ?? extension_prompt_roles.SYSTEM,
-            contentSegments: normalizeContentSegments(
-                (Array.isArray(structuredDepthItem?.entries) ? structuredDepthItem.entries : [])
-                    .map(entry => createWorldInfoContentSegment(entry, entry.text))
-                    .filter(Boolean),
-            ),
+            contentSegments: joinWorldInfoEntrySegments(structuredDepthItem?.entries),
         };
     }
 
@@ -1713,11 +1701,7 @@ async function applyWorldInfoToContext(context) {
             depth: 0,
             scan: false,
             role: extension_prompt_roles.SYSTEM,
-            contentSegments: normalizeContentSegments(
-                (Array.isArray(structuredWorldInfo.outletEntries?.[key]) ? structuredWorldInfo.outletEntries[key] : [])
-                    .map(entry => createWorldInfoContentSegment(entry, entry.text))
-                    .filter(Boolean),
-            ),
+            contentSegments: joinWorldInfoEntrySegments(structuredWorldInfo.outletEntries?.[key]),
         };
     }
 
