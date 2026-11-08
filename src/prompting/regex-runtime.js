@@ -44,6 +44,19 @@ function parseRegexQuantifier(pattern, startIndex) {
     };
 }
 
+/**
+ * Recognizes disjoint, nonempty tokens whose variable runs cannot cross token boundaries.
+ * Deliberately limited to attribute scanners; other nested repetitions stay blocked.
+ * Extend only with another proven disjoint token family, or replace with a full regex analysis.
+ */
+function isDeterministicRegexTokenGroup(body) {
+    const tokens = [String.raw`[^<>"'\s]+(?![^<>"'\s])`, String.raw`\s+(?!\s)`, String.raw`"[^"<>]*"`, String.raw`'[^'<>]*'`];
+    // These tokens contain no alternation themselves; splitting any other syntax fails closed.
+    const branches = body.startsWith('?:') ? body.slice(2).split('|') : body.split('|');
+    return new Set(branches).size === branches.length
+        && branches.every(branch => tokens.includes(branch));
+}
+
 function isPotentiallyUnsafeRegexPattern(pattern) {
     const stack = [{ containsVariableQuantifier: false, lastToken: null }];
     let inCharacterClass = false;
@@ -86,7 +99,8 @@ function isPotentiallyUnsafeRegexPattern(pattern) {
             if (quantifier.variable) {
                 current.containsVariableQuantifier = true;
                 // Optional groups do not repeat their contents; keep tracking them for enclosing repetitions.
-                if (char !== '?' && current.lastToken.type === 'group' && current.lastToken.containsVariableQuantifier) {
+                if (char !== '?' && current.lastToken.type === 'group' && current.lastToken.containsVariableQuantifier
+                    && !isDeterministicRegexTokenGroup(current.lastToken.body)) {
                     return true;
                 }
             }
@@ -97,7 +111,7 @@ function isPotentiallyUnsafeRegexPattern(pattern) {
         }
 
         if (char === '(') {
-            stack.push({ containsVariableQuantifier: false, lastToken: null });
+            stack.push({ containsVariableQuantifier: false, lastToken: null, start: index + 1 });
             continue;
         }
 
@@ -109,6 +123,7 @@ function isPotentiallyUnsafeRegexPattern(pattern) {
             const completedGroup = stack.pop();
             stack[stack.length - 1].lastToken = {
                 type: 'group',
+                body: pattern.slice(completedGroup.start, index),
                 containsVariableQuantifier: completedGroup.containsVariableQuantifier,
             };
             continue;
