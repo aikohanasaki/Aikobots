@@ -265,7 +265,7 @@ test('same-identity tail edits cannot adopt a newer revision with stale continua
     assert.equal(await context.queueChatRevisionOperation(() => 'released'), 'released');
 });
 
-test('a missing locked preset blocks generation with the previous selection until restored', async () => {
+test('a missing locked preset falls back to no preset without blocking generation', async () => {
     const { context } = makeContext();
     const warnings = [];
     const errors = [];
@@ -276,7 +276,7 @@ test('a missing locked preset blocks generation with the previous selection unti
         getPresetContextKey: () => current,
         getContextLock: () => 'synthetic-missing-preset', findPreset: () => null,
         refreshStandaloneUniverses: async () => true,
-        getPresetEligibleNames: preset => preset.worldList,
+        getPresetEligibleNames: preset => preset?.worldList || [],
         applyWorldInfoPresetSelection: names => { selectedNames = names; },
         settings: {}, saveSettingsDebounced() {},
         renderPresetSelect: () => renders++,
@@ -288,15 +288,16 @@ test('a missing locked preset blocks generation with the previous selection unti
     await context.activatePreset({ name: 'previous', worldList: ['synthetic-previous-book'] }, { skipLockPrompt: true });
     current = 'current-chat';
     context.scheduleContextRefresh();
-    await assert.rejects(context.waitForWorldInfoPreset(), /preset could not be applied/);
-    await assert.rejects(context.waitForWorldInfoPreset(), /preset could not be applied/);
-    assert.equal(context.settings.presetName, 'previous');
-    assert.deepEqual(selectedNames, ['synthetic-previous-book']);
-    assert.equal(renders, 3);
-    assert.deepEqual(warnings, Array(2).fill({ message: 'The locked World Info preset no longer exists. Trying the default preset instead.', level: 'warning' }));
-    assert.deepEqual(errors, Array(2).fill('No available default World Info preset. Select a default preset or update the lock before generating.'));
+    await context.waitForWorldInfoPreset();
+    await context.waitForWorldInfoPreset();
+    assert.equal(context.settings.presetName, '');
+    assert.deepEqual(selectedNames, []);
+    assert.equal(renders, 2);
+    assert.deepEqual(warnings, [{ message: 'The locked World Info preset no longer exists. Trying the default preset instead.', level: 'warning' }]);
+    assert.deepEqual(errors, []);
 
     context.findPreset = () => ({ name: 'synthetic-missing-preset', worldList: ['synthetic-restored-book'] });
+    context.scheduleContextRefresh();
     await context.waitForWorldInfoPreset();
     assert.equal(context.settings.presetName, 'synthetic-missing-preset');
     assert.deepEqual(selectedNames, ['synthetic-restored-book']);
@@ -313,7 +314,7 @@ test('a missing lock warns and waits for the default preset, retrying failed fal
         getContextLock: () => 'synthetic-missing-preset',
         findPreset: name => available && name === 'default' ? { name, worldList: ['synthetic-default-book'] } : null,
         refreshStandaloneUniverses: () => refreshed.promise,
-        getPresetEligibleNames: preset => preset.worldList,
+        getPresetEligibleNames: preset => preset?.worldList || [],
         applyWorldInfoPresetSelection: names => { selectedNames = names; },
         settings: { presetName: 'previous', globalDefaultPreset: 'default', showLockNotifications: false },
         saveSettingsDebounced() {}, renderPresetSelect() {}, showNotification() {},
@@ -322,13 +323,16 @@ test('a missing lock warns and waits for the default preset, retrying failed fal
     vm.runInContext('let contextRefreshTimer = null; let contextRefreshPromise = Promise.resolve(true); let presetApplicationPromise = Promise.resolve(true); let presetApplicationVersion = 0; let presetReadinessFailed = false;'
         + section(presets, 'function activatePreset(', 'function makeCheckbox('), context);
     context.scheduleContextRefresh();
-    await assert.rejects(context.waitForWorldInfoPreset(), /preset could not be applied/);
+    await context.waitForWorldInfoPreset();
+    assert.equal(context.settings.presetName, '');
+    assert.deepEqual(selectedNames, []);
     available = true;
+    context.scheduleContextRefresh();
     let ready = false;
     const pending = context.waitForWorldInfoPreset().then(() => { ready = true; });
     await Promise.resolve();
     assert.equal(ready, false);
-    assert.deepEqual(selectedNames, ['synthetic-previous-book']);
+    assert.deepEqual(selectedNames, []);
     refreshed.resolve(false);
     await assert.rejects(pending, /preset could not be applied/);
     context.refreshStandaloneUniverses = async () => true;

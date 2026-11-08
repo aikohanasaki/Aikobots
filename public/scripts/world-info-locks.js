@@ -416,7 +416,7 @@ async function activatePresetByName(name, options = {}) {
     await activatePreset(preset, options);
 }
 
-async function applyLocksForCurrentContext() {
+async function applyLocksForCurrentContext({ clearSelection = false } = {}) {
     const lockedPresetName = getContextLock();
     if (lockedPresetName) {
         const preset = findPreset(lockedPresetName);
@@ -440,11 +440,10 @@ async function applyLocksForCurrentContext() {
             return applied;
         }
     }
-    renderPresetSelect();
-    if (lockedPresetName) {
-        toastr.error(t`No available default World Info preset. Select a default preset or update the lock before generating.`, t`World Info Presets`);
-        return false;
+    if (lockedPresetName || clearSelection) {
+        return activatePreset(null, { skipLockPrompt: true });
     }
+    renderPresetSelect();
     return true;
 }
 
@@ -714,7 +713,7 @@ async function deleteCurrentPreset() {
     removePresetReferences(settings, preset.name);
     settings.presetList.splice(settings.presetList.indexOf(preset), 1);
     settings.presetName = '';
-    await activatePreset(null, { skipLockPrompt: true });
+    await applyLocksForCurrentContext({ clearSelection: true });
     saveSettingsDebounced();
     renderPresetSelect();
 }
