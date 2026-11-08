@@ -85,7 +85,8 @@ function isPotentiallyUnsafeRegexPattern(pattern) {
 
             if (quantifier.variable) {
                 current.containsVariableQuantifier = true;
-                if (current.lastToken.type === 'group' && current.lastToken.containsVariableQuantifier) {
+                // Optional groups do not repeat their contents; keep tracking them for enclosing repetitions.
+                if (char !== '?' && current.lastToken.type === 'group' && current.lastToken.containsVariableQuantifier) {
                     return true;
                 }
             }
