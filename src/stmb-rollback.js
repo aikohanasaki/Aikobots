@@ -64,6 +64,11 @@ function sidePromptRollbackHistoryKey(history) {
     return JSON.stringify([history.templateKey, history.chatKey, history.titleSource, history.titleSource === 'name' ? null : history.titleBase]);
 }
 
+/** Uses the same history identity for saved and copied Side Prompt inclusion groups. */
+export function getStmbSidePromptHistoryGroup(history) {
+    return `STMB-SidePrompt-${createHash('sha256').update(sidePromptRollbackHistoryKey(history)).digest('hex')}`;
+}
+
 /** Plans one ordinary book mutation without changing the supplied book. */
 export function planStmbRollbackBook(db, operation, book, { resolveMessage = uuid => getLogicalMessageRowByUuid(db, uuid) } = {}) {
     const next = structuredClone(book);
@@ -179,7 +184,7 @@ export function planStmbChatCopyBook(book, { sourceChatId, targetChatId, boundar
             if (!snapshot) throw stmbOperationConflict('StmbRecoverySnapshotUnavailable');
             owned(snapshot.sceneStartUuid, snapshot.sceneEndUuid, snapshot.chatId);
         }
-        if (history?.chatId === sourceChatId) {
+        if (history && (history.chatId ?? snapshot?.chatId) === sourceChatId) {
             const key = sidePromptRollbackHistoryKey(history);
             const sequences = histories.get(key) || new Set();
             if (history.version !== 1 || !Number.isSafeInteger(history.sequence) || history.sequence < 1 || sequences.has(history.sequence)) {
@@ -227,15 +232,17 @@ export function planStmbChatCopyBook(book, { sourceChatId, targetChatId, boundar
             }
         }
         const remappableSnapshot = snapshot?.chatId === sourceChatId && uuidMap.has(snapshot.sceneStartUuid) && uuidMap.has(snapshot.sceneEndUuid);
-        if (history?.chatId === sourceChatId && remappableSnapshot) {
+        if (history && remappableSnapshot) {
             let identity;
             try { identity = JSON.parse(history.chatKey); } catch { throw stmbOperationConflict('StmbRecoveryOwnershipUnclear'); }
-            if (!Array.isArray(identity) || identity.length !== 3 || identity[2] !== sourceChatId) throw stmbOperationConflict('StmbRecoveryOwnershipUnclear');
+            if (!Array.isArray(identity) || identity.length !== 3 || !['character', 'group'].includes(identity[0])
+                || identity.some(value => typeof value !== 'string' || !value.trim()) || identity[2] !== sourceChatId
+                || (history.chatId !== undefined && history.chatId !== sourceChatId)) throw stmbOperationConflict('StmbRecoveryOwnershipUnclear');
             identity[2] = targetChatId;
             history.chatKey = JSON.stringify(identity);
-            history.chatId = targetChatId;
-            history.group = remapGroup(history.group);
-            entry.group = remapGroup(entry.group);
+            if (history.chatId !== undefined) history.chatId = targetChatId;
+            if (history.group !== undefined) history.group = remapGroup(history.group);
+            entry.group = getStmbSidePromptHistoryGroup(history);
         }
         if (snapshot?.chatId === sourceChatId) {
             if (snapshot.priorEntry) remap(snapshot.priorEntry);

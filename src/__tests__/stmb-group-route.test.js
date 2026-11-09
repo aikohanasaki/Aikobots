@@ -330,6 +330,47 @@ describe('Side Prompt version saves', () => {
         expect(first.payload.entry.group).toMatch(/^STMB-SidePrompt-[a-f0-9]{64}$/);
     });
 
+    it.each([['character', 'name'], ['group', 'name'], ['character', 'override'], ['group', 'override']])('copies saved %s/%s histories into independent inclusion groups', async (type, titleSource) => {
+        const { planStmbChatCopyBook, hashStmbRollbackState } = await import('../stmb-rollback.js');
+        const sourceHistory = { ...history(), titleSource, chatKey: JSON.stringify([type, 'synthetic-owner', scene.chatId]) };
+        const output = append => item({ sidePromptHistory: { ...sourceHistory, append }, metadataUpdates: {
+            STMB_sidePromptRegeneration: { version: 1, chatId: scene.chatId, templateKey: template.key,
+                sceneStartUuid: 'source-start', sceneEndUuid: 'source-end' },
+        } });
+        for (const append of [true, true, false]) expect((await save(output(append))).statusCode).toBe(200);
+        const original = structuredClone(book);
+        const options = { sourceChatId: scene.chatId, targetChatId: 'Branch', boundary: 1, settings: {},
+            resolveMessage: uuid => ({ logicalIndex: uuid === 'source-start' ? 0 : 1 }),
+            uuidMap: new Map([['source-start', 'branch-start'], ['source-end', 'branch-end']]) };
+        const copied = planStmbChatCopyBook(book, options).data;
+        expect(book).toEqual(original);
+        const targetKey = JSON.stringify([type, 'synthetic-owner', 'Branch']);
+        const expectedGroup = `STMB-SidePrompt-${hashStmbRollbackState([template.key, targetKey, titleSource, titleSource === 'name' ? null : sourceHistory.titleBase])}`;
+        const assertCopied = entry => {
+            expect(entry[SIDE_PROMPT_HISTORY_KEY].chatKey).toBe(targetKey);
+            expect(entry.group).toBe(expectedGroup);
+            expect(entry.group).not.toBe(Object.values(original.entries)[0].group);
+            const { STMB_sidePromptRegeneration: snapshot, ...written } = entry;
+            expect(snapshot.chatId).toBe('Branch');
+            if (snapshot.version === 2) expect(snapshot.writtenFingerprint).toBe(hashStmbRollbackState(written));
+            if (snapshot.priorEntry) assertCopied(snapshot.priorEntry);
+        };
+        Object.values(copied.entries).forEach(assertCopied);
+        expect(Object.values(copied.entries).map(entry => entry.disable)).toEqual([true, false]);
+        const malformed = structuredClone(book);
+        Object.values(malformed.entries)[0][SIDE_PROMPT_HISTORY_KEY].chatKey = '["character","synthetic-owner","other"]';
+        expect(() => planStmbChatCopyBook(malformed, options)).toThrow();
+        const duplicate = structuredClone(book);
+        Object.values(duplicate.entries)[1][SIDE_PROMPT_HISTORY_KEY].sequence = 1;
+        expect(() => planStmbChatCopyBook(duplicate, options)).toThrow();
+        book = copied;
+        const next = await save(item({ sidePromptHistory: { ...sourceHistory, chatId: 'Branch', chatKey: targetKey } }));
+        expect(next.statusCode).toBe(200);
+        expect(next.payload.entry[SIDE_PROMPT_HISTORY_KEY].sequence).toBe(3);
+        expect(next.payload.entry.group).toBe(expectedGroup);
+        expect(Object.values(book.entries).filter(entry => !entry.disable)).toHaveLength(1);
+    });
+
     it('allocates sequential versions within a batch and keeps chats with identical titles separate', async () => {
         const response = await save([item(), item({ content: 'Second' })], true);
         expect(response.statusCode).toBe(200);

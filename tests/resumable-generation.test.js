@@ -13,6 +13,33 @@ function sseResponse(text, headers = undefined) {
 }
 
 describe('resumable generation stream', () => {
+    it.each([408, 425, 429, 503])('resumes a delivery HTTP %s without failing the provider job', async status => {
+        const signal = new AbortController().signal;
+        const fetchImpl = jest.fn()
+            .mockResolvedValueOnce(sseResponse('id: 1\ndata: {"delta":"partial"}\n\n'))
+            .mockResolvedValueOnce(new Response('', { status }))
+            .mockResolvedValueOnce(sseResponse('id: 2\ndata: [DONE]\n\n'));
+        const response = createResumableGenerationResponse({
+            url: '/generation/stream', requestId: 'synthetic', signal,
+            getHeaders: () => ({}), fetchImpl, reconnectDelayMs: 0,
+        });
+        await expect(response.text()).resolves.toContain('[DONE]');
+        expect(fetchImpl.mock.calls[2][1].headers['Last-Event-ID']).toBe('1');
+        expect(signal.aborted).toBe(false);
+    });
+
+    it.each([401, 403, 404])('preserves recovery on delivery HTTP %s without repeatedly retrying access', async status => {
+        const signal = new AbortController().signal;
+        const fetchImpl = jest.fn().mockResolvedValue(new Response('', { status }));
+        const response = createResumableGenerationResponse({
+            url: '/generation/stream', requestId: 'synthetic', signal,
+            getHeaders: () => ({}), fetchImpl, reconnectDelayMs: 0,
+        });
+        await expect(response.text()).rejects.toMatchObject({ generationRecoveryAvailable: true });
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        expect(signal.aborted).toBe(false);
+    });
+
     it('preserves custom SSE events and resumes after the last durable event ID', async () => {
         const fetchImpl = jest.fn()
             .mockResolvedValueOnce(sseResponse('id: 1\nevent: provider-delta\ndata: {"delta":"a"}\n\n'))

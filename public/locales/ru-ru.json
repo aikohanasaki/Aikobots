@@ -1,4 +1,5 @@
 {
+    "Response recovery is pending. Reconnect or click here to retry this chat.": "Восстановление ответа ожидает продолжения. Восстановите соединение или нажмите здесь, чтобы повторить попытку в этом чате.",
     "The locked World Info preset no longer exists. Trying the default preset instead.": "Заблокированный пресет World Info больше не существует. Попытка применить пресет по умолчанию.",
     "No available default World Info preset. Select a default preset or update the lock before generating.": "Нет доступного пресета World Info по умолчанию. Выберите пресет по умолчанию или измените блокировку перед генерацией.",
     "Generation start could not be confirmed. Cancellation will be retried when connected.": "Не удалось подтвердить начало генерации. Попытка отмены будет повторена при наличии подключения.",

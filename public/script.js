@@ -282,7 +282,7 @@ import { canCommitComposerSendAttempt, isSameComposerOwner, mergeRejectedSendDra
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
 import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
-import { cancelGenerationWithConfirmation, listPendingGenerationCancellations, clearPendingGeneration, getSupersededFailedGenerationIds, isSameGenerationRecoveryChatIdentity, isTerminalGenerationRecovery, listPendingGenerations, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
+import { cancelGenerationWithConfirmation, listPendingGenerationCancellations, clearPendingGeneration, getSupersededFailedGenerationIds, isSameGenerationRecoveryChatIdentity, listPendingGenerations, normalizePendingGeneration, savePendingGeneration } from './scripts/generation-recovery.js';
 import { createGenerationReadinessSignal, waitForGenerationReadiness, waitForGenerationSettlement } from './scripts/generation-readiness.js';
 import { captureChatWorkspaceTabFocus, getChatWorkspaceRecoveryRefreshDelay, getLatestChatWorkspaceRecovery, listChatWorkspaceTabs, removeChatWorkspaceTab, removeChatWorkspaceTabByIdentity, restoreChatWorkspaceTabFocus, upsertChatWorkspaceTab } from './scripts/chat-workspace-tabs.js';
 import { initWorldInfoLocks, loadWorldInfoLocksSettings, waitForWorldInfoPreset } from './scripts/world-info-locks.js';
@@ -3458,7 +3458,10 @@ function initTopChatUi() {
         rememberCurrentChatWorkspaceTab();
         startWorkspaceGenerationRefresh({ immediate: true });
         window.addEventListener('pageshow', () => startWorkspaceGenerationRefresh({ immediate: true }));
-        window.addEventListener('online', () => startWorkspaceGenerationRefresh({ immediate: true }));
+        window.addEventListener('online', () => {
+            startWorkspaceGenerationRefresh({ immediate: true });
+            void resumePendingGenerationForCurrentChat({ retry: true });
+        });
         window.addEventListener('pagehide', stopWorkspaceGenerationRefresh);
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
@@ -7445,7 +7448,7 @@ export const reloadChatMutex = new SimpleMutex(reloadCurrentChatUnsafe);
 /**
  * Reloads the active chat unless an open edit requires the authoritative reload to be deferred.
  * @param {object} [options] Reload options accepted by reloadCurrentChatUnsafe.
- * @returns {Promise<boolean|void>} False when an open edit defers the reload.
+ * @returns {Promise<boolean|void>} True only when the authoritative chat was loaded successfully.
  */
 export async function reloadCurrentChat(options = {}) {
     if (deferChatReloadForMessageEdit(options.discardMessageEdit)) {
@@ -7461,7 +7464,7 @@ export async function reloadCurrentChat(options = {}) {
  * @param {object} [options] Reload options.
  * @param {boolean} [options.flushPendingSave=true] Flush pending client saves before clearing the chat.
  * @param {boolean} [options.discardMessageEdit=false] Allow an explicitly confirmed reload to discard an open edit.
- * @returns {Promise<boolean|void>} False when an open edit defers the reload.
+ * @returns {Promise<boolean>} Whether the authoritative chat was loaded successfully.
  */
 export async function reloadCurrentChatUnsafe({ flushPendingSave = true, discardMessageEdit = false } = {}) {
     if (deferChatReloadForMessageEdit(discardMessageEdit)) {
@@ -7477,10 +7480,10 @@ export async function reloadCurrentChatUnsafe({ flushPendingSave = true, discard
         chat.length = 0;
 
         if (selected_group) {
-            await getGroupChat(selected_group, true);
+            if (await getGroupChat(selected_group, true) !== true) return false;
         }
         else if (this_chid !== undefined) {
-            await getChat();
+            if (await getChat() !== true) return false;
         }
         else {
             resetChatState();
@@ -7496,6 +7499,7 @@ export async function reloadCurrentChatUnsafe({ flushPendingSave = true, discard
         if (deferredAuthoritativeReloadChatIdentity === deferredReloadAtStart) {
             deferredAuthoritativeReloadChatIdentity = null;
         }
+        return true;
     } finally {
         await deferredLoader?.clear();
     }
@@ -9834,6 +9838,7 @@ class StreamingProcessor {
             messageId: sqliteMutationMessageId,
         });
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            pauseGenerationRecovery(this.generator?.generationId);
             await reloadCurrentChat({ flushPendingSave: false });
             unblockGeneration();
             return false;
@@ -9905,19 +9910,18 @@ class StreamingProcessor {
     }
 
     async onErrorStreaming(error = null) {
-        const preserveDetachedGeneration = error?.generationRecoveryAvailable === true;
+        const preserveDetachedGeneration = Boolean(this.generator?.generationId);
         const parkedDetachedGeneration = error?.generationParked === true;
         this.detachedRecoveryPending = preserveDetachedGeneration;
         this.detachedRecoveryParked = parkedDetachedGeneration;
         if (preserveDetachedGeneration && !parkedDetachedGeneration && this.generator?.generationId) {
-            exhaustedGenerationRecoveries.add(this.generator.generationId);
+            pauseGenerationRecovery(this.generator.generationId);
         }
-        if (!preserveDetachedGeneration) {
-            const generationId = this.generator?.generationId;
+        if (preserveDetachedGeneration) {
+            // Stop delivery, not provider work, even when rendering itself failed.
+            this.abortController.abort(Object.assign(new Error('Generation delivery paused.'), { generationParked: true }));
+        } else {
             this.clearGenerationRecovery();
-            if (generationId) {
-                void acknowledgeGenerationRecovery(generationId).catch(() => null);
-            }
             this.abortController.abort();
         }
         this.isStopped = true;
@@ -11518,7 +11522,8 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
             await eventSource.emit(event_types.MESSAGE_BEFORE_PERSIST, replyResult.messageId, replyResult.type);
             const replySaveResult = await saveSqliteReplyMutation(replyResult);
             if (replySaveResult !== CHAT_SAVE_RESULT.SAVED) {
-                await reloadCurrentChat();
+                pauseGenerationRecovery(generationId);
+                await reloadCurrentChat({ flushPendingSave: false });
                 unblockGeneration(type);
                 streamingProcessor = null;
                 return Promise.resolve();
@@ -11559,12 +11564,15 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
      * @param {Error|object} exception Error or response JSON
      * @throws {Error|object} Re-throws the exception
      */
-    function onError(exception) {
+    async function onError(exception) {
         // If the response JSON was thrown, show the error message.
         if (typeof exception?.error?.message === 'string') {
             toastr.error(exception.error.message, t`Text generation error`, { timeOut: 10000, extendedTimeOut: 20000 });
         }
 
+        if (streamingProcessor?.generator?.generationId) {
+            await streamingProcessor.onErrorStreaming(exception);
+        }
         consumeOpenAIResponseData(streamingProcessor?.generator?.openAIRequestId ?? null);
         unblockGeneration(type);
         console.log(exception);
@@ -11648,6 +11656,7 @@ async function acknowledgeGenerationRecovery(generationId, { supersedeFailures =
     const resolvedIds = new Set([generationId]);
     supersededIds.forEach((id, index) => supersededResults[index] && resolvedIds.add(id));
     latestGenerationRecoveries = latestGenerationRecoveries.filter(recovery => !resolvedIds.has(recovery.generationId));
+    for (const id of resolvedIds) clearPausedGenerationRecovery(id);
     renderChatWorkspaceTabs();
     return true;
 }
@@ -11719,30 +11728,61 @@ function cancelPendingGeneration(record) {
 }
 
 let pendingGenerationRecoveryPromise = null;
-const exhaustedGenerationRecoveries = new Set();
+const pausedGenerationRecoveries = new Map();
+
+/** Clears the pending notification once recovery can proceed or was acknowledged. */
+function clearPausedGenerationRecovery(generationId) {
+    const notice = pausedGenerationRecoveries.get(generationId);
+    if (notice) toastr.clear(notice);
+    pausedGenerationRecoveries.delete(generationId);
+}
+
+/** Pauses automatic replay until connectivity returns or the user explicitly retries. */
+function pauseGenerationRecovery(generationId) {
+    if (!generationId || pausedGenerationRecoveries.has(generationId)) return;
+    const notice = toastr.warning(t`Response recovery is pending. Reconnect or click here to retry this chat.`, '', {
+        timeOut: 0,
+        extendedTimeOut: 0,
+        closeButton: false, // Keep the retry action available while recovery is paused.
+        tapToDismiss: false,
+    });
+    pausedGenerationRecoveries.set(generationId, notice);
+    notice?.attr({ tabindex: 0, role: 'button' }).on('click', () => {
+        void resumePendingGenerationForCurrentChat({ retry: true });
+    }).on('keydown', event => {
+        if (event.target === event.currentTarget && ['Enter', ' '].includes(event.key)) {
+            event.preventDefault();
+            notice.trigger('click');
+        }
+    });
+}
 
 /** Reattaches this tab's pending generation after its authoritative chat has loaded. */
-async function resumePendingGenerationForCurrentChat() {
+async function resumePendingGenerationForCurrentChat({ retry = false } = {}) {
     if (pendingGenerationRecoveryPromise || streamingProcessor || is_send_press || isActiveSessionLocked) {
         return;
     }
 
     const recoveryTask = (async () => {
         const pending = await findGenerationRecoveryForCurrentChat();
-        if (!pending) {
+        if (!pending || streamingProcessor || is_send_press || isActiveSessionLocked
+            || !isSameGenerationRecoveryChatIdentity(pending.chatIdentity, getGenerationRecoveryChatIdentity())) {
             return;
         }
-        if (isTerminalGenerationRecovery(pending)) {
-            await acknowledgeGenerationRecovery(pending.generationId);
-            return;
-        }
-        if (exhaustedGenerationRecoveries.has(pending.generationId)) {
-            return;
+        if (pausedGenerationRecoveries.has(pending.generationId)) {
+            if (!retry) return;
+            // Local UUIDs may belong to an uncommitted partial response. Only a
+            // successful authoritative reload can prove an uncertain save committed.
+            if (await reloadCurrentChat({ flushPendingSave: false }) !== true
+                || streamingProcessor || is_send_press || isActiveSessionLocked
+                || !isSameGenerationRecoveryChatIdentity(pending.chatIdentity, getGenerationRecoveryChatIdentity())) return;
+            clearPausedGenerationRecovery(pending.generationId);
         }
         if (isGenerationRecoveryApplied(pending)) {
             await acknowledgeGenerationRecovery(pending.generationId, { supersedeFailures: true });
             return;
         }
+        if (pending.state === 'cancelled') return;
 
         const anchorMessage = chat.at(-1);
         if (anchorMessage?.[AIKOBOTS_MESSAGE_UUID_KEY] !== pending.anchorMessageUuid) {
@@ -11765,11 +11805,14 @@ async function resumePendingGenerationForCurrentChat() {
             force_chid: pending.forceChid,
             generationRecovery: pending,
             swipeTarget,
-        }).catch(() => null);
+        }).catch(() => { pauseGenerationRecovery(pending.generationId); });
     })();
     pendingGenerationRecoveryPromise = recoveryTask;
     try {
         await recoveryTask;
+    } catch {
+        // Failed reads must not resolve recovery or cancel an unknown server job.
+        console.warn('Generation recovery attempt failed.');
     } finally {
         if (pendingGenerationRecoveryPromise === recoveryTask) {
             pendingGenerationRecoveryPromise = null;

@@ -1,4 +1,5 @@
 {
+    "Response recovery is pending. Reconnect or click here to retry this chat.": "応答の復元が保留されています。再接続するか、ここをクリックしてこのチャットの復元を再試行してください。",
     "The locked World Info preset no longer exists. Trying the default preset instead.": "ロックされたWorld Infoプリセットは存在しません。代わりにデフォルトのプリセットの適用を試みます。",
     "No available default World Info preset. Select a default preset or update the lock before generating.": "利用可能なデフォルトのWorld Infoプリセットがありません。生成する前にデフォルトのプリセットを選択するか、ロック設定を更新してください。",
     "Generation start could not be confirmed. Cancellation will be retried when connected.": "生成の開始を確認できませんでした。接続が利用可能になったらキャンセルを再試行します。",

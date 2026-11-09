@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+import { SimpleMutex } from '../public/scripts/util/SimpleMutex.js';
 
 const script = fs.readFileSync(new URL('../public/script.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 const reasoning = fs.readFileSync(new URL('../public/scripts/reasoning.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
@@ -64,7 +65,8 @@ function setup({ type = 'normal', strip = false, saveFails = false, stale = fals
         clearPendingGeneration: () => { calls.push('clear'); },
         isPendingStreamingSqliteMutationActive: () => true,
         clearPendingStreamingSqliteMutation: () => {},
-        exhaustedGenerationRecoveries: new Set(),
+        pausedGenerationRecoveries: new Map(),
+        toastr: { warning: () => { calls.push('pending-notice'); } },
         unblockGeneration: () => { calls.push('unblock'); },
         playMessageSound() {}, generatedTextFiltered: () => true,
         swipe: async () => { throw new Error('must not auto-swipe'); },
@@ -72,7 +74,7 @@ function setup({ type = 'normal', strip = false, saveFails = false, stale = fals
     vm.createContext(context);
     const helpers = ['stripThinkTagsFromString', 'clearStoredReasoningFields', 'stripThinkingFromMessage', 'prepareInterruptedResponse']
         .map(name => declaration(reasoning, `${name === 'prepareInterruptedResponse' ? 'export ' : ''}function ${name}(`));
-    vm.runInContext(`${helpers.join('\n')}\n${declaration(reasoning, 'export class ReasoningHandler')}\n${declaration(script, 'export function cleanUpMessage(')}\n${declaration(script, 'class StreamingProcessor')}\nthis.Processor = StreamingProcessor;`, context);
+    vm.runInContext(`${helpers.join('\n')}\n${declaration(script, 'function pauseGenerationRecovery(')}\n${declaration(reasoning, 'export class ReasoningHandler')}\n${declaration(script, 'export function cleanUpMessage(')}\n${declaration(script, 'class StreamingProcessor')}\nthis.Processor = StreamingProcessor;`, context);
     const processor = new context.Processor(type, new Date(), original.mes, { prefixIncomplete, prefixReasoningFormatted: '<think>old', prefixReasoning: 'old' }, { swipeUuid: 'second' });
     processor.messageId = 0;
     processor.messageDom = {};
@@ -169,7 +171,10 @@ test('empty responses, render failures and recovery disconnects do not become sa
         assert.equal(env.processor.interrupted, false);
         assert.equal(env.processor.isStopped, true);
         assert.equal(env.calls.includes('append'), false);
-        if (options.error) assert.equal(env.calls.includes('ack'), false);
+        assert.equal(env.calls.includes('ack'), false);
+        assert.equal(env.calls.includes('clear'), false);
+        assert.equal(env.context.pausedGenerationRecoveries.has('job'), true);
+        assert.equal(env.processor.abortController.signal.reason.generationParked, true);
     }
     const env = setup({ type: 'continue', prefixIncomplete: true });
     await failStream(env);
@@ -199,6 +204,7 @@ test('failed persistence and stale swipes never acknowledge or overwrite saved o
     const result = await failStream(env, { text: 'Useful' });
     assert.equal(await env.processor.onFinishStreaming(0, result), false);
     assert.equal(env.calls.includes('ack'), false);
+    assert.equal(env.context.pausedGenerationRecoveries.has('job'), true);
     assert.deepEqual(env.saved(), env.original);
     const stale = setup({ type: 'swipe', stale: true });
     await failStream(stale, { text: 'Useful' });
@@ -219,4 +225,84 @@ test('provider reasoning presence survives disabled reasoning display', () => {
 test('interrupted finalization excludes tool calls and auto-continue', () => {
     assert.match(script, /canPerformToolCalls && isStreamFinished && !streamingProcessor\.interrupted/);
     assert.match(script, /finishedStreamingProcessor\.interrupted \|\| !transferGenerationToAutoContinue/);
+});
+
+test('recovery retry reloads uncertain saves before acknowledging or replaying them', async () => {
+    for (const type of ['normal', 'continue', 'swipe']) {
+        for (const committed of [false, true]) {
+            const calls = [];
+            const warnings = [];
+            const pending = { generationId: 'job', type, state: 'completed', chatIdentity: { chatId: 'chat' },
+                anchorMessageUuid: 'anchor', outputMessageUuid: type === 'normal' ? 'output' : '',
+                swipeTarget: type === 'swipe' ? { messageId: 0, swipeUuid: 'new-swipe' } : null };
+            const anchor = { uuid: 'anchor', extra: {}, swipe_info: [] };
+            const committedChat = type === 'normal' ? [anchor, { uuid: 'output' }]
+                : [{ ...anchor, extra: type === 'continue' ? { generation: 'job' } : {},
+                    swipe_info: type === 'swipe' ? [{ uuid: 'new-swipe' }] : [] }];
+            const context = vm.createContext({
+                console: { warn: (...args) => warnings.push(args) },
+                streamingProcessor: null, is_send_press: false, isActiveSessionLocked: false,
+                chat: structuredClone(committedChat), // Optimistic local markers do not prove persistence.
+                AIKOBOTS_MESSAGE_UUID_KEY: 'uuid', AIKOBOTS_SWIPE_UUID_KEY: 'uuid', GENERATION_RECOVERY_MARKER_KEY: 'generation',
+                t: strings => strings.join(''), toastr: { warning() {} },
+                findGenerationRecoveryForCurrentChat: async () => pending,
+                getGenerationRecoveryChatIdentity: () => pending.chatIdentity,
+                isSameGenerationRecoveryChatIdentity: (a, b) => a.chatId === b.chatId,
+                reloadCurrentChat: async () => {
+                    calls.push('reload');
+                    context.chat = structuredClone(committed ? committedChat : [anchor]);
+                    return true;
+                },
+                acknowledgeGenerationRecovery: async () => calls.push('ack'),
+                cancelPendingGeneration: () => calls.push('cancel'),
+                clearSwipeGenerationTargetData() {},
+                Generate: async (_type, options) => { calls.push('replay'); assert.equal(options.generationRecovery.generationId, 'job'); },
+            });
+            const start = script.indexOf('let pendingGenerationRecoveryPromise = null;');
+            const end = script.indexOf('\neventSource.on(event_types.CHAT_CHANGED', start);
+            vm.runInContext(declaration(script, 'function isGenerationRecoveryApplied(') + '\n' + script.slice(start, end), context);
+            context.pauseGenerationRecovery('job');
+            await context.resumePendingGenerationForCurrentChat();
+            assert.deepEqual(calls, [], 'background discovery must not cause an infinite replay loop');
+            await context.resumePendingGenerationForCurrentChat({ retry: true });
+            assert.deepEqual(calls, ['reload', committed ? 'ack' : 'replay'], `${type}, committed=${committed}`);
+
+            calls.length = 0;
+            context.pauseGenerationRecovery('job');
+            context.reloadCurrentChat = async () => false;
+            await context.resumePendingGenerationForCurrentChat({ retry: true });
+            assert.deepEqual(calls, [], 'failed or deferred reload cannot acknowledge, replay, or cancel');
+            context.reloadCurrentChat = async () => { throw new Error('synthetic read failure'); };
+            await context.resumePendingGenerationForCurrentChat({ retry: true });
+            assert.deepEqual(calls, []);
+            assert.deepEqual(warnings, [['Generation recovery attempt failed.']]);
+
+            // A failed provider job can still contain unsaved partial output.
+            pending.state = 'failed';
+            context.reloadCurrentChat = async () => { context.chat = structuredClone([anchor]); return true; };
+            await context.resumePendingGenerationForCurrentChat({ retry: true });
+            assert.deepEqual(calls, ['replay']);
+        }
+    }
+});
+
+test('authoritative reload reports failure through its mutex for direct and group chats', async () => {
+    for (const group of [false, true]) {
+        let loaded = false;
+        const context = vm.createContext({
+            selected_group: group ? 'group' : null, this_chid: 0, chat: [],
+            deferredAuthoritativeReloadChatIdentity: null,
+            deferChatReloadForMessageEdit: () => false, isLoaderVisible: () => true,
+            preserveNeutralChat() {}, clearChat: async () => {}, refreshSwipeButtons() {},
+            getChat: async () => loaded, getGroupChat: async () => loaded,
+        });
+        vm.runInContext(declaration(script, 'export async function reloadCurrentChatUnsafe(')
+            + '\n' + declaration(script, 'export async function reloadCurrentChat('), context);
+        context.reloadChatMutex = new SimpleMutex(context.reloadCurrentChatUnsafe);
+        assert.equal(await context.reloadCurrentChat(), false);
+        loaded = true;
+        assert.equal(await context.reloadCurrentChat(), true);
+        context.reloadChatMutex.isBusy = true;
+        assert.equal(await context.reloadCurrentChat(), undefined);
+    }
 });

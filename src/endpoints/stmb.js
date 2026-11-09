@@ -1,11 +1,10 @@
 import express from 'express';
-import { createHash } from 'node:crypto';
 import { areCombineSourcesCurrent, unionClipKeywords } from '../../public/scripts/stmb-combine-clips-policy.js';
 import { DEFAULT_CLIP_FORMAT, readFormattedClip, renderClipFormat, validateClipFormat, withClipFormatData, withoutClipFormatData } from '../../public/scripts/stmb-clip-format-policy.js';
 import { commitStmbConsolidation, listStmbConsolidationRecoveries, readStmbConsolidationRecovery, writeStmbConsolidationRecovery, reviewStmbConsolidationSources } from '../stmb-consolidation-commit.js';
 import { fingerprintStmbSource } from '../../public/scripts/stmb-source.js';
 import { withStmbMemoryTransaction, resolveStmbOperations } from '../stmb-operation-service.js';
-import { stampStmbSidePromptRollback, updateStmbSidePromptArchiveState } from '../stmb-rollback.js';
+import { getStmbSidePromptHistoryGroup, stampStmbSidePromptRollback, updateStmbSidePromptArchiveState } from '../stmb-rollback.js';
 import { SIDE_PROMPT_HISTORY_KEY, formatSidePromptVersionTitle, resolveSidePromptHistory, sidePromptHistoryError, validateSidePromptHistoryRequest } from '../../public/scripts/stmb-sideprompt-history.js';
 import { getStmbMemoryRole } from '../../public/scripts/stmb-group-policy.js';
 import { resolveLogicalChatReference, resolveSqliteLogicalChatReference } from './chats.js';
@@ -523,10 +522,7 @@ function upsertLorebookEntryByTitleData(lorebookData, {
     if (history && !String(content).trim()) throw sidePromptHistoryError(400);
     let entry = history ? history.latest : Object.values(lorebookData.entries).find(candidate => String(candidate?.comment || '') === title);
     const versioned = history && (sidePromptHistory.append || history.versions.length > 0);
-    const group = history ? `STMB-SidePrompt-${createHash('sha256').update(JSON.stringify([
-        sidePromptHistory.templateKey, sidePromptHistory.chatKey, sidePromptHistory.titleSource,
-        sidePromptHistory.titleSource === 'name' ? null : sidePromptHistory.titleBase,
-    ])).digest('hex')}` : undefined;
+    const group = history ? getStmbSidePromptHistoryGroup(sidePromptHistory) : undefined;
     if (versioned && history.legacy) {
         const legacy = history.legacy;
         updateStmbSidePromptArchiveState(legacy, () => {

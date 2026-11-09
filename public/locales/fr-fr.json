@@ -1,4 +1,5 @@
 {
+    "Response recovery is pending. Reconnect or click here to retry this chat.": "La récupération de la réponse est en attente. Rétablissez la connexion ou cliquez ici pour réessayer dans cette conversation.",
     "The locked World Info preset no longer exists. Trying the default preset instead.": "Le préréglage World Info verrouillé n’existe plus. Tentative d’application du préréglage par défaut.",
     "No available default World Info preset. Select a default preset or update the lock before generating.": "Aucun préréglage World Info par défaut disponible. Sélectionnez un préréglage par défaut ou modifiez le verrouillage avant de lancer la génération.",
     "Generation start could not be confirmed. Cancellation will be retried when connected.": "Le démarrage de la génération n’a pas pu être confirmé. L’annulation sera retentée lorsque la connexion sera disponible.",

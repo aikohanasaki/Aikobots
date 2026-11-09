@@ -65,7 +65,9 @@ export function createResumableGenerationResponse({
                         });
                         if (!response.ok || !response.body) {
                             const error = new Error(`Generation stream returned HTTP ${response.status}.`);
-                            error.retryable = response.status >= 500;
+                            error.retryable = response.status >= 500 || [408, 425, 429].includes(response.status);
+                            // A delivery failure says nothing about the detached provider job.
+                            error.generationRecoveryAvailable = true;
                             throw error;
                         }
                         if (!forwardedHeaders) {
