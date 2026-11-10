@@ -6659,6 +6659,11 @@
     "Google Interactions sampling warning": "Die Interactions API verwendet Temperatur 1 und deaktiviert Top P, Top K, Anwesenheitsstrafe und Häufigkeitsstrafe.",
     "Interactions API only allows temperature 1 and no other sampling parameters.": "Die Interactions API erlaubt nur Temperatur 1 und keine weiteren Sampling-Parameter.",
     "Generation was cancelled.": "Die Generierung wurde abgebrochen.",
+    "Connection lost. The server may still be generating. Tap to reconnect.": "Verbindung verloren. Der Server generiert möglicherweise noch. Tippe, um die Verbindung wiederherzustellen.",
+    "Connection interrupted. Your response is still pending. Tap to reconnect.": "Verbindung unterbrochen. Deine Antwort steht noch aus. Tippe, um die Verbindung wiederherzustellen.",
+    "Your response is ready. Tap to recover it.": "Deine Antwort ist bereit. Tippe, um sie wiederherzustellen.",
+    "Generation cancellation is pending.": "Der Abbruch der Generierung steht noch aus.",
+    "Generation failed.": "Die Generierung ist fehlgeschlagen.",
     "Your generation queue is full. Wait for an existing generation to finish and try again.": "Deine Generierungswarteschlange ist voll. Warte, bis eine laufende Generierung abgeschlossen ist, und versuche es erneut.",
     "The generation queue is full. Please try again later.": "Die Generierungswarteschlange ist voll. Bitte versuche es später erneut."
 }

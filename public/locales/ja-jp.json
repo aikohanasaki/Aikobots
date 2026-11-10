@@ -6662,6 +6662,11 @@
     "Google Interactions sampling warning": "Interactions API は温度 1 を使用し、Top P、Top K、存在ペナルティ、頻度ペナルティを無効にします。",
     "Interactions API only allows temperature 1 and no other sampling parameters.": "Interactions API では温度 1 のみが許可され、他のサンプリングパラメーターは使用できません。",
     "Generation was cancelled.": "生成がキャンセルされました。",
+    "Connection lost. The server may still be generating. Tap to reconnect.": "接続が切れました。サーバーではまだ生成が続いている可能性があります。タップして再接続してください。",
+    "Connection interrupted. Your response is still pending. Tap to reconnect.": "接続が中断されました。応答はまだ処理待ちまたは生成中です。タップして再接続してください。",
+    "Your response is ready. Tap to recover it.": "応答が完成しました。タップして復元してください。",
+    "Generation cancellation is pending.": "生成のキャンセルを処理中です。",
+    "Generation failed.": "生成に失敗しました。",
     "Your generation queue is full. Wait for an existing generation to finish and try again.": "生成キューがいっぱいです。進行中の生成が完了するのを待ってから、もう一度お試しください。",
     "The generation queue is full. Please try again later.": "生成キューがいっぱいです。しばらくしてからもう一度お試しください。"
 }

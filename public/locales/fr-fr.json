@@ -6719,6 +6719,11 @@
     "Google Interactions sampling warning": "L’API Interactions utilise une température de 1 et désactive Top P, Top K, la pénalité de présence et la pénalité de fréquence.",
     "Interactions API only allows temperature 1 and no other sampling parameters.": "L’API Interactions autorise uniquement une température de 1 et aucun autre paramètre d’échantillonnage.",
     "Generation was cancelled.": "La génération a été annulée.",
+    "Connection lost. The server may still be generating. Tap to reconnect.": "Connexion perdue. Le serveur est peut-être encore en train de générer la réponse. Appuyez pour vous reconnecter.",
+    "Connection interrupted. Your response is still pending. Tap to reconnect.": "Connexion interrompue. Votre réponse est toujours en attente. Appuyez pour vous reconnecter.",
+    "Your response is ready. Tap to recover it.": "Votre réponse est prête. Appuyez pour la récupérer.",
+    "Generation cancellation is pending.": "L’annulation de la génération est en attente.",
+    "Generation failed.": "La génération a échoué.",
     "Your generation queue is full. Wait for an existing generation to finish and try again.": "Votre file de génération est pleine. Attendez la fin d’une génération en cours, puis réessayez.",
     "The generation queue is full. Please try again later.": "La file de génération est pleine. Veuillez réessayer plus tard."
 }

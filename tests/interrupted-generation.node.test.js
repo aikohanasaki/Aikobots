@@ -286,6 +286,101 @@ test('recovery retry reloads uncertain saves before acknowledging or replaying t
     }
 });
 
+test('recovery toasts report server status without mutating jobs and preserve accessible retry', async () => {
+    const fallback = 'Connection lost. The server may still be generating. Tap to reconnect.';
+    const cases = [
+        ['queued', 'Connection interrupted. Your response is still pending. Tap to reconnect.', true],
+        ['running', 'Connection interrupted. Your response is still pending. Tap to reconnect.', true],
+        ['completed', 'Your response is ready. Tap to recover it.', true],
+        ['cancel_requested', 'Generation cancellation is pending.', false],
+        ['cancelled', 'Generation was cancelled.', false],
+        ['failed', 'Generation failed.', false],
+        ['unknown', fallback, true],
+        ['offline', fallback, true],
+        ['404', fallback, true],
+        ['503', fallback, true],
+        ['invalid-json', fallback, true],
+        ['wrong-id', fallback, true],
+        ['cleared', fallback, true],
+        ['replaced', fallback, true],
+    ];
+    for (const [state, expected, retryable] of cases) {
+        const handlers = new Map();
+        const attrs = {};
+        const calls = [];
+        let message;
+        let closeVisible = true;
+        let resolveStatus;
+        const status = new Promise(resolve => { resolveStatus = resolve; });
+        const notice = {
+            find(selector) {
+                if (selector === '.toast-close-button') return {
+                    hide() { closeVisible = false; }, show() { closeVisible = true; },
+                };
+                assert.equal(selector, '.toast-message');
+                return { attr() {}, text(value) { message = value; } };
+            },
+            attr(name, value) { Object.assign(attrs, typeof name === 'string' ? { [name]: value } : name); return this; },
+            removeAttr(name) { delete attrs[name]; return this; },
+            on(name, callback) { handlers.set(name, callback); return this; },
+            off(namespace) {
+                for (const name of handlers.keys()) if (name.endsWith(namespace)) handlers.delete(name);
+                return this;
+            },
+            trigger(name) { handlers.get(`${name}.generationRecovery`)?.(); },
+        };
+        const context = vm.createContext({
+            t: strings => strings.join(''),
+            pausedGenerationRecoveries: new Map(),
+            toastr: { warning(text, _title, options) {
+                message = text;
+                assert.equal(options.timeOut, 0);
+                assert.equal(options.extendedTimeOut, 0);
+                assert.equal(options.tapToDismiss, false);
+                return notice;
+            }, clear(value) { assert.equal(value, notice); } },
+            getRequestHeaders: () => ({ 'X-CSRF-Token': 'synthetic' }),
+            fetch: async (url, options) => {
+                calls.push('lookup');
+                assert.equal(url, '/api/backends/chat-completions/generations/job');
+                assert.equal(options.cache, 'no-store');
+                assert.equal(options.headers['X-CSRF-Token'], 'synthetic');
+                assert.equal(options.method, undefined, 'only a GET is permitted');
+                await status;
+                if (state === 'offline') throw new Error('synthetic offline');
+                return { ok: !['404', '503'].includes(state), json: async () => {
+                    if (state === 'invalid-json') throw new SyntaxError('synthetic JSON');
+                    return { id: state === 'wrong-id' ? 'other-job' : 'job',
+                        state: ['cleared', 'replaced'].includes(state) ? 'completed' : state };
+                } };
+            },
+            resumePendingGenerationForCurrentChat: async options => { assert.equal(options.retry, true); calls.push('retry'); },
+        });
+        vm.runInContext(declaration(script, 'function pauseGenerationRecovery(')
+            + '\n' + declaration(script, 'function clearPausedGenerationRecovery('), context);
+        context.pauseGenerationRecovery('job');
+        assert.equal(message, fallback);
+        assert.equal(closeVisible, false);
+        context.pauseGenerationRecovery('job');
+        assert.deepEqual(calls, ['lookup'], 'one lookup per pause');
+        if (['cleared', 'replaced'].includes(state)) context.clearPausedGenerationRecovery('job');
+        if (state === 'replaced') context.pausedGenerationRecoveries.set('job', {});
+        resolveStatus();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(message, expected, state);
+        assert.deepEqual(calls, ['lookup'], 'status alone never retries or mutates');
+        assert.equal(context.pausedGenerationRecoveries.has('job'), state !== 'cleared');
+        assert.equal(closeVisible, !retryable, state);
+        assert.equal(attrs.role, retryable ? 'button' : 'status');
+        assert.equal(attrs.tabindex, retryable ? 0 : undefined);
+        notice.trigger('click');
+        for (const key of ['Enter', ' ']) handlers.get('keydown.generationRecovery')?.({
+            target: notice, currentTarget: notice, key, preventDefault() { calls.push('prevent'); },
+        });
+        assert.deepEqual(calls, retryable ? ['lookup', 'retry', 'prevent', 'retry', 'prevent', 'retry'] : ['lookup']);
+    }
+});
+
 test('authoritative reload reports failure through its mutex for direct and group chats', async () => {
     for (const group of [false, true]) {
         let loaded = false;

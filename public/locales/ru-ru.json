@@ -6734,6 +6734,11 @@
     "Google Interactions sampling warning": "API Interactions использует температуру 1 и отключает Top P, Top K, штраф за присутствие и штраф за частоту.",
     "Interactions API only allows temperature 1 and no other sampling parameters.": "API Interactions допускает только температуру 1 и не поддерживает другие параметры сэмплирования.",
     "Generation was cancelled.": "Генерация отменена.",
+    "Connection lost. The server may still be generating. Tap to reconnect.": "Соединение потеряно. Возможно, сервер ещё генерирует ответ. Нажмите, чтобы подключиться снова.",
+    "Connection interrupted. Your response is still pending. Tap to reconnect.": "Соединение прервано. Ваш ответ ещё ожидается. Нажмите, чтобы подключиться снова.",
+    "Your response is ready. Tap to recover it.": "Ваш ответ готов. Нажмите, чтобы восстановить его.",
+    "Generation cancellation is pending.": "Ожидается отмена генерации.",
+    "Generation failed.": "Не удалось сгенерировать ответ.",
     "Your generation queue is full. Wait for an existing generation to finish and try again.": "Ваша очередь генерации заполнена. Дождитесь завершения текущей генерации и повторите попытку.",
     "The generation queue is full. Please try again later.": "Очередь генерации заполнена. Повторите попытку позже."
 }

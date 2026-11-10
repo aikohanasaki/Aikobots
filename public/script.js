@@ -11740,21 +11740,65 @@ function clearPausedGenerationRecovery(generationId) {
 /** Pauses automatic replay until connectivity returns or the user explicitly retries. */
 function pauseGenerationRecovery(generationId) {
     if (!generationId || pausedGenerationRecoveries.has(generationId)) return;
-    const notice = toastr.warning(t`Response recovery is pending. Reconnect or click here to retry this chat.`, '', {
+    const notice = toastr.warning(t`Connection lost. The server may still be generating. Tap to reconnect.`, '', {
         timeOut: 0,
         extendedTimeOut: 0,
-        closeButton: false, // Keep the retry action available while recovery is paused.
+        closeButton: true,
         tapToDismiss: false,
     });
     pausedGenerationRecoveries.set(generationId, notice);
-    notice?.attr({ tabindex: 0, role: 'button' }).on('click', () => {
+    if (!notice) return;
+    // Keep the retry action available until the server confirms cancellation or failure.
+    notice.find('.toast-close-button').hide();
+    notice.find('.toast-message').attr({ 'aria-live': 'polite', 'aria-atomic': 'true' });
+    notice.attr({ tabindex: 0, role: 'button' }).on('click.generationRecovery', () => {
         void resumePendingGenerationForCurrentChat({ retry: true });
-    }).on('keydown', event => {
+    }).on('keydown.generationRecovery', event => {
         if (event.target === event.currentTarget && ['Enter', ' '].includes(event.key)) {
             event.preventDefault();
             notice.trigger('click');
         }
     });
+
+    void (async () => {
+        try {
+            const response = await fetch(`/api/backends/chat-completions/generations/${encodeURIComponent(generationId)}`, {
+                headers: getRequestHeaders(),
+                cache: 'no-store',
+            });
+            if (!response.ok) return;
+            const job = await response.json();
+            if (job?.id !== generationId || pausedGenerationRecoveries.get(generationId) !== notice) return;
+            let message;
+            switch (job.state) {
+                case 'queued':
+                case 'running':
+                    message = t`Connection interrupted. Your response is still pending. Tap to reconnect.`;
+                    break;
+                case 'completed':
+                    message = t`Your response is ready. Tap to recover it.`;
+                    break;
+                case 'cancel_requested':
+                    message = t`Generation cancellation is pending.`;
+                    break;
+                case 'cancelled':
+                    message = t`Generation was cancelled.`;
+                    break;
+                case 'failed':
+                    message = t`Generation failed.`;
+                    break;
+                default:
+                    return;
+            }
+            notice.find('.toast-message').text(message);
+            if (['cancel_requested', 'cancelled', 'failed'].includes(job.state)) {
+                notice.off('.generationRecovery').removeAttr('tabindex').attr('role', 'status');
+                notice.find('.toast-close-button').show();
+            }
+        } catch {
+            // Delivery failure cannot establish whether the provider job stopped.
+        }
+    })();
 }
 
 /** Reattaches this tab's pending generation after its authoritative chat has loaded. */
