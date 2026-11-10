@@ -140,7 +140,7 @@ test('failed saves, changed anchors, cancellation and admission errors never str
     }
 });
 
-test('lost or invalid admission acknowledgements release the save queue and retain cancellation', async () => {
+test('lost or invalid admission acknowledgements release the save queue without cancellation', async () => {
     const { context, source } = makeContext();
     vm.runInContext(section(openai, 'async function createDetachedGeneration(', '/** Bridges a reload'), context);
     context.uuidv4 = () => 'nonce';
@@ -160,7 +160,7 @@ test('lost or invalid admission acknowledgements release the save queue and reta
     context.fetch = async url => { requests.push(url); return Response.json({ id: 'job' }); };
     await assert.rejects(context.createDetachedGeneration('/generations', 'job', { prompt_context: { generationSource: source } }), /START_NOT_ADMITTED/);
     assert.deepEqual(requests, ['/generations']);
-    assert.deepEqual(cancelled, ['job']);
+    assert.deepEqual(cancelled, []);
 });
 
 test('Stop aborts admission immediately without waiting for cancellation, and failed preparation leaves no recovery record', async () => {
@@ -203,27 +203,34 @@ test('a metadata change during preparation cannot be relabelled with a newer rev
     assert.equal(admitted, false);
 });
 
-test('an admission with no response times out and releases queued saves', async () => {
+test('an admission with no response releases queued saves and preserves recovery without cancellation', async () => {
     const { context, source, timers } = makeContext();
     vm.runInContext(section(openai, 'async function createDetachedGeneration(', '/** Bridges a reload'), context);
     const started = deferred();
     let cancellations = 0;
+    let savedRecovery;
     Object.assign(context, {
         uuidv4: () => 'nonce', getRequestHeaders: () => ({}),
+        savePendingGeneration: record => { savedRecovery = record; },
         cancelGenerationWithConfirmation: () => { cancellations++; return new Promise(() => {}); },
         fetch: (_url, { signal }) => new Promise((_resolve, reject) => {
             signal.addEventListener('abort', () => reject(signal.reason), { once: true });
             started.resolve();
         }),
     });
-    const admission = context.createDetachedGeneration('/generations', 'job', { prompt_context: { generationSource: source } });
-    const rejected = assert.rejects(admission, /START_TIMEOUT/);
+    const admission = context.createDetachedGeneration('/generations', 'job', { prompt_context: { generationSource: source } }, { anchorMessageUuid: 'synthetic-anchor' });
+    const rejected = assert.rejects(admission, error => error.generationCancellationCode === 'START_TIMEOUT'
+        && error.generationRecoveryAvailable === true && error.generationId === 'job'
+        && !error.message.includes('Cancellation requested'));
     await started.promise;
     const laterSave = context.queueChatRevisionOperation(() => 'saved');
     [...timers.values()][0]();
     await rejected;
     assert.equal(await laterSave, 'saved');
-    assert.equal(cancellations, 1);
+    assert.equal(cancellations, 0);
+    assert.equal(savedRecovery.generationId, 'job');
+    assert.equal(savedRecovery.anchorMessageUuid, 'synthetic-anchor');
+    assert.equal(savedRecovery.state, 'queued');
 });
 
 test('startup cancellation diagnostics distinguish transport and acknowledgement failures without exposing content', async () => {
@@ -236,7 +243,7 @@ test('startup cancellation diagnostics distinguish transport and acknowledgement
         ['START_REVISION_MISMATCH', id => Response.json({ id, snapshot_admitted: true, accepted_revision: -1 })],
         ...[408, 500, 502, 503, 504].map(status => [status === 408 ? 'START_HTTP_408' : 'START_HTTP_5XX', () => new Response('synthetic-private-sentinel', { status }), status]),
     ];
-    for (const [index, [code, response, status]] of cases.entries()) {
+    for (const [index, [code, response]] of cases.entries()) {
         const { context, source } = makeContext();
         const id = `classification-${index}`;
         let cancellations = 0;
@@ -249,16 +256,11 @@ test('startup cancellation diagnostics distinguish transport and acknowledgement
         });
         vm.runInContext(section(openai, 'async function createDetachedGeneration(', '/** Bridges a reload'), context);
         let error;
-        try {
-            const result = await context.createDetachedGeneration('/generations', id, { prompt_context: { generationSource: source } }, { anchorMessageUuid: 'synthetic-anchor' });
-            error = result.generationCancellationError;
-            assert.equal(result.status, status);
-        } catch (caught) { error = caught; }
+        await assert.rejects(context.createDetachedGeneration('/generations', id, { prompt_context: { generationSource: source } }, { anchorMessageUuid: 'synthetic-anchor' }), caught => { error = caught; return true; });
         assert.equal(error.generationCancellationCode, code);
         assert.equal(error.generationCancellationReported, true);
         assert.equal(error.message.includes('synthetic-private-sentinel'), false);
-        if (status) assert.ok(error.message.includes(String(status)));
-        const recoveryPending = ['START_INVALID_REPLY', 'START_NOT_ADMITTED'].includes(code);
+        const recoveryPending = ['START_CONNECTION', 'START_HTTP_408', 'START_HTTP_5XX', 'START_INVALID_REPLY', 'START_NOT_ADMITTED'].includes(code);
         assert.equal(cancellations, recoveryPending ? 0 : 1);
         if (recoveryPending) {
             assert.equal(error.generationRecoveryAvailable, true);

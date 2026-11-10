@@ -3155,7 +3155,6 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
 
             if (createResponse && !createResponse.ok) {
                 clearPendingGeneration(generationId);
-                if (createResponse.generationCancellationError) throw createResponse.generationCancellationError;
                 const errorText = await createResponse.text();
                 const parsed = tryParseStreamingError(createResponse, errorText);
                 const fallbackMessage = getResponseErrorMessage(createResponse, errorText, parsed);
@@ -3404,18 +3403,15 @@ async function createDetachedGeneration(url, generationId, request, recovery = n
             }
             signal?.throwIfAborted();
             if (response.status >= 500 || response.status === 408) {
-                void cancelGenerationWithConfirmation(generationId, { getHeaders: getRequestHeaders });
-                response.generationCancellationError = reportGenerationCancellation(generationId, {
-                    generationCancellationCode: response.status === 408 ? 'START_HTTP_408' : 'START_HTTP_5XX',
-                    status: response.status,
-                }, { t });
+                admissionCode = response.status === 408 ? 'START_HTTP_408' : 'START_HTTP_5XX';
+                throw new Error('Generation acknowledgement unavailable.');
             }
             return response;
         } catch {
             if (signal?.reason?.generationParked !== true) {
-                // An unreadable or incomplete acknowledgement does not prove the job was rejected.
-                const recoveryPending = !signal?.aborted && !timedOut
-                    && ['START_INVALID_REPLY', 'START_NOT_ADMITTED'].includes(admissionCode);
+                // Missing confirmation does not prove rejection; only an explicit abort or mismatch cancels.
+                const recoveryPending = !signal?.aborted
+                    && !['START_ID_MISMATCH', 'START_REVISION_MISMATCH'].includes(admissionCode);
                 if (!recoveryPending) void cancelGenerationWithConfirmation(generationId, { getHeaders: getRequestHeaders });
                 const diagnostic = reportGenerationCancellation(generationId, signal?.aborted ? signal.reason : {
                     generationCancellationCode: timedOut ? 'START_TIMEOUT' : admissionCode || 'START_CONNECTION',

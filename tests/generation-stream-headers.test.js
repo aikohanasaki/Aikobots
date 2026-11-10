@@ -142,13 +142,14 @@ describe('generation stream response headers', () => {
         expect(response.ended).toBe(true);
     });
 
-    it('finalizes a stale generation while waiting for response headers', async () => {
+    it('returns a retryable disconnect without failing overdue work before headers', async () => {
         const id = '34343434-3434-4343-8343-343434343434';
         jest.spyOn(Date, 'now').mockReturnValue(1);
         createGenerationJob({ id, userHandle: 'alice', requestFingerprint: 'hash', requestId: 'request-stale-headers' });
         markGenerationJobRunning(id, 'alice');
         Date.now.mockReturnValue(60_000);
         const response = new MockStreamResponse({ closeOnHeaders: false });
+        response.sendStatus = jest.fn(() => response.end());
         const request = {
             params: { id },
             user: { profile: { handle: 'alice' } },
@@ -158,16 +159,14 @@ describe('generation stream response headers', () => {
 
         await streamGeneration(request, response);
 
-        expect(response.flushed).toBe(true);
-        expect(response.writes).toEqual([
-            'id: 1\ndata: {"error":{"message":"Generation worker stopped before completion."}}\n\n',
-            'id: 2\ndata: [DONE]\n\n',
-        ]);
+        expect(response.sendStatus).toHaveBeenCalledWith(503);
+        expect(response.flushed).toBe(false);
+        expect(response.writes).toEqual([]);
         expect(response.ended).toBe(true);
-        expect(getGenerationJob(id, 'alice').state).toBe('failed');
+        expect(getGenerationJob(id, 'alice').state).toBe('running');
     });
 
-    it('finalizes a stale generation after response headers are available', async () => {
+    it('disconnects overdue delivery and replays completed output on reconnection', async () => {
         const id = '45454545-4545-4454-8454-454545454545';
         jest.spyOn(Date, 'now').mockReturnValue(1);
         createGenerationJob({ id, userHandle: 'alice', requestFingerprint: 'hash', requestId: 'request-stale-events' });
@@ -185,11 +184,15 @@ describe('generation stream response headers', () => {
         await streamGeneration(request, response);
 
         expect(response.flushed).toBe(true);
-        expect(response.writes).toEqual([
-            'id: 1\ndata: {"error":{"message":"Generation worker stopped before completion."}}\n\n',
-            'id: 2\ndata: [DONE]\n\n',
-        ]);
+        expect(response.writes).toEqual([]);
         expect(response.ended).toBe(true);
-        expect(getGenerationJob(id, 'alice').state).toBe('failed');
+        expect(getGenerationJob(id, 'alice').state).toBe('running');
+        appendGenerationEvent(id, 'alice', 'data: synthetic output');
+        appendGenerationEvent(id, 'alice', 'data: [DONE]');
+        finishGenerationJob(id, 'alice', 'completed');
+        const reconnected = new MockStreamResponse({ closeOnHeaders: false });
+        await streamGeneration(request, reconnected);
+        expect(reconnected.writes).toEqual(['id: 1\ndata: synthetic output\n\n', 'id: 2\ndata: [DONE]\n\n']);
+        expect(reconnected.ended).toBe(true);
     });
 });

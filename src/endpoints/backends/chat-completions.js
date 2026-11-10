@@ -5061,6 +5061,8 @@ router.get('/generations/:id/stream', async function (request, response) {
             if (['completed', 'cancelled', 'failed'].includes(initial?.state)) {
                 break;
             }
+            // An overdue owner is uncertain, not failed. Let the client reconnect.
+            return response.sendStatus(503);
         }
         await delayDetachedGeneration(DETACHED_GENERATION_POLL_MS);
         if (closed) {
@@ -5112,7 +5114,7 @@ router.get('/generations/:id/stream', async function (request, response) {
                 userHandle,
                 Date.now() - STALE_GENERATION_OWNER_MS,
             );
-            continue;
+            return response.end();
         }
         if (Date.now() - lastHeartbeatAt >= STREAM_HEARTBEAT_INTERVAL_MS) {
             response.write(': heartbeat\n\n');

@@ -268,20 +268,11 @@ export function reportGenerationCancellation(generationId, reason, { t, notify =
     let code = reason?.generationCancellationCode;
     let message;
     switch (code) {
-        case 'START_TIMEOUT': message = t`Generation start was not confirmed within 15 seconds. Cancellation requested.`; break;
-        case 'START_CONNECTION': message = t`The connection failed while confirming generation start. Cancellation requested.`; break;
-        case 'START_HTTP_408': message = t`The server returned HTTP 408 while starting generation. Cancellation requested.`; break;
-        case 'START_HTTP_5XX': {
-            const status = Number(reason.status);
-            if (!Number.isInteger(status) || status < 500 || status > 599) {
-                code = 'APPLICATION_ABORT';
-                message = t`The application aborted generation without a specific cancellation reason. Cancellation requested.`;
-                break;
-            }
-            message = t`The server returned HTTP ${status} while starting generation. Cancellation requested.`;
-            break;
-        }
         case 'START_INVALID_REPLY': message = t`Aikobots’ generation-start confirmation could not be read. The job may still be running. Reload this chat to recover.`; break;
+        case 'START_TIMEOUT':
+        case 'START_CONNECTION':
+        case 'START_HTTP_408':
+        case 'START_HTTP_5XX':
         case 'START_NOT_ADMITTED': message = t`Aikobots did not confirm acceptance of the generation snapshot. The job may still be running. Reload this chat to recover.`; break;
         case 'START_REVISION_MISMATCH': message = t`The generation-start confirmation referenced a different chat revision. Cancellation requested.`; break;
         case 'START_ID_MISMATCH': message = t`The generation-start confirmation referenced a different generation. Cancellation requested.`; break;
@@ -293,7 +284,7 @@ export function reportGenerationCancellation(generationId, reason, { t, notify =
             code = 'APPLICATION_ABORT';
             message = t`The application aborted generation without a specific cancellation reason. Cancellation requested.`;
     }
-    const recoveryPending = ['START_INVALID_REPLY', 'START_NOT_ADMITTED'].includes(code);
+    const recoveryPending = ['START_TIMEOUT', 'START_CONNECTION', 'START_HTTP_408', 'START_HTTP_5XX', 'START_INVALID_REPLY', 'START_NOT_ADMITTED'].includes(code);
     const error = Object.assign(new Error(`[${code}] ${message}`), {
         generationCancellationCode: code,
         generationCancellationReported: true,

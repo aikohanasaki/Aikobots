@@ -114,7 +114,7 @@ describe('generation job store', () => {
         expect(finishGenerationJob(id, 'alice', 'cancelled').state).toBe('cancelled');
     });
 
-    it('atomically finalizes an abandoned owner and rejects its late events', () => {
+    it('preserves overdue work and accepts its completed output for recovery', () => {
         const id = '12121212-1212-4121-8121-121212121212';
         jest.spyOn(Date, 'now').mockReturnValue(10);
         createGenerationJob({
@@ -136,15 +136,18 @@ describe('generation job store', () => {
         });
         markGenerationJobRunning(id, 'alice');
 
-        Date.now.mockReturnValue(100);
+        Date.now.mockReturnValue(2 * 24 * 60 * 60_000);
+        createGenerationJob({ id: '15151515-1515-4151-8151-151515151515', userHandle: 'bob', requestFingerprint: 'other', requestId: 'other' });
         expect(finalizeStaleGenerationJob(id, 'alice', 50)).toEqual(expect.objectContaining({
-            state: 'failed',
+            state: 'running',
             resolvedAt: null,
         }));
-        expect(appendGenerationEvent(id, 'alice', 'data: late')).toBeNull();
-        expect(listGenerationRecoveries('alice')).toEqual([expect.objectContaining({ id, state: 'failed' })]);
+        expect(appendGenerationEvent(id, 'alice', 'data: late')).toBe(1);
+        appendGenerationEvent(id, 'alice', 'data: [DONE]');
+        expect(finishGenerationJob(id, 'alice', 'completed').state).toBe('completed');
+        expect(listGenerationRecoveries('alice')).toEqual([expect.objectContaining({ id, state: 'completed' })]);
         expect(getGenerationEventsAfter(id, 'alice', 0).events.map(event => event.eventBlock)).toEqual([
-            'data: {"error":{"message":"Generation worker stopped before completion."}}',
+            'data: late',
             'data: [DONE]',
         ]);
     });
@@ -352,7 +355,7 @@ describe('generation job store', () => {
         expect(admissionError).toMatchObject({ status: 503, code: 'generation_queue_full' });
     });
 
-    it('releases scheduling capacity after cancellation and stale owner failure', () => {
+    it('retains overdue running slots until completion or requested cancellation', () => {
         const limits = {
             maxConcurrentGlobal: 1,
             reservedFirstGenerationSlots: 0,
@@ -376,8 +379,12 @@ describe('generation job store', () => {
         createGenerationJob({ id: carol, userHandle: 'carol', requestFingerprint: 'c', requestId: 'c' });
         Date.now.mockReturnValue(100);
         touchGenerationJob(carol, 'carol');
+        expect(claimScheduledGenerationJob(carol, 'carol', limits).claimed).toBe(false);
+        expect(getGenerationJob(bob, 'bob').state).toBe('running');
+        requestGenerationCancellation(bob, 'bob');
+        Date.now.mockReturnValue(200);
         expect(claimScheduledGenerationJob(carol, 'carol', limits).claimed).toBe(true);
-        expect(getGenerationJob(bob, 'bob').state).toBe('failed');
+        expect(getGenerationJob(bob, 'bob').state).toBe('cancelled');
     });
 
     it('allows only one atomic winner when separate Node processes claim one shared slot', async () => {

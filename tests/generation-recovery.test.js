@@ -44,7 +44,7 @@ describe('pending generation recovery', () => {
     it('reports uncertain acknowledgements as recoverable rather than cancelled', () => {
         const notices = [];
         const t = strings => strings.join('');
-        for (const code of ['START_INVALID_REPLY', 'START_NOT_ADMITTED']) {
+        for (const code of ['START_TIMEOUT', 'START_CONNECTION', 'START_HTTP_408', 'START_HTTP_5XX', 'START_INVALID_REPLY', 'START_NOT_ADMITTED']) {
             const error = reportGenerationCancellation(`pending-${code}`, { generationCancellationCode: code }, {
                 t, notify: (message, title) => notices.push({ message, title }),
             });

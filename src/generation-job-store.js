@@ -223,7 +223,6 @@ function pruneExpiredJobs(db, now = Date.now()) {
            OR (state = 'completed' AND recovery_json IS NOT NULL AND resolved_at < @terminalCutoff)
            OR (state = 'completed' AND recovery_json IS NULL AND finished_at < @terminalCutoff)
            OR (state IN ('cancelled', 'failed') AND finished_at < @terminalCutoff)
-           OR (state IN ('queued', 'running', 'cancel_requested') AND updated_at < @terminalCutoff)
     `).run({
         unresolvedCutoff: now - UNRESOLVED_COMPLETED_JOB_RETENTION_MS,
         terminalCutoff: now - TERMINAL_JOB_RETENTION_MS,
@@ -499,11 +498,9 @@ export function appendGenerationEvent(id, userHandle, eventBlock) {
     return append.immediate();
 }
 
+/** Completes an already requested cancellation when its owner has stopped reporting. */
 function finalizeStaleRow(db, row) {
-    const cancelled = Boolean(row.cancel_requested_at) || row.state === 'cancel_requested';
-    const eventBlocks = cancelled
-        ? ['data: {"error":{"message":"Generation was cancelled."}}', 'data: [DONE]']
-        : ['data: {"error":{"message":"Generation worker stopped before completion."}}', 'data: [DONE]'];
+    const eventBlocks = ['data: {"error":{"message":"Generation was cancelled."}}', 'data: [DONE]'];
     const now = Date.now();
     let sequence = Number(row.last_event_sequence);
     const insertEvent = db.prepare(`
@@ -515,37 +512,37 @@ function finalizeStaleRow(db, row) {
     }
     db.prepare(`
         UPDATE generation_jobs
-        SET state = ?, last_event_sequence = ?,
-            resolved_at = CASE WHEN ? = 'cancelled' AND recovery_json IS NOT NULL
+        SET state = 'cancelled', last_event_sequence = ?,
+            resolved_at = CASE WHEN recovery_json IS NOT NULL
                 THEN COALESCE(resolved_at, ?) ELSE resolved_at END,
             updated_at = ?, finished_at = ?
         WHERE id = ? AND user_key = ?
-    `).run(cancelled ? 'cancelled' : 'failed', sequence, cancelled ? 'cancelled' : 'failed', now, now, now, row.id, row.user_key);
+    `).run(sequence, now, now, now, row.id, row.user_key);
     return serializeJob(db.prepare('SELECT * FROM generation_jobs WHERE id = ?').get(row.id));
 }
 
-/** Finalizes abandoned owners while the caller holds the generation-job write transaction. */
+/** Finalizes only requested cancellations under the generation-job write transaction. */
 function finalizeStaleGenerationJobsInTransaction(db, staleBefore) {
     return db.prepare(`
         SELECT * FROM generation_jobs
-        WHERE state IN ('queued', 'running', 'cancel_requested') AND updated_at <= ?
+        WHERE state = 'cancel_requested' AND updated_at <= ?
         ORDER BY created_at, id
     `).all(staleBefore).map(row => finalizeStaleRow(db, row));
 }
 
-/** Marks every abandoned queued or running owner failed so its slots cannot remain stuck. */
+/** Completes requested cancellations whose owners have stopped reporting. */
 export function finalizeStaleGenerationJobs(staleBefore) {
     const db = openDatabase();
     const finalize = db.transaction(() => finalizeStaleGenerationJobsInTransaction(db, staleBefore));
     return finalize.immediate();
 }
 
-/** Atomically turns an abandoned owner into a replayable terminal failure. */
+/** Completes a requested cancellation; heartbeat age alone never fails a job. */
 export function finalizeStaleGenerationJob(id, userHandle, staleBefore) {
     const db = openDatabase();
     const finalize = db.transaction(() => {
         const row = getAuthorizedRow(db, id, userHandle);
-        if (!row || TERMINAL_STATES.has(row.state) || row.updated_at > staleBefore) {
+        if (!row || row.state !== 'cancel_requested' || row.updated_at > staleBefore) {
             return serializeJob(row);
         }
 
