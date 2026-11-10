@@ -1625,7 +1625,7 @@ export function initDefaultSlashCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'stop',
         callback: () => {
-            const stopped = stopGeneration();
+            const stopped = stopGeneration('SCRIPT_STOP');
             return String(stopped);
         },
         returns: t`true/false, whether the generation was running and got stopped`,

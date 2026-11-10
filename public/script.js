@@ -3072,7 +3072,7 @@ async function cancelWorkspaceRecovery(recovery) {
     }
     void cancelGenerationWithConfirmation(recovery.generationId, { getHeaders: getRequestHeaders });
     if (streamingProcessor?.generator?.generationId === recovery.generationId) {
-        streamingProcessor.onStopStreaming();
+        streamingProcessor.onStopStreaming('USER_STOP');
         await foregroundGenerationPromise?.catch(() => null);
     }
 }
@@ -3093,7 +3093,7 @@ async function closeChatWorkspaceTab(tab) {
         }
         if (closeAction === 'cancel') {
             if (isCurrentWorkspaceTab(tab) && is_send_press) {
-                stopGeneration();
+                stopGeneration('USER_STOP');
                 await foregroundGenerationPromise?.catch(() => null);
             } else {
                 await cancelWorkspaceRecovery(recovery);
@@ -4207,7 +4207,7 @@ function setActiveSessionLocked(locked) {
         }
         stopActiveSessionHeartbeat();
         if (is_send_press) {
-            stopGeneration();
+            stopGeneration('SESSION_LOCKED');
         }
         toastr.warning(ACTIVE_SESSION_LOCK_MESSAGE, translate('Read-only session'), { preventDuplicates: true });
     } else {
@@ -7566,7 +7566,7 @@ export async function sendTextareaMessage() {
     } catch (error) {
         unblockGeneration();
 
-        if (abortController?.signal?.aborted || error?.name === 'AbortError') {
+        if (abortController?.signal?.aborted || error?.name === 'AbortError' || error?.generationCancellationReported) {
             return;
         }
 
@@ -9950,9 +9950,9 @@ class StreamingProcessor {
         }
     }
 
-    onStopStreaming() {
+    onStopStreaming(reason = 'APPLICATION_ABORT') {
         this.clearGenerationRecovery();
-        this.abortController.abort();
+        this.abortController.abort(Object.assign(new Error('Generation stopped.'), { name: 'AbortError', generationCancellationCode: reason }));
         this.isFinished = true;
     }
 
@@ -11720,11 +11720,11 @@ async function findGenerationRecoveryForCurrentChat() {
 }
 
 /** Cancels a pending job whose saved chat target is no longer safe to mutate. */
-function cancelPendingGeneration(record) {
+function cancelPendingGeneration(record, reason) {
     if (!record?.generationId) {
         return;
     }
-    void cancelGenerationWithConfirmation(record.generationId, { getHeaders: getRequestHeaders });
+    void cancelGenerationWithConfirmation(record.generationId, { getHeaders: getRequestHeaders, reason: { generationCancellationCode: reason }, t });
 }
 
 let pendingGenerationRecoveryPromise = null;
@@ -11830,7 +11830,7 @@ async function resumePendingGenerationForCurrentChat({ retry = false } = {}) {
 
         const anchorMessage = chat.at(-1);
         if (anchorMessage?.[AIKOBOTS_MESSAGE_UUID_KEY] !== pending.anchorMessageUuid) {
-            cancelPendingGeneration(pending);
+            cancelPendingGeneration(pending, 'RECOVERY_ANCHOR_CHANGED');
             return;
         }
 
@@ -11838,7 +11838,7 @@ async function resumePendingGenerationForCurrentChat({ retry = false } = {}) {
         if (pending.swipeTarget) {
             const targetMessage = chat[pending.swipeTarget.messageId];
             if (targetMessage !== anchorMessage) {
-                cancelPendingGeneration(pending);
+                cancelPendingGeneration(pending, 'RECOVERY_SWIPE_CHANGED');
                 return;
             }
             swipeTarget = { ...pending.swipeTarget, messageRef: targetMessage };
@@ -11901,6 +11901,9 @@ export async function Generate(type, options = {}, dryRun = false) {
             return await generationTask;
         } catch (error) {
             if (options.signal.aborted) unblockGeneration(type);
+            if (error?.generationRecoveryAvailable && error?.generationId) {
+                deferTemporaryGenerationAttempt(temporaryGenerationAttempt, error.generationId);
+            }
             if (error?.generationParked === true) {
                 deferTemporaryGenerationAttempt(temporaryGenerationAttempt, foregroundGenerationId);
                 return { generationParked: true };
@@ -11932,14 +11935,14 @@ export async function Generate(type, options = {}, dryRun = false) {
 /**
  * Stops the generation and any streaming if it is currently running.
  */
-export function stopGeneration() {
+export function stopGeneration(reason = 'APPLICATION_ABORT') {
     let stopped = false;
     if (streamingProcessor) {
-        streamingProcessor.onStopStreaming();
+        streamingProcessor.onStopStreaming(reason);
         stopped = true;
     }
     if (abortController) {
-        abortController.abort('Clicked stop button');
+        abortController.abort(Object.assign(new Error('Generation stopped.'), { name: 'AbortError', generationCancellationCode: reason }));
         hideStopButton();
         stopped = true;
     }
@@ -20325,7 +20328,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
             return;
         }
         if (isStreamingEnabled() && streamingProcessor) {
-            streamingProcessor.onStopStreaming();
+            streamingProcessor.onStopStreaming('USER_STOP');
         }
 
         if (source !== SWIPE_SOURCE.DELETE && source !== SWIPE_SOURCE.BACK) {
@@ -22540,7 +22543,7 @@ jQuery(async function () {
     });
 
     $(document).on('click', '.mes_stop', function () {
-        stopGeneration();
+        stopGeneration('USER_STOP');
     });
 
     $(document).on('click', '#form_sheld .stscript_continue', function () {

@@ -381,6 +381,52 @@ test('recovery toasts report server status without mutating jobs and preserve ac
     }
 });
 
+test('unsafe recovery targets send distinct cancellation reasons without editing the chat', async () => {
+    for (const reason of ['RECOVERY_ANCHOR_CHANGED', 'RECOVERY_SWIPE_CHANGED']) {
+        const calls = [];
+        const chat = [{ uuid: 'other' }, { uuid: 'anchor' }];
+        const pending = { generationId: 'job', chatIdentity: {}, anchorMessageUuid: reason === 'RECOVERY_ANCHOR_CHANGED' ? 'stale' : 'anchor',
+            swipeTarget: reason === 'RECOVERY_SWIPE_CHANGED' ? { messageId: 0 } : null };
+        const context = vm.createContext({
+            chat, AIKOBOTS_MESSAGE_UUID_KEY: 'uuid', streamingProcessor: null, is_send_press: false, isActiveSessionLocked: false,
+            pendingGenerationRecoveryPromise: null, pausedGenerationRecoveries: new Map(),
+            findGenerationRecoveryForCurrentChat: async () => pending,
+            isSameGenerationRecoveryChatIdentity: () => true, getGenerationRecoveryChatIdentity: () => ({}),
+            isGenerationRecoveryApplied: () => false, t: strings => strings.join(''), getRequestHeaders: () => ({}),
+            cancelGenerationWithConfirmation: (id, options) => { calls.push([id, options.reason.generationCancellationCode]); },
+            console: { warn() { assert.fail('recovery must not throw'); } },
+        });
+        vm.runInContext(declaration(script, 'function cancelPendingGeneration(') + '\n'
+            + declaration(script, 'async function resumePendingGenerationForCurrentChat('), context);
+        await context.resumePendingGenerationForCurrentChat();
+        assert.deepEqual(calls, [['job', reason]]);
+        assert.deepEqual(chat, [{ uuid: 'other' }, { uuid: 'anchor' }]);
+    }
+});
+
+test('session locking and programmatic stops preserve their cause on both abort signals', () => {
+    for (const reason of ['SESSION_LOCKED', 'SCRIPT_STOP', 'USER_STOP', 'APPLICATION_ABORT']) {
+        const env = setup();
+        const controller = new AbortController();
+        const context = env.context;
+        Object.assign(context, {
+            streamingProcessor: env.processor, abortController: controller, hideStopButton() {},
+            document: { body: { classList: { toggle() {} } } }, ensureActiveSessionLockModal: () => ({}),
+            updateActiveSessionReadOnlyControls() {}, activeSessionVerifyTimer: null,
+            stopActiveSessionHeartbeat() {}, is_send_press: true, isActiveSessionLocked: false,
+            ACTIVE_SESSION_LOCK_MESSAGE: 'Read-only', translate: value => value,
+        });
+        vm.runInContext(declaration(script, 'export function stopGeneration(') + '\n'
+            + declaration(script, 'function setActiveSessionLocked('), context);
+        if (reason === 'SESSION_LOCKED') context.setActiveSessionLocked(true);
+        else if (reason === 'APPLICATION_ABORT') context.stopGeneration();
+        else context.stopGeneration(reason);
+        assert.equal(controller.signal.reason.generationCancellationCode, reason);
+        assert.equal(env.processor.abortController.signal.reason.generationCancellationCode, reason);
+        assert.equal(env.processor.abortController.signal.reason.name, 'AbortError');
+    }
+});
+
 test('authoritative reload reports failure through its mutex for direct and group chats', async () => {
     for (const group of [false, true]) {
         let loaded = false;

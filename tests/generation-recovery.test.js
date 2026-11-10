@@ -10,6 +10,7 @@ import {
     isTerminalGenerationRecovery,
     listPendingGenerations,
     recordGenerationAdmission,
+    reportGenerationCancellation,
     savePendingGeneration,
 } from '../public/scripts/generation-recovery.js';
 
@@ -40,6 +41,53 @@ function createRecord(createdAt = Date.now()) {
 }
 
 describe('pending generation recovery', () => {
+    it('reports uncertain acknowledgements as recoverable rather than cancelled', () => {
+        const notices = [];
+        const t = strings => strings.join('');
+        for (const code of ['START_INVALID_REPLY', 'START_NOT_ADMITTED']) {
+            const error = reportGenerationCancellation(`pending-${code}`, { generationCancellationCode: code }, {
+                t, notify: (message, title) => notices.push({ message, title }),
+            });
+            expect(error.generationRecoveryAvailable).toBe(true);
+            expect(error.generationId).toBe(`pending-${code}`);
+            expect(notices.at(-1).title).toBe('Generation recovery pending');
+            expect(notices.at(-1).message).toContain(`[${code}]`);
+            expect(notices.at(-1).message).not.toContain('Cancellation requested');
+        }
+    });
+    it('reports only fixed cancellation causes once per generation and keeps retry diagnostics out of storage', async () => {
+        const storage = createStorage();
+        const notices = [];
+        const t = (strings, ...values) => strings.reduce((text, part, i) => text + part + (values[i] ?? ''), '');
+        const notify = (text, title) => notices.push({ text, title });
+        const id = 'abababab-abab-4bab-8bab-abababababab';
+        const record = { ...createRecord(), generationId: id };
+        savePendingGeneration(record, storage);
+        const options = { storage, getHeaders: () => ({}), t, notify,
+            fetchImpl: async () => new Response('', { status: 503 }),
+            reason: { generationCancellationCode: 'RECOVERY_ANCHOR_CHANGED', message: 'synthetic-private-sentinel' } };
+        expect(await cancelGenerationWithConfirmation(id, options)).toBe(false);
+        expect(await cancelGenerationWithConfirmation(id, options)).toBe(false);
+        const { reason, ...retryOptions } = options;
+        expect(await cancelGenerationWithConfirmation(id, retryOptions)).toBe(false);
+        expect(notices).toHaveLength(1);
+        expect(notices[0].text).toContain('[RECOVERY_ANCHOR_CHANGED]');
+        expect(notices[0].title).toBe('Generation cancellation requested');
+        expect(getPendingGeneration(storage)?.generationId).toBe(id);
+        expect(storage.getItem('aikobots.pending-generation-cancellations.v1')).not.toContain('RECOVERY_ANCHOR_CHANGED');
+        for (const code of ['RECOVERY_SWIPE_CHANGED', 'SESSION_LOCKED', 'SCRIPT_STOP', 'APPLICATION_ABORT']) {
+            const error = reportGenerationCancellation(`diagnostic-${code}`, { generationCancellationCode: code, message: 'synthetic-private-sentinel' }, { t, notify });
+            expect(error.message).toContain(`[${code}]`);
+            expect(error.generationCancellationReported).toBe(true);
+        }
+        const count = notices.length;
+        expect(reportGenerationCancellation('user', { generationCancellationCode: 'USER_STOP' }, { t, notify })).toBeNull();
+        expect(reportGenerationCancellation('parked', { generationParked: true }, { t, notify })).toBeNull();
+        expect(notices).toHaveLength(count);
+        reportGenerationCancellation('unknown', { generationCancellationCode: 'synthetic-private-sentinel' }, { t, notify });
+        expect(notices.at(-1).text).toContain('[APPLICATION_ABORT]');
+        expect(JSON.stringify(notices)).not.toContain('synthetic-private-sentinel');
+    });
     it('retains cancellation and recovery across rejected replies, then suppresses stale discovery after confirmation', async () => {
         const storage = createStorage();
         const record = { ...createRecord(), generationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' };

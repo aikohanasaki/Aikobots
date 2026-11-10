@@ -83,7 +83,7 @@ import { consumeChatCompletionStream } from './chat-completion-stream.js';
 import { getOpenRouterPricingDisplay } from './openrouter-pricing.js';
 import { createResumableGenerationResponse } from './resumable-generation.js';
 import { createAutomaticCacheComparison, finishAutomaticCacheComparison, normalizeAutomaticCacheUsage, resetAutomaticCacheComparisons } from './automatic-prompt-cache.js';
-import { cancelGenerationWithConfirmation, clearPendingGeneration, recordGenerationAdmission, savePendingGeneration } from './generation-recovery.js';
+import { cancelGenerationWithConfirmation, clearPendingGeneration, recordGenerationAdmission, reportGenerationCancellation, savePendingGeneration } from './generation-recovery.js';
 
 export {
     oai_settings,
@@ -3120,7 +3120,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
     const usesDetachedGeneration = Boolean(resumedGeneration || generationSource);
     const supportsMultiSwipe = resumedGeneration?.canMultiSwipe ?? canMultiSwipe;
     const generationsUrl = '/api/backends/chat-completions/generations';
-    const cancelGeneration = () => cancelGenerationWithConfirmation(generationId, { getHeaders: getRequestHeaders });
+    const cancelGeneration = () => cancelGenerationWithConfirmation(generationId, { getHeaders: getRequestHeaders, reason: signal.reason ?? {}, t });
     const onAbort = () => {
         if (!usesDetachedGeneration) {
             return;
@@ -3155,6 +3155,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
 
             if (createResponse && !createResponse.ok) {
                 clearPendingGeneration(generationId);
+                if (createResponse.generationCancellationError) throw createResponse.generationCancellationError;
                 const errorText = await createResponse.text();
                 const parsed = tryParseStreamingError(createResponse, errorText);
                 const fallbackMessage = getResponseErrorMessage(createResponse, errorText, parsed);
@@ -3388,28 +3389,42 @@ async function createDetachedGeneration(url, generationId, request, recovery = n
         const controller = new AbortController();
         const abort = () => controller.abort(signal.reason);
         signal?.addEventListener('abort', abort, { once: true });
-        const timeout = setTimeout(() => controller.abort(), 15_000);
-        let admissionError = null;
+        let timedOut = false;
+        const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 15_000);
+        let admissionCode = null;
         try {
             const response = await fetch(url, { method: 'POST', body, headers: getRequestHeaders(), signal: controller.signal });
             const acknowledgement = response.ok ? await response.clone().json().catch(() => null) : null;
-            if (response.ok && (acknowledgement?.snapshot_admitted !== true
-                || acknowledgement?.accepted_revision !== source.expectedRevision
-                || acknowledgement?.id !== generationId)) {
-                admissionError = new Error(t`Generation admission could not be verified. Reload the page before trying again.`);
-                throw admissionError;
+            if (response.ok) {
+                if (!acknowledgement || typeof acknowledgement !== 'object' || Array.isArray(acknowledgement)) admissionCode = 'START_INVALID_REPLY';
+                else if (acknowledgement.id !== generationId) admissionCode = 'START_ID_MISMATCH';
+                else if (acknowledgement.snapshot_admitted !== true) admissionCode = 'START_NOT_ADMITTED';
+                else if (acknowledgement.accepted_revision !== source.expectedRevision) admissionCode = 'START_REVISION_MISMATCH';
+                if (admissionCode) throw new Error('Invalid generation acknowledgement.');
             }
             signal?.throwIfAborted();
             if (response.status >= 500 || response.status === 408) {
                 void cancelGenerationWithConfirmation(generationId, { getHeaders: getRequestHeaders });
+                response.generationCancellationError = reportGenerationCancellation(generationId, {
+                    generationCancellationCode: response.status === 408 ? 'START_HTTP_408' : 'START_HTTP_5XX',
+                    status: response.status,
+                }, { t });
             }
             return response;
         } catch {
             if (signal?.reason?.generationParked !== true) {
-                void cancelGenerationWithConfirmation(generationId, { getHeaders: getRequestHeaders });
+                // An unreadable or incomplete acknowledgement does not prove the job was rejected.
+                const recoveryPending = !signal?.aborted && !timedOut
+                    && ['START_INVALID_REPLY', 'START_NOT_ADMITTED'].includes(admissionCode);
+                if (!recoveryPending) void cancelGenerationWithConfirmation(generationId, { getHeaders: getRequestHeaders });
+                const diagnostic = reportGenerationCancellation(generationId, signal?.aborted ? signal.reason : {
+                    generationCancellationCode: timedOut ? 'START_TIMEOUT' : admissionCode || 'START_CONNECTION',
+                }, { t });
+                signal?.throwIfAborted();
+                if (diagnostic) throw diagnostic;
             }
             signal?.throwIfAborted();
-            throw admissionError ?? new Error(t`Generation start could not be confirmed. Cancellation will be retried when connected.`);
+            throw new Error('Generation admission interrupted.');
         } finally {
             clearTimeout(timeout);
             signal?.removeEventListener('abort', abort);

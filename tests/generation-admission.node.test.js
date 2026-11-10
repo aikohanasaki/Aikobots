@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+import { reportGenerationCancellation } from '../public/scripts/generation-recovery.js';
 
 const script = fs.readFileSync(new URL('../public/script.js', import.meta.url), 'utf8');
 const extensions = fs.readFileSync(new URL('../public/scripts/extensions.js', import.meta.url), 'utf8');
@@ -32,7 +33,8 @@ function makeContext() {
         CHAT_SAVE_RESULT: { SAVED: 'saved', FAILED: 'failed' },
         chatRevisionOperationQueue: Promise.resolve(),
         chat_metadata: {}, chat: [{ mes: 'original tail' }], generationPreparationMetadata: new WeakMap(),
-        t: strings => strings.join(''),
+        t: (strings, ...values) => strings.reduce((text, part, i) => text + part + (values[i] ?? ''), ''),
+        reportGenerationCancellation: (id, reason, options) => reportGenerationCancellation(id, reason, { ...options, notify() {} }),
         setTimeout: fn => { timers.set(++timerId, fn); return timerId; },
         clearTimeout: id => timers.delete(id),
         debounce_timeout: { relaxed: 1000 },
@@ -151,14 +153,14 @@ test('lost or invalid admission acknowledgements release the save queue and reta
         if (bodies.length === 1) throw new Error('Lost acknowledgement');
         return Response.json({ id: 'job', snapshot_admitted: true, accepted_revision: 3 });
     };
-    await assert.rejects(context.createDetachedGeneration('/generations', 'job', { prompt_context: { generationSource: source } }), /could not be confirmed/);
+    await assert.rejects(context.createDetachedGeneration('/generations', 'job', { prompt_context: { generationSource: source } }), /START_CONNECTION/);
     assert.equal(bodies.length, 1);
     assert.equal(await context.queueChatRevisionOperation(() => 'saved'), 'saved');
     const requests = [];
     context.fetch = async url => { requests.push(url); return Response.json({ id: 'job' }); };
-    await assert.rejects(context.createDetachedGeneration('/generations', 'job', { prompt_context: { generationSource: source } }), /could not be verified\. Reload the page before trying again\./);
+    await assert.rejects(context.createDetachedGeneration('/generations', 'job', { prompt_context: { generationSource: source } }), /START_NOT_ADMITTED/);
     assert.deepEqual(requests, ['/generations']);
-    assert.deepEqual(cancelled, ['job', 'job']);
+    assert.deepEqual(cancelled, ['job']);
 });
 
 test('Stop aborts admission immediately without waiting for cancellation, and failed preparation leaves no recovery record', async () => {
@@ -215,13 +217,84 @@ test('an admission with no response times out and releases queued saves', async 
         }),
     });
     const admission = context.createDetachedGeneration('/generations', 'job', { prompt_context: { generationSource: source } });
-    const rejected = assert.rejects(admission, /could not be confirmed/);
+    const rejected = assert.rejects(admission, /START_TIMEOUT/);
     await started.promise;
     const laterSave = context.queueChatRevisionOperation(() => 'saved');
     [...timers.values()][0]();
     await rejected;
     assert.equal(await laterSave, 'saved');
     assert.equal(cancellations, 1);
+});
+
+test('startup cancellation diagnostics distinguish transport and acknowledgement failures without exposing content', async () => {
+    const cases = [
+        ['START_CONNECTION', () => { throw new Error('synthetic-private-sentinel'); }],
+        ['START_INVALID_REPLY', () => new Response('synthetic-private-sentinel')],
+        ['START_INVALID_REPLY', () => Response.json([])],
+        ['START_ID_MISMATCH', () => Response.json({ id: 'synthetic-private-sentinel', snapshot_admitted: false, accepted_revision: -1 })],
+        ['START_NOT_ADMITTED', id => Response.json({ id, accepted_revision: -1 })],
+        ['START_REVISION_MISMATCH', id => Response.json({ id, snapshot_admitted: true, accepted_revision: -1 })],
+        ...[408, 500, 502, 503, 504].map(status => [status === 408 ? 'START_HTTP_408' : 'START_HTTP_5XX', () => new Response('synthetic-private-sentinel', { status }), status]),
+    ];
+    for (const [index, [code, response, status]] of cases.entries()) {
+        const { context, source } = makeContext();
+        const id = `classification-${index}`;
+        let cancellations = 0;
+        let savedRecovery;
+        Object.assign(context, {
+            uuidv4: () => 'nonce', getRequestHeaders: () => ({}),
+            savePendingGeneration: record => { savedRecovery = record; },
+            cancelGenerationWithConfirmation: () => { cancellations++; return Promise.resolve(true); },
+            fetch: async () => response(id),
+        });
+        vm.runInContext(section(openai, 'async function createDetachedGeneration(', '/** Bridges a reload'), context);
+        let error;
+        try {
+            const result = await context.createDetachedGeneration('/generations', id, { prompt_context: { generationSource: source } }, { anchorMessageUuid: 'synthetic-anchor' });
+            error = result.generationCancellationError;
+            assert.equal(result.status, status);
+        } catch (caught) { error = caught; }
+        assert.equal(error.generationCancellationCode, code);
+        assert.equal(error.generationCancellationReported, true);
+        assert.equal(error.message.includes('synthetic-private-sentinel'), false);
+        if (status) assert.ok(error.message.includes(String(status)));
+        const recoveryPending = ['START_INVALID_REPLY', 'START_NOT_ADMITTED'].includes(code);
+        assert.equal(cancellations, recoveryPending ? 0 : 1);
+        if (recoveryPending) {
+            assert.equal(error.generationRecoveryAvailable, true);
+            assert.equal(error.generationId, id);
+            assert.equal(savedRecovery.generationId, id);
+            assert.equal(savedRecovery.anchorMessageUuid, 'synthetic-anchor');
+            assert.equal(savedRecovery.state, 'queued');
+            assert.equal(error.message.includes('Cancellation requested'), false);
+        }
+        assert.equal(await context.queueChatRevisionOperation(() => 'released'), 'released');
+    }
+});
+
+test('parent abort reasons win startup timeout classification and parked delivery remains silent', async () => {
+    for (const code of ['SESSION_LOCKED', 'SCRIPT_STOP', 'USER_STOP', 'APPLICATION_ABORT', 'parked']) {
+        const { context, source, timers } = makeContext();
+        const controller = new AbortController();
+        const notifications = [];
+        let cancellations = 0;
+        const reason = code === 'parked' ? { generationParked: true } : { generationCancellationCode: code };
+        Object.assign(context, {
+            uuidv4: () => 'nonce', getRequestHeaders: () => ({}),
+            reportGenerationCancellation: (id, reason, options) => reportGenerationCancellation(id, reason, { ...options, notify: text => notifications.push(text) }),
+            cancelGenerationWithConfirmation: () => { cancellations++; return Promise.resolve(true); },
+            fetch: async () => {
+                [...timers.values()].at(-1)();
+                controller.abort(reason);
+                throw new Error('synthetic-private-sentinel');
+            },
+        });
+        vm.runInContext(section(openai, 'async function createDetachedGeneration(', '/** Bridges a reload'), context);
+        await assert.rejects(context.createDetachedGeneration('/generations', `precedence-${code}`, { prompt_context: { generationSource: source } }, null, controller.signal), error => error === reason);
+        assert.equal(cancellations, code === 'parked' ? 0 : 1);
+        assert.equal(notifications.length, ['USER_STOP', 'parked'].includes(code) ? 0 : 1);
+        if (notifications.length) assert.ok(notifications[0].startsWith(`[${code}]`));
+    }
 });
 
 test('preset readiness awaits loading and rejects stale context completion', async () => {
@@ -375,7 +448,7 @@ test('Stop during preparation cannot be replaced by a fresh controller', async (
     });
     const prefix = section(script, 'async function generateInternal(', '    const isImpersonate =');
     vm.runInContext(prefix + 'return signal.aborted; }', context);
-    vm.runInContext(section(script, 'export function stopGeneration()', '/**\n * Unblocks the UI'), context);
+    vm.runInContext(section(script, 'export function stopGeneration(', '/**\n * Unblocks the UI'), context);
     const pending = context.generateInternal('normal', { signal: controller.signal });
     context.stopGeneration();
     preparing.resolve();

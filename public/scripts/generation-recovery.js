@@ -3,6 +3,7 @@ const LEGACY_STORAGE_KEY = 'aikobots.pending-generation.v1';
 const CANCELLATION_KEY = 'aikobots.pending-generation-cancellations.v1';
 const cancellationIntents = new Map();
 const cancellationRequests = new Map();
+const reportedCancellations = new Set();
 const MAX_PENDING_AGE_MS = 7 * 24 * 60 * 60_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RECOVERABLE_TYPES = new Set(['normal', 'regenerate', 'continue', 'swipe']);
@@ -232,8 +233,9 @@ function persistCancellationIntents(storage) {
 }
 
 /** Retains cancellation and recovery until the server confirms a durable cancellation or terminal state. */
-export function cancelGenerationWithConfirmation(generationId, { getHeaders, fetchImpl = fetch, storage = getDefaultStorage() } = {}) {
+export function cancelGenerationWithConfirmation(generationId, { getHeaders, fetchImpl = fetch, storage = getDefaultStorage(), reason, t, notify } = {}) {
     if (!UUID_PATTERN.test(generationId)) return Promise.resolve(false);
+    if (reason !== undefined) reportGenerationCancellation(generationId, reason, { t, notify });
     listPendingGenerationCancellations(storage);
     if (cancellationIntents.get(generationId)?.confirmed) return Promise.resolve(true);
     cancellationIntents.set(generationId, { createdAt: Date.now(), confirmed: false });
@@ -258,4 +260,48 @@ export function cancelGenerationWithConfirmation(generationId, { getHeaders, fet
     cancellationRequests.set(generationId, request);
     void request.finally(() => cancellationRequests.delete(generationId));
     return request;
+}
+
+/** Reports a fixed cancellation or uncertain-start diagnostic once per generation in this page. */
+export function reportGenerationCancellation(generationId, reason, { t, notify = (message, title, options) => globalThis.toastr.error(message, title, options) }) {
+    if (reason?.generationParked || reason?.generationCancellationCode === 'USER_STOP') return null;
+    let code = reason?.generationCancellationCode;
+    let message;
+    switch (code) {
+        case 'START_TIMEOUT': message = t`Generation start was not confirmed within 15 seconds. Cancellation requested.`; break;
+        case 'START_CONNECTION': message = t`The connection failed while confirming generation start. Cancellation requested.`; break;
+        case 'START_HTTP_408': message = t`The server returned HTTP 408 while starting generation. Cancellation requested.`; break;
+        case 'START_HTTP_5XX': {
+            const status = Number(reason.status);
+            if (!Number.isInteger(status) || status < 500 || status > 599) {
+                code = 'APPLICATION_ABORT';
+                message = t`The application aborted generation without a specific cancellation reason. Cancellation requested.`;
+                break;
+            }
+            message = t`The server returned HTTP ${status} while starting generation. Cancellation requested.`;
+            break;
+        }
+        case 'START_INVALID_REPLY': message = t`Aikobots’ generation-start confirmation could not be read. The job may still be running. Reload this chat to recover.`; break;
+        case 'START_NOT_ADMITTED': message = t`Aikobots did not confirm acceptance of the generation snapshot. The job may still be running. Reload this chat to recover.`; break;
+        case 'START_REVISION_MISMATCH': message = t`The generation-start confirmation referenced a different chat revision. Cancellation requested.`; break;
+        case 'START_ID_MISMATCH': message = t`The generation-start confirmation referenced a different generation. Cancellation requested.`; break;
+        case 'RECOVERY_ANCHOR_CHANGED': message = t`The saved recovery anchor no longer matches the last chat message. Cancellation requested.`; break;
+        case 'RECOVERY_SWIPE_CHANGED': message = t`The saved recovery swipe target no longer matches its anchor message. Cancellation requested.`; break;
+        case 'SESSION_LOCKED': message = t`This tab became read-only during generation. Cancellation requested.`; break;
+        case 'SCRIPT_STOP': message = t`A script requested that generation stop. Cancellation requested.`; break;
+        default:
+            code = 'APPLICATION_ABORT';
+            message = t`The application aborted generation without a specific cancellation reason. Cancellation requested.`;
+    }
+    const recoveryPending = ['START_INVALID_REPLY', 'START_NOT_ADMITTED'].includes(code);
+    const error = Object.assign(new Error(`[${code}] ${message}`), {
+        generationCancellationCode: code,
+        generationCancellationReported: true,
+        ...(recoveryPending ? { generationRecoveryAvailable: true, generationId } : {}),
+    });
+    if (!reportedCancellations.has(generationId)) {
+        reportedCancellations.add(generationId);
+        notify(error.message, recoveryPending ? t`Generation recovery pending` : t`Generation cancellation requested`, { timeOut: 10000, extendedTimeOut: 20000, closeButton: true });
+    }
+    return error;
 }
