@@ -285,6 +285,7 @@ export function reportGenerationCancellation(generationId, reason, { t, notify =
             message = t`The application aborted generation without a specific cancellation reason. Cancellation requested.`;
     }
     const recoveryPending = ['START_TIMEOUT', 'START_CONNECTION', 'START_HTTP_408', 'START_HTTP_5XX', 'START_INVALID_REPLY', 'START_NOT_ADMITTED'].includes(code);
+    const referenceId = recoveryPending && UUID_PATTERN.test(generationId) ? generationId : '';
     const error = Object.assign(new Error(`[${code}] ${message}`), {
         generationCancellationCode: code,
         generationCancellationReported: true,
@@ -292,7 +293,24 @@ export function reportGenerationCancellation(generationId, reason, { t, notify =
     });
     if (!reportedCancellations.has(generationId)) {
         reportedCancellations.add(generationId);
-        notify(error.message, recoveryPending ? t`Generation recovery pending` : t`Generation cancellation requested`, { timeOut: 10000, extendedTimeOut: 20000, closeButton: true });
+        const notice = notify(error.message, recoveryPending ? t`Generation recovery pending` : t`Generation cancellation requested`, {
+            timeOut: referenceId ? 0 : 10000,
+            extendedTimeOut: referenceId ? 0 : 20000,
+            closeButton: true,
+            tapToDismiss: !referenceId,
+        });
+        if (referenceId && notice) {
+            const label = document.createElement('label');
+            label.textContent = t`Reference ID (select and copy)`;
+            const input = document.createElement('input');
+            input.className = 'text_pole';
+            input.type = 'text';
+            input.readOnly = true;
+            input.value = referenceId;
+            input.addEventListener('click', () => input.select());
+            label.append(input);
+            notice.find('.toast-message').append(label);
+        }
     }
     return error;
 }

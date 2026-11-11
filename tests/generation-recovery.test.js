@@ -41,6 +41,40 @@ function createRecord(createdAt = Date.now()) {
 }
 
 describe('pending generation recovery', () => {
+    it('keeps a selectable, content-free reference visible for uncertain starts', () => {
+        const previousDocument = globalThis.document;
+        const elements = [];
+        let appended;
+        let noticeOptions;
+        globalThis.document = { createElement: tag => {
+            const element = { tag, append(child) { this.child = child; },
+                addEventListener(event, handler) { this[event] = handler; },
+                select() { this.selected = true; } };
+            elements.push(element);
+            return element;
+        } };
+        try {
+            const id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+            const notice = { find: () => ({ append: element => { appended = element; } }) };
+            const options = { t: strings => strings.join(''), notify: (message, title, options) => {
+                expect(message).not.toContain('synthetic-private-sentinel');
+                noticeOptions = options;
+                return notice;
+            } };
+            reportGenerationCancellation(id, { generationCancellationCode: 'START_TIMEOUT', message: 'synthetic-private-sentinel' }, options);
+            expect(noticeOptions).toMatchObject({ timeOut: 0, extendedTimeOut: 0, tapToDismiss: false, closeButton: true });
+            expect(appended.textContent).toBe('Reference ID (select and copy)');
+            expect(appended.child).toMatchObject({ tag: 'input', value: id, readOnly: true });
+            appended.child.click();
+            expect(appended.child.selected).toBe(true);
+            reportGenerationCancellation('synthetic-private-sentinel', { generationCancellationCode: 'START_TIMEOUT' }, options);
+            expect(elements).toHaveLength(2);
+            expect(noticeOptions.timeOut).toBe(10000);
+        } finally {
+            if (previousDocument === undefined) delete globalThis.document;
+            else globalThis.document = previousDocument;
+        }
+    });
     it('reports uncertain acknowledgements as recoverable rather than cancelled', () => {
         const notices = [];
         const t = strings => strings.join('');

@@ -1,4 +1,5 @@
 {
+    "Reference ID (select and copy)": "Идентификатор обращения (выделите и скопируйте)",
     "Generation recovery pending": "Ожидается восстановление генерации",
     "Aikobots’ generation-start confirmation could not be read. The job may still be running. Reload this chat to recover.": "Не удалось прочитать подтверждение начала генерации от Aikobots. Возможно, задача ещё выполняется. Перезагрузите этот чат для восстановления.",
     "Aikobots did not confirm acceptance of the generation snapshot. The job may still be running. Reload this chat to recover.": "Aikobots не подтвердил принятие снимка данных для генерации. Возможно, задача ещё выполняется. Перезагрузите этот чат для восстановления.",
