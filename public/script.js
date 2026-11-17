@@ -13380,6 +13380,7 @@ export function getGeneratingModel(mes) {
  */
 export function activateSendButtons() {
     is_send_press = false;
+    setTopChatAvailabilityState(Boolean(normalizeTopChatFileName(getCurrentChatId())));
     setGenerationPreflightIndicator(false);
     hideStopButton();
     delete document.body.dataset.generating;

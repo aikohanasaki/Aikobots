@@ -447,3 +447,52 @@ test('authoritative reload reports failure through its mutex for direct and grou
         assert.equal(await context.reloadCurrentChat(), undefined);
     }
 });
+
+test('generation cleanup refreshes stale top-bar actions while preserving group and chat restrictions', () => {
+    for (const mode of ['chat', 'group', 'no-chat']) {
+        const buttons = Object.fromEntries(['chatManager', 'newChat', 'closeChat', 'renameChat', 'search', 'deleteChat']
+            .map(name => [name, {}]));
+        let stopDisplay = 'flex';
+        const events = [];
+        const context = vm.createContext({
+            is_send_press: true, selected_group: mode === 'group' ? 'group' : null,
+            is_group_generating: mode === 'group', isManageChatsActionPending: false,
+            topChatButtons: buttons, getCurrentChatId: () => mode === 'no-chat' ? '' : 'synthetic-chat',
+            hasActiveChatContext: () => mode !== 'no-chat',
+            setTopChatActionDisabled: (button, disabled) => { button.disabled = Boolean(disabled); },
+            streamingProcessor: null, abortController: new AbortController(), chat: [],
+            event_types: { GENERATION_ENDED: 'ended', GENERATION_STOPPED: 'stopped' },
+            eventSource: { emit: event => events.push(event) },
+            $: () => ({ css: value => {
+                if (typeof value === 'string') return stopDisplay;
+                stopDisplay = value.display;
+            } }),
+            document: { body: { dataset: { generating: 'true' } } },
+            setGenerationPreflightIndicator() {}, swipes: false, is_delete_mode: false,
+            hasActiveMessageEditSession: () => false, shouldRestoreSwipeButtons: () => false,
+        });
+        vm.runInContext([
+            'function isTopChatInteractionBusy(', 'function normalizeTopChatFileName(',
+            'function setTopChatAvailabilityState(', 'function hideStopButton(',
+            'export function stopGeneration(', 'export function activateSendButtons(',
+        ].map(signature => declaration(script, signature)).join('\n'), context);
+
+        context.stopGeneration('USER_STOP');
+        // The debounced refresh runs before asynchronous final saving has finished.
+        context.setTopChatAvailabilityState(mode !== 'no-chat');
+        assert.equal(buttons.newChat.disabled, true);
+        assert.equal(buttons.search.disabled, mode === 'no-chat');
+        assert.equal(context.is_send_press, true);
+        assert.equal(stopDisplay, 'none');
+
+        context.activateSendButtons();
+        assert.equal(context.is_send_press, false);
+        assert.deepEqual(events, ['ended', 'stopped'], 'cleanup does not emit another completion event');
+        assert.equal(buttons.chatManager.disabled, mode === 'group');
+        assert.equal(buttons.newChat.disabled, mode === 'group');
+        for (const name of ['closeChat', 'renameChat', 'deleteChat']) {
+            assert.equal(buttons[name].disabled, mode !== 'chat', `${mode}: ${name}`);
+        }
+        assert.equal(buttons.search.disabled, mode === 'no-chat');
+    }
+});
