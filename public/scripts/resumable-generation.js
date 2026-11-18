@@ -1,6 +1,4 @@
-function reconnectDelay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
+import { generationDeadline, generationRetryDelay, generationResponseError, GENERATION_RETRY_WINDOW_MS } from './generation-transport.js';
 
 const FORWARDED_RESPONSE_HEADERS = [
     'X-ST-Messages-Count',
@@ -17,10 +15,16 @@ export function createResumableGenerationResponse({
     getHeaders,
     onHeaders,
     onClose,
+    onRetry,
+    onActivity,
+    checkStatus,
     fetchImpl = fetch,
-    reconnectDelayMs = 500,
-    maxEmptyReconnects = 5,
-    maxReconnectDelayMs = 5_000,
+    reconnectDelayMs = 1000,
+    maxEmptyReconnects = Infinity,
+    maxReconnectDelayMs = 10_000,
+    retryWindowMs = GENERATION_RETRY_WINDOW_MS,
+    headerTimeoutMs = 15_000,
+    idleTimeoutMs = 45_000,
 }) {
     const encoder = new TextEncoder();
     let cancelConnection = () => {};
@@ -28,16 +32,16 @@ export function createResumableGenerationResponse({
     let stopped = false;
     let forwardedHeaders = false;
     let resumableResponse;
+    const lifetime = new AbortController();
     const stream = new ReadableStream({
         start(controller) {
-            const connectionController = new AbortController();
-            abortFetch = () => connectionController.abort();
             let lastEventId = '';
             const close = (error = null) => {
                 if (stopped) {
                     return;
                 }
                 stopped = true;
+                lifetime.abort();
                 abortFetch();
                 signal.removeEventListener('abort', cancelConnection);
                 onClose?.();
@@ -50,10 +54,15 @@ export function createResumableGenerationResponse({
             cancelConnection = () => close(signal.reason || new DOMException('Generation cancelled.', 'AbortError'));
             signal.addEventListener('abort', cancelConnection, { once: true });
             let emptyReconnects = 0;
+            let retryDeadline = Date.now() + retryWindowMs;
 
             void (async () => {
                 while (!stopped) {
                     let receivedEvent = false;
+                    let receivedHeaders = false;
+                    let retryAfterMs = 0;
+                    const connection = generationDeadline(lifetime.signal, Math.min(headerTimeoutMs, Math.max(1, retryDeadline - Date.now())));
+                    abortFetch = () => connection.close();
                     try {
                         const headers = getHeaders();
                         if (lastEventId) {
@@ -61,14 +70,11 @@ export function createResumableGenerationResponse({
                         }
                         const response = await fetchImpl(url, {
                             headers,
-                            signal: connectionController.signal,
+                            signal: connection.signal,
                         });
+                        receivedHeaders = true;
                         if (!response.ok || !response.body) {
-                            const error = new Error(`Generation stream returned HTTP ${response.status}.`);
-                            error.retryable = response.status >= 500 || [408, 425, 429].includes(response.status);
-                            // A delivery failure says nothing about the detached provider job.
-                            error.generationRecoveryAvailable = true;
-                            throw error;
+                            throw generationResponseError(response);
                         }
                         if (!forwardedHeaders) {
                             for (const name of FORWARDED_RESPONSE_HEADERS) {
@@ -82,17 +88,21 @@ export function createResumableGenerationResponse({
                         }
 
                         const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+                        connection.reset(Math.min(idleTimeoutMs, Math.max(1, retryDeadline - Date.now())));
                         let buffer = '';
                         while (!stopped) {
                             const next = await reader.read();
                             if (next.done) {
                                 break;
                             }
+                            retryDeadline = Date.now() + retryWindowMs;
+                            onActivity?.();
+                            connection.reset(idleTimeoutMs);
+                            receivedEvent = true;
                             buffer += next.value;
                             const blocks = buffer.replaceAll('\r\n', '\n').split('\n\n');
                             buffer = blocks.pop() || '';
                             for (const block of blocks) {
-                                receivedEvent ||= block.split('\n').some(line => line.startsWith('data:'));
                                 const idLine = block.split('\n').find(line => line.startsWith('id:'));
                                 if (idLine) {
                                     lastEventId = idLine.slice(3).trimStart();
@@ -117,19 +127,35 @@ export function createResumableGenerationResponse({
                             close(error);
                             return;
                         }
+                        retryAfterMs = error?.retryAfterMs || 0;
+                        if (!receivedHeaders && checkStatus) {
+                            try {
+                                const status = await checkStatus(lifetime.signal);
+                                if (['queued', 'running'].includes(status?.state)) {
+                                    retryDeadline = Date.now() + retryWindowMs;
+                                    receivedEvent = true;
+                                }
+                            } catch (statusError) {
+                                if (statusError?.retryable === false) { close(statusError); return; }
+                            }
+                        }
+                    } finally {
+                        connection.close();
                     }
+                    if (stopped) return;
                     emptyReconnects = receivedEvent ? 0 : emptyReconnects + 1;
-                    if (emptyReconnects >= maxEmptyReconnects) {
+                    if (emptyReconnects >= maxEmptyReconnects || Date.now() >= retryDeadline) {
                         const error = new Error('Generation stream ended without a terminal event.');
                         error.generationRecoveryAvailable = true;
                         close(error);
                         return;
                     }
                     const delayMs = Math.min(
-                        reconnectDelayMs * (2 ** Math.max(0, emptyReconnects - 1)),
-                        maxReconnectDelayMs,
+                        Math.max(Math.min(reconnectDelayMs * (2 ** Math.max(0, emptyReconnects - 1)), maxReconnectDelayMs), retryAfterMs),
+                        Math.max(0, retryDeadline - Date.now()),
                     );
-                    await reconnectDelay(delayMs);
+                    onRetry?.();
+                    await generationRetryDelay(delayMs, lifetime.signal).catch(() => {});
                 }
             })();
 
@@ -140,6 +166,7 @@ export function createResumableGenerationResponse({
         cancel() {
             if (!stopped) {
                 stopped = true;
+                lifetime.abort();
                 abortFetch();
                 signal.removeEventListener('abort', cancelConnection);
                 onClose?.();

@@ -8,6 +8,9 @@ const MAX_PENDING_AGE_MS = 7 * 24 * 60 * 60_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RECOVERABLE_TYPES = new Set(['normal', 'regenerate', 'continue', 'swipe']);
 
+/** Immutable startup requests retained only in page memory; never serialize or log this map. */
+export const pendingGenerationAdmissions = new Map();
+
 function getDefaultStorage() {
     try {
         return globalThis.sessionStorage;
@@ -185,6 +188,8 @@ export function getPendingGeneration(storage = getDefaultStorage(), now = Date.n
 
 /** Clears the pending generation when it still belongs to the supplied job ID. */
 export function clearPendingGeneration(generationId = null, storage = getDefaultStorage()) {
+    if (generationId) pendingGenerationAdmissions.delete(generationId);
+    else pendingGenerationAdmissions.clear();
     if (!storage) {
         return;
     }
@@ -235,6 +240,7 @@ function persistCancellationIntents(storage) {
 /** Retains cancellation and recovery until the server confirms a durable cancellation or terminal state. */
 export function cancelGenerationWithConfirmation(generationId, { getHeaders, fetchImpl = fetch, storage = getDefaultStorage(), reason, t, notify } = {}) {
     if (!UUID_PATTERN.test(generationId)) return Promise.resolve(false);
+    pendingGenerationAdmissions.delete(generationId);
     if (reason !== undefined) reportGenerationCancellation(generationId, reason, { t, notify });
     listPendingGenerationCancellations(storage);
     if (cancellationIntents.get(generationId)?.confirmed) return Promise.resolve(true);

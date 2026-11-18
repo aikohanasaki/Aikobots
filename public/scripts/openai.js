@@ -18,6 +18,7 @@ import {
     getMediaIndex,
     getRequestHeaders,
     queueGenerationAdmission,
+    queueChatRevisionOperation,
     is_send_press,
     main_api,
     name1,
@@ -82,8 +83,9 @@ import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL } from './constants.js';
 import { consumeChatCompletionStream } from './chat-completion-stream.js';
 import { getOpenRouterPricingDisplay } from './openrouter-pricing.js';
 import { createResumableGenerationResponse } from './resumable-generation.js';
+import { fetchGenerationResponse, generationResponseError, generationRetryDelay, readGenerationJson, retryGenerationTransport } from './generation-transport.js';
 import { createAutomaticCacheComparison, finishAutomaticCacheComparison, normalizeAutomaticCacheUsage, resetAutomaticCacheComparisons } from './automatic-prompt-cache.js';
-import { cancelGenerationWithConfirmation, clearPendingGeneration, recordGenerationAdmission, reportGenerationCancellation, savePendingGeneration } from './generation-recovery.js';
+import { cancelGenerationWithConfirmation, clearPendingGeneration, pendingGenerationAdmissions, recordGenerationAdmission, reportGenerationCancellation, savePendingGeneration } from './generation-recovery.js';
 
 export {
     oai_settings,
@@ -3131,6 +3133,14 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
         void cancelGeneration();
     };
     signal.addEventListener('abort', onAbort, { once: true });
+    let transportNotice;
+    const onTransportRetry = () => {
+        transportNotice ||= toastr.info(t`Connection interrupted. Retrying generation…`, '', { timeOut: 0, extendedTimeOut: 0 });
+    };
+    const clearTransportNotice = () => {
+        if (transportNotice) toastr.clear(transportNotice);
+        transportNotice = null;
+    };
     let response;
     try {
         let created = { request_id: resumedGeneration?.serverRequestId || '' };
@@ -3164,6 +3174,15 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
             if (createResponse) {
                 created = await createResponse.json();
             }
+        } else if (pendingGenerationAdmissions.has(generationId)) {
+            const retryResponse = await createDetachedGeneration(generationsUrl, generationId, null, null, signal);
+            if (!retryResponse.ok) {
+                clearPendingGeneration(generationId);
+                const errorText = await retryResponse.text();
+                const parsed = tryParseStreamingError(retryResponse, errorText);
+                throw new Error(getResponseErrorMessage(retryResponse, errorText, parsed));
+            }
+            created = await retryResponse.json();
         } else if (!created.request_id) {
             const recoveredJob = await waitForDetachedGeneration(generationsUrl, generationId, signal);
             if (!recoveredJob) {
@@ -3194,13 +3213,17 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
                     requestId: created.request_id || requestId,
                     signal,
                     getHeaders: getRequestHeaders,
-                    onHeaders: headers => applyAssemblyResponseMetadata(headers, requestId, type),
-                    onClose: () => signal.removeEventListener('abort', onAbort),
+                    onHeaders: headers => { clearTransportNotice(); applyAssemblyResponseMetadata(headers, requestId, type); },
+                    onClose: () => { signal.removeEventListener('abort', onAbort); clearTransportNotice(); },
+                    onRetry: onTransportRetry,
+                    onActivity: clearTransportNotice,
+                    checkStatus: connectionSignal => readGenerationStatus(generationId, connectionSignal),
                 })
-                : await waitForGenerationResult(generationId, signal);
+                : await waitForGenerationResult(generationId, signal, onTransportRetry, clearTransportNotice);
         }
     } catch (error) {
         signal.removeEventListener('abort', onAbort);
+        clearTransportNotice();
         throw error;
     } finally {
         if (hasForcedActivations) {
@@ -3209,6 +3232,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
     }
 
     if (!stream) {
+        clearTransportNotice();
         signal.removeEventListener('abort', onAbort);
         applyAssemblyResponseMetadata(response.headers, requestId, type);
     }
@@ -3367,8 +3391,10 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ge
     }
 }
 
+/** Retries one immutable snapshot admission, releasing the revision queue between attempts. */
 async function createDetachedGeneration(url, generationId, request, recovery = null, signal = null) {
-    return queueGenerationAdmission(request.prompt_context.generationSource, async source => {
+    let captured = pendingGenerationAdmissions.get(generationId);
+    const capture = source => {
         const promptContext = structuredClone(request?.prompt_context || {});
         delete promptContext.generationSource;
         const providerRequest = structuredClone(request || {});
@@ -3384,79 +3410,120 @@ async function createDetachedGeneration(url, generationId, request, recovery = n
             },
             recovery,
         });
+        captured = { body, source };
+        pendingGenerationAdmissions.set(generationId, captured);
         if (recovery) savePendingGeneration({ ...recovery, generationId, state: 'queued' });
-        const controller = new AbortController();
-        const abort = () => controller.abort(signal.reason);
-        signal?.addEventListener('abort', abort, { once: true });
-        let timedOut = false;
-        const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 15_000);
+    };
+    const submit = async timeoutMs => {
+        signal?.throwIfAborted();
         let admissionCode = null;
-        try {
-            const response = await fetch(url, { method: 'POST', body, headers: getRequestHeaders(), signal: controller.signal });
-            const acknowledgement = response.ok ? await response.clone().json().catch(() => null) : null;
-            if (response.ok) {
-                if (!acknowledgement || typeof acknowledgement !== 'object' || Array.isArray(acknowledgement)) admissionCode = 'START_INVALID_REPLY';
-                else if (acknowledgement.id !== generationId) admissionCode = 'START_ID_MISMATCH';
-                else if (acknowledgement.snapshot_admitted !== true) admissionCode = 'START_NOT_ADMITTED';
-                else if (acknowledgement.accepted_revision !== source.expectedRevision) admissionCode = 'START_REVISION_MISMATCH';
-                if (admissionCode) throw new Error('Invalid generation acknowledgement.');
-            }
-            signal?.throwIfAborted();
-            if (response.status >= 500 || response.status === 408) {
-                admissionCode = response.status === 408 ? 'START_HTTP_408' : 'START_HTTP_5XX';
-                throw new Error('Generation acknowledgement unavailable.');
-            }
-            return response;
-        } catch {
-            if (signal?.reason?.generationParked !== true) {
-                // Missing confirmation does not prove rejection; only an explicit abort or mismatch cancels.
-                const recoveryPending = !signal?.aborted
-                    && !['START_ID_MISMATCH', 'START_REVISION_MISMATCH'].includes(admissionCode);
-                if (!recoveryPending) void cancelGenerationWithConfirmation(generationId, { getHeaders: getRequestHeaders });
-                const diagnostic = reportGenerationCancellation(generationId, signal?.aborted ? signal.reason : {
-                    generationCancellationCode: timedOut ? 'START_TIMEOUT' : admissionCode || 'START_CONNECTION',
-                }, { t });
-                signal?.throwIfAborted();
-                if (diagnostic) throw diagnostic;
-            }
-            signal?.throwIfAborted();
-            throw new Error('Generation admission interrupted.');
-        } finally {
-            clearTimeout(timeout);
-            signal?.removeEventListener('abort', abort);
+        const response = await fetchGenerationResponse(url, {
+            method: 'POST', body: captured.body, headers: getRequestHeaders(), signal,
+        }, { timeoutMs });
+        const acknowledgement = response.ok ? await response.clone().json().catch(() => null) : null;
+        if (response.ok) {
+            if (!acknowledgement || typeof acknowledgement !== 'object' || Array.isArray(acknowledgement)) admissionCode = 'START_INVALID_REPLY';
+            else if (acknowledgement.id !== generationId) admissionCode = 'START_ID_MISMATCH';
+            else if (acknowledgement.snapshot_admitted !== true) admissionCode = 'START_NOT_ADMITTED';
+            else if (acknowledgement.accepted_revision !== captured.source.expectedRevision) admissionCode = 'START_REVISION_MISMATCH';
+            if (admissionCode) throw Object.assign(new Error('Invalid generation acknowledgement.'), {
+                generationCancellationCode: admissionCode,
+                retryable: !['START_ID_MISMATCH', 'START_REVISION_MISMATCH'].includes(admissionCode),
+            });
         }
-    }, signal);
+        signal?.throwIfAborted();
+        if (response.status >= 500 || [408, 425, 429].includes(response.status)) throw generationResponseError(response);
+        return response;
+    };
+    let retryNotice;
+    try {
+        const response = await retryGenerationTransport(timeoutMs => captured
+            ? queueChatRevisionOperation(() => submit(timeoutMs))
+            : queueGenerationAdmission(request.prompt_context.generationSource, source => {
+                capture(source);
+                return submit(timeoutMs);
+            }, signal), {
+            signal,
+            onRetry: () => { retryNotice ||= toastr.info(t`Connection interrupted. Retrying generation…`, '', { timeOut: 0, extendedTimeOut: 0 }); },
+        });
+        pendingGenerationAdmissions.delete(generationId);
+        return response;
+    } catch (error) {
+        if (!captured) throw error;
+        if (signal?.reason?.generationParked !== true) {
+            // Missing confirmation does not prove rejection; only an explicit abort or mismatch cancels.
+            const recoveryPending = !signal?.aborted
+                    && !['START_ID_MISMATCH', 'START_REVISION_MISMATCH'].includes(error.generationCancellationCode);
+            if (!recoveryPending) {
+                pendingGenerationAdmissions.delete(generationId);
+                void cancelGenerationWithConfirmation(generationId, { getHeaders: getRequestHeaders });
+            }
+            const diagnostic = reportGenerationCancellation(generationId, signal?.aborted ? signal.reason : {
+                generationCancellationCode: error.generationCancellationCode || 'START_CONNECTION',
+            }, { t, ...(recoveryPending ? { notify: () => {} } : {}) });
+            signal?.throwIfAborted();
+            if (diagnostic) throw diagnostic;
+        }
+        signal?.throwIfAborted();
+        throw new Error('Generation admission interrupted.');
+    } finally {
+        if (retryNotice) toastr.clear(retryNotice);
+    }
 }
 
 /** Bridges a reload that raced the original generation-create response. */
 async function waitForDetachedGeneration(url, generationId, signal) {
-    for (let attempt = 0; attempt < 20; attempt++) {
-        signal.throwIfAborted();
-        const response = await fetch(`${url}/${generationId}`, {
-            headers: getRequestHeaders(),
-            signal,
-        });
-        if (response.ok) {
-            return response.json();
+    return retryGenerationTransport(async timeoutMs => {
+        const response = await fetchGenerationResponse(`${url}/${generationId}`, { headers: getRequestHeaders(), signal }, { timeoutMs });
+        if (!response.ok) {
+            const error = generationResponseError(response);
+            // A reload may race admission on another worker. Never recreate a missing job here.
+            if (response.status === 404) error.retryable = true;
+            throw error;
         }
-        if (response.status !== 404) {
-            throw new Error(`Generation recovery returned HTTP ${response.status}.`);
-        }
-        await delay(250);
-    }
-    return null;
+        const job = await readGenerationJson(response);
+        if (job?.id !== generationId) throw generationResponseError(new Response(null, { status: 409 }));
+        return job;
+    }, { signal }).catch(error => { error.generationId = generationId; throw error; });
 }
 
-async function waitForGenerationResult(generationId, signal) {
+/** Polls a detached result without restarting a failed provider job. */
+async function waitForGenerationResult(generationId, signal, onRetry, onActivity) {
     const resultUrl = `/api/backends/chat-completions/generations/${generationId}/result`;
     while (true) {
         signal.throwIfAborted();
-        const response = await fetch(resultUrl, { headers: getRequestHeaders(), signal });
+        const response = await retryGenerationTransport(async timeoutMs => {
+            const result = await fetchGenerationResponse(resultUrl, { headers: getRequestHeaders(), signal }, { timeoutMs });
+            if (!result.ok) {
+                const error = generationResponseError(result);
+                if (error.retryable || result.status === 409) {
+                    const job = await readGenerationStatus(generationId, signal);
+                    if (['failed', 'cancelled'].includes(job.state)) return result;
+                }
+                throw error;
+            }
+            // Validate pending responses too; a proxy's HTML response is not a job acknowledgement.
+            const body = await readGenerationJson(result.clone());
+            if (result.status === 202 && body?.id !== generationId) throw generationResponseError(new Response(null, { status: 409 }));
+            return result;
+        }, { signal, onRetry }).catch(error => { error.generationId = generationId; throw error; });
+        onActivity?.();
         if (response.status !== 202) {
             return response;
         }
-        await delay(250);
+        await generationRetryDelay(1000, signal);
     }
+}
+
+/** Reads the authenticated status of the same generation using a bounded request. */
+async function readGenerationStatus(generationId, signal) {
+    const response = await fetchGenerationResponse(`/api/backends/chat-completions/generations/${generationId}`, {
+        headers: getRequestHeaders(), signal,
+    });
+    if (!response.ok) throw generationResponseError(response);
+    const job = await readGenerationJson(response);
+    if (job?.id !== generationId) throw generationResponseError(new Response(null, { status: 409 }));
+    return job;
 }
 
 /**

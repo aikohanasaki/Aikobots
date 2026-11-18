@@ -340,7 +340,7 @@ test('recovery toasts report server status without mutating jobs and preserve ac
                 return notice;
             }, clear(value) { assert.equal(value, notice); } },
             getRequestHeaders: () => ({ 'X-CSRF-Token': 'synthetic' }),
-            fetch: async (url, options) => {
+            fetchGenerationResponse: async (url, options) => {
                 calls.push('lookup');
                 assert.equal(url, '/api/backends/chat-completions/generations/job');
                 assert.equal(options.cache, 'no-store');

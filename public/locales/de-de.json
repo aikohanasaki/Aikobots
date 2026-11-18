@@ -1,4 +1,5 @@
 {
+    "Connection interrupted. Retrying generation…": "Verbindung unterbrochen. Generierung wird erneut versucht…",
     "Reference ID (select and copy)": "Referenz-ID (auswählen und kopieren)",
     "Generation recovery pending": "Wiederherstellung der Generierung ausstehend",
     "Aikobots’ generation-start confirmation could not be read. The job may still be running. Reload this chat to recover.": "Die Generierungsstartbestätigung von Aikobots konnte nicht gelesen werden. Der Auftrag läuft möglicherweise noch. Lade diesen Chat neu, um ihn wiederherzustellen.",

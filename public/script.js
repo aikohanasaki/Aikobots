@@ -103,6 +103,7 @@ import {
     validateChunkedChatPayload,
 } from './scripts/chat-chunking.js';
 import { createChatSortComparator, fetchChatSearchResults } from './scripts/chat-search.js';
+import { fetchGenerationResponse } from './scripts/generation-transport.js';
 
 import {
     setOpenAIMessageExamples,
@@ -10718,16 +10719,6 @@ async function generateInternal(type, { automatic_trigger, quiet_prompt, quietTo
     }
 
     if (!dryRun) {
-        // Ping server to make sure it is still alive
-        const pingResult = await pingServer();
-        signal?.throwIfAborted();
-
-        if (!pingResult) {
-            unblockGeneration(type);
-            toastr.error(t`Verify that the server is running and accessible.`, t`ST Server cannot be reached`);
-            throw new Error('Server unreachable');
-        }
-
         // Hide swipes if not in a dry run.
         hideSwipeButtons();
         // Preserve established-chat behavior without letting background work persist a pristine temporary opening.
@@ -11634,7 +11625,7 @@ async function acknowledgeGenerationRecovery(generationId, { supersedeFailures =
         : [];
     const resolveRecovery = async id => {
         try {
-            const response = await fetch(`/api/backends/chat-completions/generations/${id}/resolve`, {
+            const response = await fetchGenerationResponse(`/api/backends/chat-completions/generations/${id}/resolve`, {
                 method: 'POST',
                 headers: getRequestHeaders(),
             });
@@ -11666,7 +11657,7 @@ async function getServerGenerationRecoveries() {
     const cancelling = new Set(listPendingGenerationCancellations());
     for (const id of cancelling) void cancelGenerationWithConfirmation(id, { getHeaders: getRequestHeaders });
     try {
-        const response = await fetch('/api/backends/chat-completions/generations/recoverable', {
+        const response = await fetchGenerationResponse('/api/backends/chat-completions/generations/recoverable', {
             headers: getRequestHeaders(),
             cache: 'no-cache',
         });
@@ -11762,7 +11753,7 @@ function pauseGenerationRecovery(generationId) {
 
     void (async () => {
         try {
-            const response = await fetch(`/api/backends/chat-completions/generations/${encodeURIComponent(generationId)}`, {
+            const response = await fetchGenerationResponse(`/api/backends/chat-completions/generations/${encodeURIComponent(generationId)}`, {
                 headers: getRequestHeaders(),
                 cache: 'no-store',
             });
@@ -11903,6 +11894,8 @@ export async function Generate(type, options = {}, dryRun = false) {
             if (options.signal.aborted) unblockGeneration(type);
             if (error?.generationRecoveryAvailable && error?.generationId) {
                 deferTemporaryGenerationAttempt(temporaryGenerationAttempt, error.generationId);
+                unblockGeneration(type);
+                pauseGenerationRecovery(error.generationId);
             }
             if (error?.generationParked === true) {
                 deferTemporaryGenerationAttempt(temporaryGenerationAttempt, foregroundGenerationId);

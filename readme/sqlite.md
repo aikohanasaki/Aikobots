@@ -1107,7 +1107,15 @@ When rollback deletes a source-owned Memory, its verified source UUID range is c
 
 Base-memory saves fall back to the existing logical JSONL reader when the referenced chat has not yet been migrated to SQLite. The server still verifies that both numeric scene boundaries exist in that exact referenced chat; persisted boundary UUIDs are included only when both are already present. This compatibility read does not migrate, rewrite, or delete the legacy chat, and the resulting numeric-only memory continues through the existing legacy range rules.
 
-Startup acknowledgement waits remain bounded to 15 seconds so queued chat saves are released. A timeout, connection failure, HTTP 408/5xx, or unreadable/incomplete acknowledgement retains the content-free recovery route without requesting server cancellation. These uncertain starts use the existing recovery-pending path; reload the chat to recover. Explicit aborts and mismatched generation IDs or revisions retain their existing handling. No schema or transaction rules change.
+### Generation transport recovery
+
+Generation no longer performs a separate reachability ping before starting. Detached admission retries reuse the exact serialized request, generation ID, preparation nonce, source revision, and recovery metadata. Each admission attempt remains bounded to 15 seconds and runs through the existing revision queue; the queue is released between attempts and during backoff. A retry never recaptures a newer source revision. Existing SQLite duplicate-admission checks and chat locks remain authoritative across all PM2 workers; no schema changes are required.
+
+Transient delivery failures retry for up to three minutes, with cancellable exponential backoff from one to ten seconds and respect for `Retry-After` within the remaining budget. Startup request content is retained only in page memory for explicit retry after exhaustion, and released after acknowledgement or definitive rejection/cancellation. Reload recovery stores only the established content-free routing record and never reconstructs or resubmits a missing startup request.
+
+Finite generation/status/recovery responses have a 15-second deadline through body consumption. Streams have a 15-second header deadline and a 45-second inactivity deadline, reset by received bytes including heartbeats. A timed-out connection is replaced using the last complete SSE event ID without cancelling the provider job. Since headers can wait for server preparation, a confirmed queued/running status permits continued waiting; model generation itself has no new wall-clock deadline. Non-streaming pending results poll once per second. Confirmed provider failures require user retry rather than automatic provider restart.
+
+Exhausted delivery retries preserve recovery and use the existing accessible reconnect action. Stop aborts transport and backoff immediately and retains the durable cancellation-intent mechanism. Recovery is still acknowledged only after authoritative chat persistence; an interrupted acknowledgement keeps the recovery record. Authentication failures, source/identity conflicts, and cancellations do not trigger automatic retries. Existing message-save queues and their uncertain-commit handling are unchanged and can still block generation separately.
 
 ### Interrupted streamed replies
 

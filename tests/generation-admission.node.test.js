@@ -7,6 +7,7 @@ import { reportGenerationCancellation } from '../public/scripts/generation-recov
 const script = fs.readFileSync(new URL('../public/script.js', import.meta.url), 'utf8');
 const extensions = fs.readFileSync(new URL('../public/scripts/extensions.js', import.meta.url), 'utf8');
 const openai = fs.readFileSync(new URL('../public/scripts/openai.js', import.meta.url), 'utf8');
+const transport = fs.readFileSync(new URL('../public/scripts/generation-transport.js', import.meta.url), 'utf8');
 const presets = fs.readFileSync(new URL('../public/scripts/world-info-locks.js', import.meta.url), 'utf8');
 
 function deferred() {
@@ -28,7 +29,8 @@ function makeContext() {
     let timerId = 0;
     const source = { generationType: 'normal', expectedRevision: 3, anchorMessageUuid: 'anchor', chatRef: { type: 'group', chatId: 'chat' } };
     const context = vm.createContext({
-        Promise, structuredClone, AbortController, Response, JSON,
+        Promise, structuredClone, AbortController, Response, JSON, DOMException,
+        pendingGenerationAdmissions: new Map(), toastr: { info() {}, clear() {} },
         console: { debug() {}, warn() {} },
         CHAT_SAVE_RESULT: { SAVED: 'saved', FAILED: 'failed' },
         chatRevisionOperationQueue: Promise.resolve(),
@@ -46,6 +48,9 @@ function makeContext() {
         },
         getContext: () => ({ chatId: 'chat', saveMetadata: () => context.queueChatRevisionOperation(() => { source.expectedRevision++; return 'saved'; }) }),
     });
+    vm.runInContext(transport.replaceAll('export ', ''), context);
+    const retryTransport = context.retryGenerationTransport;
+    context.retryGenerationTransport = (operation, options) => retryTransport(operation, { ...options, retryWindowMs: 0 });
     context.generationPreparationMetadata.set(source, JSON.stringify([context.chat_metadata, context.chat.at(-1)]));
     vm.runInContext(section(extensions, 'let saveMetadataTimeout =', '/**\n * Provides an ability'), context);
     vm.runInContext(section(script, 'export function queueChatRevisionOperation(', 'function getSyncCurrentChatCooldownSeconds('), context);
@@ -54,8 +59,197 @@ function makeContext() {
         await vm.runInContext('chatRevisionOperationQueue', context);
         return result;
     };
-    return { context, source, timers };
+    return { context, source, timers, retryTransport };
 }
+
+test('admission retries the exact request across a lost acknowledgement and releases saves between attempts', async () => {
+    const { context, source, retryTransport } = makeContext();
+    context.retryGenerationTransport = retryTransport;
+    const bodies = [];
+    let saved = false;
+    Object.assign(context, {
+        uuidv4: () => 'synthetic-nonce', getRequestHeaders: () => ({}),
+        generationRetryDelay: async () => {
+            await context.queueChatRevisionOperation(() => { saved = true; source.expectedRevision++; });
+        },
+        fetch: async (_url, options) => {
+            bodies.push(options.body);
+            if (bodies.length === 1) throw new TypeError('synthetic lost acknowledgement');
+            assert.equal(saved, true);
+            return Response.json({ id: 'job', snapshot_admitted: true, accepted_revision: 3 });
+        },
+    });
+    vm.runInContext(section(openai, 'async function createDetachedGeneration(', '/** Bridges a reload'), context);
+    const result = await context.createDetachedGeneration('/generations', 'job', { prompt_context: { generationSource: source } });
+    assert.equal(result.ok, true);
+    assert.equal(bodies.length, 2);
+    assert.equal(bodies[0], bodies[1]);
+    assert.equal(JSON.parse(bodies[1]).preparation.source.expectedRevision, 3);
+    assert.equal(context.pendingGenerationAdmissions.size, 0);
+});
+
+test('Stop during admission backoff prevents another start request', async () => {
+    const { context, source, retryTransport } = makeContext();
+    context.retryGenerationTransport = retryTransport;
+    const controller = new AbortController();
+    let requests = 0;
+    Object.assign(context, {
+        uuidv4: () => 'nonce', getRequestHeaders: () => ({}),
+        generationRetryDelay: async () => { controller.abort(); },
+        cancelGenerationWithConfirmation: async () => true,
+        fetch: async () => { requests++; throw new TypeError('synthetic network failure'); },
+    });
+    vm.runInContext(section(openai, 'async function createDetachedGeneration(', '/** Bridges a reload'), context);
+    await assert.rejects(context.createDetachedGeneration('/generations', 'job', { prompt_context: { generationSource: source } }, null, controller.signal), { name: 'AbortError' });
+    assert.equal(requests, 1);
+    assert.equal(context.pendingGenerationAdmissions.size, 0);
+});
+
+test('manual startup recovery reuses the captured request after the automatic budget expires', async () => {
+    const { context, source } = makeContext();
+    const bodies = [];
+    Object.assign(context, {
+        uuidv4: () => 'nonce', getRequestHeaders: () => ({}),
+        fetch: async (_url, options) => {
+            bodies.push(options.body);
+            if (bodies.length === 1) throw new TypeError('synthetic offline');
+            return Response.json({ id: 'job', snapshot_admitted: true, accepted_revision: 3 });
+        },
+    });
+    vm.runInContext(section(openai, 'async function createDetachedGeneration(', '/** Bridges a reload'), context);
+    await assert.rejects(context.createDetachedGeneration('/generations', 'job', { prompt_context: { generationSource: source } }), /START_CONNECTION/);
+    source.expectedRevision++;
+    assert.equal((await context.createDetachedGeneration('/generations', 'job', null)).ok, true);
+    assert.equal(bodies[0], bodies[1]);
+    assert.equal(context.pendingGenerationAdmissions.size, 0);
+});
+
+test('non-streaming polling recovers a stalled response body and retains the same job', async () => {
+    const { context, timers, retryTransport } = makeContext();
+    context.retryGenerationTransport = retryTransport;
+    const entered = deferred();
+    const urls = [];
+    Object.assign(context, {
+        getRequestHeaders: () => ({}), generationRetryDelay: async () => {},
+        fetch: async (url, { signal }) => {
+            urls.push(url);
+            if (urls.length === 1) {
+                entered.resolve();
+                return new Response(new ReadableStream({ start(controller) {
+                    signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+                } }));
+            }
+            return Response.json(urls.length === 2 ? { id: 'job', state: 'running' } : { choices: [] }, { status: urls.length === 2 ? 202 : 200 });
+        },
+    });
+    vm.runInContext(section(openai, 'async function waitForGenerationResult(', '/**\n * Extracts the reply'), context);
+    const result = context.waitForGenerationResult('job', new AbortController().signal);
+    await entered.promise;
+    [...timers.values()][0]();
+    assert.equal((await result).status, 200);
+    assert.deepEqual(urls, Array(3).fill('/api/backends/chat-completions/generations/job/result'));
+    assert.equal(timers.size, 0);
+});
+
+test('a confirmed provider failure is returned without another result attempt or a new generation', async () => {
+    const { context, retryTransport } = makeContext();
+    context.retryGenerationTransport = retryTransport;
+    const urls = [];
+    Object.assign(context, {
+        getRequestHeaders: () => ({}),
+        fetch: async url => {
+            urls.push(url);
+            return url.endsWith('/result')
+                ? Response.json({ error: { message: 'Synthetic provider failure' } }, { status: 502 })
+                : Response.json({ id: 'job', state: 'failed' });
+        },
+    });
+    vm.runInContext(section(openai, 'async function waitForGenerationResult(', '/**\n * Extracts the reply'), context);
+    const result = await context.waitForGenerationResult('job', new AbortController().signal);
+    assert.equal(result.status, 502);
+    assert.deepEqual(urls, ['/api/backends/chat-completions/generations/job/result', '/api/backends/chat-completions/generations/job']);
+});
+
+test('Generate bypasses the ping and reaches group generation, with Stop releasing the UI', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const entered = deferred();
+    const requests = [];
+    const errors = [];
+    let preflight = false;
+    let completed = false;
+    let audioStopped = false;
+    const messages = [{ mes: 'Synthetic existing message', is_user: true }];
+    const context = vm.createContext({
+        setTimeout, clearTimeout, AbortController, AbortSignal,
+        selected_group: 'synthetic-group', is_group_generating: false,
+        isCurrentCharacterChatTemporary: () => false, hideSwipeButtons() {},
+        generateGroupWrapper: (_dryRun, _type, { signal }) => new Promise((_resolve, reject) => {
+            entered.resolve();
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+        console: { log() {}, error() {} },
+        chat: structuredClone(messages), chat_metadata: {}, this_chid: 0,
+        is_send_press: false, foregroundGenerationPromise: null, foregroundGenerationId: '',
+        streamingProcessor: null, abortController: null,
+        t: strings => strings.join(''), toastr: { error: message => errors.push(message) },
+        takeDeferredTemporaryGenerationAttempt: () => null,
+        createTemporaryGenerationAttempt: () => null,
+        finalizeTemporaryGenerationAttempt: async () => {},
+        setGenerationPreflightIndicator: value => { preflight = value; },
+        foregroundGenerationReadiness: { notify() {} },
+        beginMobileBackgroundAudioGeneration: () => () => { audioStopped = true; },
+        enforceChatCompletionsOnlyMode() {}, blockIfEditing: () => false,
+        setGenerationProgress() {}, activateSendButtons() {}, flushEphemeralStoppingStrings() {},
+        waitForCurrentConnectionProfileTransition: async () => {},
+        waitForWorldInfoPreset: async () => {},
+        flushDebouncedChatSave: async () => 'saved', CHAT_SAVE_RESULT: { SAVED: 'saved' },
+        unshallowCharacter: async () => {}, eventSource: { emit: async () => {} }, event_types: {},
+        isDirtyingForegroundGeneration: () => true, hideStopButton() {},
+        getRequestHeaders: () => ({}),
+        fetch: (url, options) => {
+            requests.push({ url, signal: options.signal });
+            throw new Error('Generate must not ping the server.');
+        },
+    });
+    // Execute complete production functions; only browser/services are stubbed.
+    vm.runInContext(section(script, 'async function generateInternal(', 'function getGenerationRecoveryChatIdentity('), context);
+    vm.runInContext(section(script, 'export async function Generate(', 'export function getNextMessageId('), context);
+    vm.runInContext(section(script, 'export async function pingServer()', 'function showStorageCheckWarning('), context);
+    const result = context.Generate('normal').then(
+        value => { completed = true; return value; },
+        error => { completed = true; return error; },
+    );
+    try {
+        await entered.promise;
+        t.mock.timers.tick(120_000);
+        await Promise.resolve();
+        assert.equal(completed, false);
+        assert.equal(context.is_send_press, true);
+        assert.equal(preflight, true);
+        assert.ok(context.foregroundGenerationPromise);
+        assert.equal(audioStopped, false);
+        assert.deepEqual(context.chat, messages);
+        assert.deepEqual(errors, []);
+        assert.deepEqual(requests, []);
+
+        assert.equal(context.stopGeneration(), true);
+        assert.equal(context.abortController.signal.aborted, true);
+        await result;
+        assert.equal(completed, true);
+        assert.equal(context.is_send_press, false);
+        assert.equal(preflight, false);
+        assert.equal(requests.length, 0);
+    } finally {
+        context.abortController?.abort();
+        await result;
+    }
+    assert.equal((await result).name, 'AbortError');
+    assert.equal(context.is_send_press, false);
+    assert.equal(preflight, false);
+    assert.equal(context.foregroundGenerationPromise, null);
+    assert.equal(audioStopped, true);
+    assert.deepEqual(context.chat, messages);
+});
 
 test('admission errors display fixed specific messages without exposing response content', () => {
     const context = vm.createContext({
@@ -140,7 +334,7 @@ test('failed saves, changed anchors, cancellation and admission errors never str
     }
 });
 
-test('lost or invalid admission acknowledgements release the save queue without cancellation', async () => {
+test('exhausted or invalid admission acknowledgements release the save queue without cancellation', async () => {
     const { context, source } = makeContext();
     vm.runInContext(section(openai, 'async function createDetachedGeneration(', '/** Bridges a reload'), context);
     context.uuidv4 = () => 'nonce';
@@ -486,6 +680,7 @@ test('recovery discovery cannot resume a job with pending or confirmed cancellat
         normalizePendingGeneration: record => record,
         fetch: async () => ({ ok: true, json: async () => ({ jobs: [{ generation_id: id, state: 'running', recovery: {} }] }) }),
     });
+    context.fetchGenerationResponse = context.fetch;
     vm.runInContext(section(script, 'async function getServerGenerationRecoveries(', '/** Detects a chat mutation'), context);
     assert.equal((await context.getServerGenerationRecoveries()).length, 0);
 });

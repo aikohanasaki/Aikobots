@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
     clearPendingGeneration,
+    pendingGenerationAdmissions,
     cancelGenerationWithConfirmation,
     listPendingGenerationCancellations,
     getSupersededFailedGenerationIds,
@@ -41,6 +42,22 @@ function createRecord(createdAt = Date.now()) {
 }
 
 describe('pending generation recovery', () => {
+    it('never persists startup request content and drops it on cancellation or acknowledgement', async () => {
+        const storage = createStorage();
+        const record = { ...createRecord(), generationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' };
+        pendingGenerationAdmissions.set(record.generationId, { body: 'synthetic-private-request' });
+        savePendingGeneration(record, storage);
+        expect(storage.getItem('aikobots.pending-generations.v2')).not.toContain('synthetic-private-request');
+        await cancelGenerationWithConfirmation(record.generationId, {
+            storage, getHeaders: () => ({}), fetchImpl: async () => { throw new TypeError('synthetic offline'); },
+        });
+        expect(pendingGenerationAdmissions.has(record.generationId)).toBe(false);
+        expect(storage.getItem('aikobots.pending-generation-cancellations.v1')).not.toContain('synthetic-private-request');
+        pendingGenerationAdmissions.set('synthetic-ack', { body: 'synthetic-private-request' });
+        clearPendingGeneration('synthetic-ack', null);
+        expect(pendingGenerationAdmissions.has('synthetic-ack')).toBe(false);
+    });
+
     it('keeps a selectable, content-free reference visible for uncertain starts', () => {
         const previousDocument = globalThis.document;
         const elements = [];
