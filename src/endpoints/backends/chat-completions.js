@@ -81,6 +81,7 @@ import {
     getMatchingGenerationJob,
     isGenerationCancellationRequested,
     listGenerationRecoveries,
+    listActiveGenerationJobs,
     requestGenerationCancellation,
     resolveGenerationRecovery,
     touchGenerationJob,
@@ -4783,9 +4784,11 @@ export function getGenerationJobLimits(request, readConfig = getConfigValue) {
         || Boolean(request.user?.profile?.admin)
         || Boolean(request.user?.profile?.patron);
     const maxConcurrentGlobal = readInteger('maxConcurrentGlobal', GENERATION_JOB_DEFAULTS.maxConcurrentGlobal, 1);
+    const patronConcurrentLimit = readInteger('maxConcurrentPerUser', GENERATION_JOB_DEFAULTS.maxConcurrentPerUser, 1);
     return {
+        patronConcurrentLimit,
         maxConcurrentPerUser: entitled
-            ? readInteger('maxConcurrentPerUser', GENERATION_JOB_DEFAULTS.maxConcurrentPerUser, 1)
+            ? patronConcurrentLimit
             : 1,
         maxQueuedPerUser: readInteger('maxQueuedPerUser', GENERATION_JOB_DEFAULTS.maxQueuedPerUser),
         maxConcurrentGlobal,
@@ -5010,6 +5013,31 @@ router.get('/generations/recoverable', function (request, response) {
         },
     }));
     return response.send({ jobs });
+});
+
+router.get('/generations/active', function (request, response) {
+    response.setHeader('Cache-Control', 'no-store');
+    try {
+        const limits = getGenerationJobLimits(request);
+        return response.send({
+            jobs: listActiveGenerationJobs(getGenerationUserHandle(request)),
+            serverTime: Date.now(),
+            staleAfterMs: limits.staleOwnerMs,
+            account: {
+                patron: Boolean(request.user?.profile?.patron),
+                admin: Boolean(request.user?.profile?.admin),
+                accountsEnabled: getConfigValue('enableUserAccounts', false, 'boolean'),
+            },
+            limits: {
+                standardConcurrent: 1,
+                patronConcurrent: limits.patronConcurrentLimit,
+                concurrent: limits.maxConcurrentPerUser,
+                outstanding: limits.maxConcurrentPerUser + limits.maxQueuedPerUser,
+            },
+        });
+    } catch {
+        return response.status(500).send({ error: { message: 'Could not load generation jobs.' } });
+    }
 });
 
 router.get('/generations/:id', function (request, response) {

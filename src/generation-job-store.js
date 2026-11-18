@@ -330,6 +330,16 @@ export function listGenerationRecoveries(userHandle, limit = 100) {
     `).all(getUserKey(userHandle), Math.min(100, Math.max(1, Number(limit) || 100))).map(serializeJob);
 }
 
+/** Reads only scheduling metadata for all active jobs owned by this account. */
+export function listActiveGenerationJobs(userHandle) {
+    return openDatabase().prepare(`
+        SELECT id, state, created_at AS createdAt, updated_at AS updatedAt
+        FROM generation_jobs
+        WHERE user_key = ? AND state IN ('queued', 'running', 'cancel_requested')
+        ORDER BY created_at, id
+    `).all(getUserKey(userHandle));
+}
+
 /** Marks a recovery record as durably handled by the chat mutation path. */
 export function resolveGenerationRecovery(id, userHandle) {
     const db = openDatabase();

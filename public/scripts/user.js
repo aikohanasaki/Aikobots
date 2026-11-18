@@ -3,6 +3,7 @@ import { getRequestHeaders, messageFormatting, refreshCsrfToken, sanitizeMessage
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { renderTemplateAsync } from './templates.js';
 import { ensureImageFormatSupported, getBase64Async, humanFileSize } from './utils.js';
+import { openGenerationJobs } from './generation-jobs-ui.js';
 
 /**
  * @type {import('../../src/users.js').UserViewModel} Logged in user
@@ -1754,6 +1755,7 @@ async function openUserProfile() {
     template.find('.noPassword').toggle(!currentUser.password);
     template.find('.userSettingsSnapshotsButton').on('click', () => viewSettingsSnapshots());
     template.find('.userSubmissionsButton').on('click', () => openMySubmissionsPopup());
+    template.find('.userGenerationJobsButton').on('click', () => openGenerationJobs());
     template.find('.userChangeNameButton').on('click', async () => changeName(currentUser.handle, currentUser.name, async () => {
         await getCurrentUser();
         template.find('.userName').text(currentUser.name);

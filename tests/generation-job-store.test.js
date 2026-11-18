@@ -15,6 +15,7 @@ import {
     getGenerationEventsAfter,
     getGenerationJob,
     listGenerationRecoveries,
+    listActiveGenerationJobs,
     markGenerationJobRunning,
     requestGenerationCancellation,
     resolveGenerationRecovery,
@@ -77,6 +78,26 @@ describe('generation job store', () => {
         jest.restoreAllMocks();
         globalThis.DATA_ROOT = previousDataRoot;
         rmSync(dataRoot, { recursive: true, force: true });
+    });
+
+    it('lists only owner active scheduling metadata, even without recovery records', () => {
+        for (const [id, userHandle] of [['queued', 'alice'], ['running', 'alice'], ['cancelling', 'alice'], ['done', 'alice'], ['other', 'bob']]) {
+            createGenerationJob({ id, userHandle, requestFingerprint: 'synthetic', requestId: 'synthetic-request' });
+        }
+        markGenerationJobRunning('running', 'alice');
+        markGenerationJobRunning('cancelling', 'alice');
+        requestGenerationCancellation('cancelling', 'alice');
+        finishGenerationJob('done', 'alice', 'completed');
+        expect(listGenerationRecoveries('alice')).toEqual([]);
+        const rows = listActiveGenerationJobs('alice');
+        expect(rows.map(row => row.id).sort()).toEqual(['cancelling', 'queued', 'running']);
+        expect(rows.map(row => row.state).sort()).toEqual(['cancel_requested', 'queued', 'running']);
+        for (const row of rows) {
+            expect(Object.keys(row).sort()).toEqual(['createdAt', 'id', 'state', 'updatedAt']);
+            expect(row.updatedAt).toBeGreaterThanOrEqual(row.createdAt);
+        }
+        expect(listActiveGenerationJobs('nobody')).toEqual([]);
+        expect(() => listActiveGenerationJobs('')).toThrow();
     });
 
     it('replays ordered events only to the owning user without storing prompt text', () => {
